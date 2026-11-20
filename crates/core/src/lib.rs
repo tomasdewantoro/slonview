@@ -7,5 +7,13 @@ pub mod history;
 pub mod model;
 pub mod secrets;
 
+mod conn;
+mod export;
+mod ident;
+mod introspect;
+mod paging;
+mod query;
+mod split;
+
 pub use error::{AppError, AppResult};
 pub use engine::Engine;
