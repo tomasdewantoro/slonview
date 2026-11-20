@@ -39,10 +39,18 @@ pub async fn list_profiles(engine: &Engine) -> AppResult<Vec<ConnProfile>> {
     engine.profiles.load()
 }
 
+/// Trims `time_zone`; blank means server default (None). Validity is left to Postgres,
+/// which rejects unknown names on connect.
+fn normalize_profile(mut profile: ConnProfile) -> ConnProfile {
+    profile.time_zone = profile.time_zone.map(|tz| tz.trim().to_owned()).filter(|tz| !tz.is_empty());
+    profile
+}
+
 pub async fn save_profile(engine: &Engine, profile: ConnProfile, password: PasswordUpdate) -> AppResult<Vec<ConnProfile>> {
     if profile.name.trim().is_empty() {
         return Err(AppError::invalid("connection name is required"));
     }
+    let profile = normalize_profile(profile);
     let id = profile.id;
     let profiles = engine.profiles.upsert(profile)?;
     match password {
@@ -71,7 +79,7 @@ pub async fn import_pgpass() -> AppResult<Vec<ParsedConn>> {
 }
 
 pub async fn test_connection(engine: &Engine, profile: &ConnProfile, password: Option<&str>) -> AppResult<ServerInfo> {
-    engine.test_connection(profile, password).await
+    engine.test_connection(&normalize_profile(profile.clone()), password).await
 }
 
 pub async fn connect(engine: &Engine, conn_id: ConnId) -> AppResult<ServerInfo> {
@@ -206,6 +214,19 @@ mod tests {
         assert!(!toml.contains("pw"));
         assert_eq!(delete_profile(&engine, profile.id).await.unwrap(), vec![]);
         assert!(matches!(export_csv(&engine, &"r".into(), &ExportSource::Sql { conn_id: profile.id, sql: "select 1".into() }, " ").await, Err(AppError::Invalid { .. })));
+    }
+
+    #[tokio::test]
+    async fn save_profile_normalizes_time_zone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (engine, _) = engine(&dir);
+        let mut profile = parse_conn_url("postgres://u@h/db").await.unwrap().profile;
+        profile.time_zone = Some("  Asia/Jakarta \n".into());
+        let saved = save_profile(&engine, profile.clone(), PasswordUpdate::Keep).await.unwrap();
+        assert_eq!(saved[0].time_zone.as_deref(), Some("Asia/Jakarta"));
+        profile.time_zone = Some("   ".into());
+        let saved = save_profile(&engine, profile, PasswordUpdate::Keep).await.unwrap();
+        assert_eq!(saved[0].time_zone, None);
     }
 
     /// Every data command against the seeded fixture (tests/fixtures/seed.sql).

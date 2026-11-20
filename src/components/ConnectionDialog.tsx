@@ -10,6 +10,42 @@ import { Dialog } from "./Dialog";
 
 export const PROFILE_COLORS = ["#3b82f6", "#22a06b", "#e5484d", "#f59e0b", "#8e4ec6", "#0ea5a4", "#6b7280"];
 
+/** Suggestions only; any IANA name Postgres accepts is allowed. */
+export const COMMON_TIME_ZONES = [
+  "UTC",
+  "Asia/Jakarta",
+  "Asia/Bangkok",
+  "Asia/Singapore",
+  "Asia/Kuala_Lumpur",
+  "Asia/Manila",
+  "Asia/Ho_Chi_Minh",
+  "Asia/Hong_Kong",
+  "Asia/Shanghai",
+  "Asia/Tokyo",
+  "Asia/Seoul",
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Europe/London",
+  "Europe/Berlin",
+  "Europe/Paris",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Sao_Paulo",
+  "Australia/Sydney",
+  "Pacific/Auckland",
+];
+
+/** The OS time zone, e.g. "Asia/Jakarta"; "" when the runtime cannot tell. */
+function localTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+  } catch {
+    return "";
+  }
+}
+
 /** Mirrors `config::new_profile()` defaults. */
 export function newProfile(): ConnProfile {
   return {
@@ -23,6 +59,7 @@ export function newProfile(): ConnProfile {
     readOnly: true,
     color: null,
     statementTimeoutMs: 30000,
+    timeZone: null,
   };
 }
 
@@ -47,6 +84,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
   const [test, setTest] = useState<TestState>({ kind: "idle" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [macZone] = useState(localTimeZone);
 
   const update = (patch: Partial<ConnProfile>) => {
     setP((cur) => ({ ...cur, ...patch }));
@@ -55,8 +93,8 @@ export function ConnectionDialog({ existing, onClose }: Props) {
 
   const applyParsed = (parsed: ParsedConn) => {
     // Keep identity (id, color, read-only choice) of the profile being edited; take the connection fields.
-    const { host, port, database, user, ssl } = parsed.profile;
-    setP((cur) => ({ ...cur, host, port, database, user, ssl, name: cur.name || parsed.profile.name }));
+    const { host, port, database, user, ssl, timeZone } = parsed.profile;
+    setP((cur) => ({ ...cur, host, port, database, user, ssl, timeZone: timeZone ?? cur.timeZone, name: cur.name || parsed.profile.name }));
     setPassword(parsed.password ?? "");
     setPasswordTouched(true);
     setTest({ kind: "idle" });
@@ -103,6 +141,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
     host: p.host.trim(),
     database: p.database.trim(),
     user: p.user.trim(),
+    timeZone: p.timeZone?.trim() || null,
   });
 
   const valid = p.host.trim() !== "" && p.database.trim() !== "" && p.user.trim() !== "" && p.port > 0 && p.port < 65536;
@@ -344,6 +383,38 @@ export function ConnectionDialog({ existing, onClose }: Props) {
             onChange={(e) => update({ statementTimeoutMs: (Number(e.target.value.replace(/[^\d]/g, "")) || 0) * 1000 })}
           />
           <span className="text-xs text-muted">seconds per statement, 0 = no limit</span>
+        </div>
+
+        <label htmlFor="cd-tz" className="text-muted">
+          Time zone
+        </label>
+        <div>
+          <div className="flex items-center gap-2">
+            <input
+              id="cd-tz"
+              className="field w-52 font-mono text-xs"
+              list="cd-tz-list"
+              placeholder="Server default"
+              value={p.timeZone ?? ""}
+              onChange={(e) => update({ timeZone: e.target.value === "" ? null : e.target.value })}
+              spellCheck={false}
+              autoComplete="off"
+              aria-describedby="cd-tz-help"
+            />
+            <datalist id="cd-tz-list">
+              {COMMON_TIME_ZONES.map((tz) => (
+                <option key={tz} value={tz} />
+              ))}
+            </datalist>
+            {macZone && macZone !== p.timeZone && (
+              <button type="button" className="btn text-xs" onClick={() => update({ timeZone: macZone })}>
+                Use this Mac's ({macZone})
+              </button>
+            )}
+          </div>
+          <p id="cd-tz-help" className="mt-1 text-xs text-muted">
+            Applied to every session. Affects timestamptz display; timestamp without time zone is shown as stored.
+          </p>
         </div>
 
         <span className="text-muted">Access</span>

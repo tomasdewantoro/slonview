@@ -213,6 +213,7 @@ const seedProfiles: ConnProfile[] = [
     readOnly: true,
     color: "#3b82f6",
     statementTimeoutMs: 30000,
+    timeZone: null,
   },
   {
     id: "7f6c1d7a-0000-4000-8000-000000000002",
@@ -225,6 +226,7 @@ const seedProfiles: ConnProfile[] = [
     readOnly: false,
     color: "#e5484d",
     statementTimeoutMs: 30000,
+    timeZone: "Asia/Jakarta",
   },
   {
     id: "7f6c1d7a-0000-4000-8000-000000000003",
@@ -237,6 +239,7 @@ const seedProfiles: ConnProfile[] = [
     readOnly: true,
     color: null,
     statementTimeoutMs: 30000,
+    timeZone: null,
   },
 ];
 
@@ -446,6 +449,7 @@ function parseUrl(url: string): ParsedConn {
       readOnly: true,
       color: null,
       statementTimeoutMs: 30000,
+      timeZone: null,
     },
     password: u.password ? decodeURIComponent(u.password) : null,
   };
@@ -505,7 +509,9 @@ export function installMockBackend(): void {
       case "list_profiles":
         return profiles;
       case "save_profile": {
-        const p = a.profile as ConnProfile;
+        const raw = a.profile as ConnProfile;
+        // Mirrors ops::save_profile: trimmed, blank = server default.
+        const p = { ...raw, timeZone: raw.timeZone?.trim() || null };
         profiles = sortedProfiles([...profiles.filter((x) => x.id !== p.id), p]);
         if (a.password === null) passwords.delete(p.id);
         else if (typeof a.password === "string") passwords.set(p.id, a.password);

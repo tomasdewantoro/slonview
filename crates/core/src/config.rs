@@ -19,7 +19,7 @@ pub fn app_data_dir() -> AppResult<PathBuf> {
 }
 
 /// A fresh profile with defaults: new v4 id, host "localhost", port 5432,
-/// ssl Prefer, read_only true, statement_timeout_ms 30000, color None.
+/// ssl Prefer, read_only true, statement_timeout_ms 30000, color None, time_zone None.
 pub fn new_profile() -> ConnProfile {
     ConnProfile {
         id: uuid::Uuid::new_v4(),
@@ -32,6 +32,7 @@ pub fn new_profile() -> ConnProfile {
         read_only: true,
         color: None,
         statement_timeout_ms: 30_000,
+        time_zone: None,
     }
 }
 
@@ -223,5 +224,27 @@ mod tests {
         let path = tmp.path().join("connections.toml");
         fs::write(&path, "[[profile]]\nname = 3").unwrap();
         assert!(matches!(ProfileStore::new(&path).load(), Err(AppError::Internal { .. })));
+    }
+
+    #[test]
+    fn file_without_time_zone_loads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("connections.toml");
+        fs::write(
+            &path,
+            "[[profile]]\nid = \"7f6c1d7a-0000-4000-8000-000000000001\"\nname = \"old\"\nhost = \"localhost\"\n\
+             port = 5432\ndatabase = \"db\"\nuser = \"u\"\nssl = \"prefer\"\nreadOnly = true\nstatementTimeoutMs = 30000\n",
+        )
+        .unwrap();
+        let store = ProfileStore::new(&path);
+        let list = store.load().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].time_zone, None);
+
+        let mut p = list[0].clone();
+        p.time_zone = Some("Asia/Jakarta".into());
+        store.upsert(p.clone()).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains("timeZone = \"Asia/Jakarta\""));
+        assert_eq!(store.get(p.id).unwrap(), p);
     }
 }

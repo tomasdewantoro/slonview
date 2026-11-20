@@ -109,6 +109,10 @@ pub(crate) fn session_setup_sql(profile: &ConnProfile) -> String {
     if profile.read_only {
         sql.push_str("; SET default_transaction_read_only = on");
     }
+    if let Some(tz) = &profile.time_zone {
+        sql.push_str("; SET TIME ZONE ");
+        sql.push_str(&crate::ident::quote_literal(tz));
+    }
     sql
 }
 
@@ -309,6 +313,7 @@ mod tests {
             read_only,
             color: None,
             statement_timeout_ms: 1500,
+            time_zone: None,
         }
     }
 
@@ -322,5 +327,14 @@ mod tests {
             session_setup_sql(&profile(false)),
             "SET application_name = 'slonview'; SET statement_timeout = 1500"
         );
+    }
+
+    #[test]
+    fn setup_sql_sets_quoted_time_zone() {
+        let mut p = profile(true);
+        p.time_zone = Some("Asia/Jakarta".into());
+        assert!(session_setup_sql(&p).ends_with("; SET default_transaction_read_only = on; SET TIME ZONE 'Asia/Jakarta'"));
+        p.time_zone = Some("x'; DROP TABLE t; --".into());
+        assert!(session_setup_sql(&p).ends_with("; SET TIME ZONE 'x''; DROP TABLE t; --'"));
     }
 }
