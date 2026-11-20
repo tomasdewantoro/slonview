@@ -590,6 +590,49 @@ try {
     return "Keychain password kept on edit; INSERT 1, UPDATE 1 verified in psql; row removed";
   });
 
+  await check("A connection time zone applies to browsing", async () => {
+    // UTC first: the fixture server's own default may be Asia/Jakarta, so +00 proves the
+    // zone comes from the profile.
+    const out = [];
+    for (const [tz, suffix] of [
+      ["UTC", "+00"],
+      ["Asia/Jakarta", "+07"],
+    ]) {
+      await page.click('[aria-label="Disconnect"]');
+      await until(() => document.body.innerText.includes("E2E Fixture"));
+      await page.evaluate(() => {
+        const li = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.includes("E2E Fixture"));
+        li.querySelector('[aria-label="Edit E2E Fixture"]').click();
+      });
+      await page.waitForSelector("#cd-tz");
+      await page.$eval("#cd-tz", (e) => e.select());
+      await page.keyboard.press("Backspace");
+      await page.type("#cd-tz", tz);
+      await clickText("Save");
+      await until(() => !document.querySelector("#cd-tz") && document.body.innerText.includes("E2E Fixture"), 10000);
+      eq((await bridge("list_profiles")).find((p) => p.id === connId).timeZone, tz, "saved timeZone");
+      await page.evaluate(() => {
+        const li = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.includes("E2E Fixture"));
+        li.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      });
+      await until(() => document.querySelectorAll('[role="group"] button[role="treeitem"]').length > 5);
+      await until((tz) => document.querySelector('[data-testid="session-tz"]')?.innerText.trim() === tz, 10000, tz);
+      await openRel("orders");
+      await selectRows(0, 0);
+      await page.evaluate(() => (window.__clipboard = ""));
+      await page.keyboard.down("Meta");
+      await page.keyboard.press("c");
+      await page.keyboard.up("Meta");
+      await until(() => (window.__clipboard ?? "").includes("\n"), 5000);
+      const [header, row] = (await page.evaluate(() => window.__clipboard)).split("\n");
+      const createdAt = row.split("\t")[header.split("\t").indexOf("created_at")];
+      assert(createdAt?.endsWith(suffix), `${tz}: first created_at ${createdAt} does not end with ${suffix}`);
+      out.push(`${tz}: ${createdAt}`);
+    }
+    await page.screenshot({ path: `${SHOTS}/A-time-zone.png` });
+    return out.join("; ");
+  });
+
   await check("A UI layout: dark + light at 1100x700", async () => {
     const out = [];
     for (const scheme of ["dark", "light"]) {

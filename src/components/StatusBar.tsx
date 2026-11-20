@@ -47,6 +47,11 @@ export function StatusBar() {
       )}
       {tab?.kind !== "table" && <span className="flex-1" />}
       {version && <span className="hidden shrink-0 lg:inline">{version}</span>}
+      {conn?.status === "connected" && profile?.timeZone && (
+        <span className="shrink-0 font-mono" title="Session time zone (timestamptz values are shown in this zone)" data-testid="session-tz">
+          {profile.timeZone}
+        </span>
+      )}
       <span className="flex max-w-80 shrink-0 items-center gap-1.5 truncate" title={conn?.server?.version}>
         <span aria-hidden className={`size-1.5 rounded-full ${dot}`} />
         {connLabel}

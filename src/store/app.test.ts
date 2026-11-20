@@ -37,7 +37,7 @@ function installIpc(): Ipc {
     const a = args as Record<string, any>;
     switch (cmd) {
       case "list_profiles":
-        return [{ id: CONN, name: "local", host: "localhost", port: 5432, database: "db", user: "u", ssl: "disable", readOnly: true, color: null, statementTimeoutMs: 0 }];
+        return [{ id: CONN, name: "local", host: "localhost", port: 5432, database: "db", user: "u", ssl: "disable", readOnly: true, color: null, statementTimeoutMs: 0, timeZone: null }];
       case "connect":
         return { version: "PostgreSQL 18", database: "db", user: "u", readOnly: true };
       case "list_schema_tree":

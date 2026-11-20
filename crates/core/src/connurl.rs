@@ -16,7 +16,8 @@ const EMPTY_HOST_PLACEHOLDER: &str = "slonview-empty-host.invalid";
 /// verify-*->Require). Profile name = "<db>@<host>". Other fields from `config::new_profile()`.
 ///
 /// Also honours the libpq query params `host` (used when the URL host is empty, e.g. a
-/// unix socket directory `?host=/tmp`), `port`, `user`, `password` and `dbname`.
+/// unix socket directory `?host=/tmp`), `port`, `user`, `password` and `dbname`, plus a
+/// `timezone` setting inside `options` (`options=-c timezone=Asia/Jakarta`).
 /// Missing host = "localhost", missing port = 5432, missing database = user.
 pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
     let input = input.trim();
@@ -50,6 +51,7 @@ pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
     let mut password = url.password().map(decode).transpose()?;
     let mut database = decode(url.path().trim_start_matches('/'))?;
     let mut ssl = SslMode::Prefer;
+    let mut time_zone = None;
 
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
@@ -61,6 +63,7 @@ pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
             "password" if password.is_none() => password = Some(value.into_owned()),
             "dbname" if database.is_empty() => database = value.into_owned(),
             "sslmode" => ssl = parse_sslmode(&value)?,
+            "options" => time_zone = options_time_zone(&value).or(time_zone),
             _ => {}
         }
     }
@@ -78,9 +81,30 @@ pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
         database,
         user,
         ssl,
+        time_zone,
         ..new_profile()
     };
     Ok(ParsedConn { profile, password })
+}
+
+/// The `timezone` setting from a libpq `options` value: `-c timezone=X`, `-ctimezone=X`
+/// or `--timezone=X` (name case-insensitive). Backslash-escaped spaces are not supported.
+fn options_time_zone(options: &str) -> Option<String> {
+    let mut tokens = options.split_whitespace();
+    let mut found = None;
+    while let Some(tok) = tokens.next() {
+        let setting = match tok {
+            "-c" => tokens.next(),
+            _ => tok.strip_prefix("--").or_else(|| tok.strip_prefix("-c")),
+        };
+        if let Some((key, value)) = setting.and_then(|s| s.split_once('='))
+            && key.eq_ignore_ascii_case("timezone")
+            && !value.is_empty()
+        {
+            found = Some(value.to_owned());
+        }
+    }
+    found
 }
 
 fn decode(s: &str) -> AppResult<String> {
@@ -282,6 +306,21 @@ mod tests {
     #[test]
     fn trims_whitespace() {
         assert_eq!(parse("  postgres://u@h/d\n").profile.database, "d");
+    }
+
+    #[test]
+    fn options_timezone() {
+        assert_eq!(parse("postgres://u@h/d").profile.time_zone, None);
+        for url in [
+            "postgres://u@h/d?options=-c%20timezone%3DAsia%2FJakarta",
+            "postgres://u@h/d?options=-c%20TimeZone=Asia/Jakarta",
+            "postgres://u@h/d?options=-ctimezone%3DAsia/Jakarta",
+            "postgres://u@h/d?options=--timezone%3DAsia/Jakarta",
+            "postgres://u@h/d?options=-c%20search_path%3Dx%20-c%20timezone%3DAsia/Jakarta",
+        ] {
+            assert_eq!(parse(url).profile.time_zone.as_deref(), Some("Asia/Jakarta"), "{url}");
+        }
+        assert_eq!(parse("postgres://u@h/d?options=-c%20search_path%3Dx").profile.time_zone, None);
     }
 
     #[test]

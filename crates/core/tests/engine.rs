@@ -453,3 +453,46 @@ async fn disconnect_drops_pool() {
     assert_eq!(f.engine.list_schema_tree(f.conn).await.unwrap_err(), AppError::NotConnected);
     f.engine.disconnect(f.conn).await.unwrap();
 }
+
+/// `created_at` of orders id 1 (seed: 2023-12-31 17:00:01 UTC), first row in pk order.
+async fn first_order_created_at(f: &Fixture) -> String {
+    let page = f.engine.fetch_page("tz", &page_req(f.conn, "public", "orders")).await.unwrap();
+    let col = page.columns.iter().position(|c| c.name == "created_at").unwrap();
+    assert_eq!(page.columns[col].type_name, "timestamp with time zone");
+    assert_eq!(page.rows[0][0].as_deref(), Some("1"));
+    page.rows[0][col].clone().unwrap()
+}
+
+const TZ_PROBE: &str = "SELECT timestamptz '2026-11-20 14:52:33+00'::text, current_setting('TimeZone')";
+
+#[tokio::test]
+async fn profile_time_zone_applies_to_browse_and_sql() {
+    // The fixture server's own default may already be Asia/Jakarta, so UTC proves the
+    // zone comes from the profile, not the server.
+    for (tz, sql_want, browse_want) in [
+        ("UTC", "2026-11-20 14:52:33+00", "2023-12-31 17:00:01+00"),
+        ("Asia/Jakarta", "2026-11-20 21:52:33+07", "2024-01-01 00:00:01+07"),
+    ] {
+        let f = fixture_with(|p| p.time_zone = Some(tz.into())).await;
+        assert_eq!(first_order_created_at(&f).await, browse_want, "{tz} browse");
+        let want = vec![vec![Some(sql_want.to_owned()), Some(tz.to_owned())]];
+        assert_eq!(psql_values(&f, TZ_PROBE).await, want, "{tz} run_sql");
+        // A user SET TIME ZONE in one run is undone; the profile zone is re-applied.
+        let changed = psql_values(&f, &format!("SET TIME ZONE 'America/New_York'; {TZ_PROBE}")).await;
+        assert_eq!(changed[0][1].as_deref(), Some("America/New_York"));
+        assert_eq!(psql_values(&f, TZ_PROBE).await, want, "{tz} second run_sql");
+        assert_eq!(psql_values(&f, TZ_PROBE).await, want, "{tz} third run_sql");
+        assert_eq!(first_order_created_at(&f).await, browse_want, "{tz} browse after run_sql");
+    }
+}
+
+#[tokio::test]
+async fn invalid_time_zone_is_a_typed_connect_error() {
+    let f = fixture().await;
+    let mut profile = f.engine.profiles.get(f.conn).unwrap();
+    profile.time_zone = Some("Nope/Zone".into());
+    let want = AppError::Connect { message: "invalid value for parameter \"TimeZone\": \"Nope/Zone\"".into() };
+    assert_eq!(f.engine.test_connection(&profile, None).await.unwrap_err(), want);
+    f.engine.profiles.upsert(profile.clone()).unwrap();
+    assert_eq!(f.engine.connect(profile.id).await.unwrap_err(), want);
+}

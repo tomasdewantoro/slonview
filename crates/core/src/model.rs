@@ -36,6 +36,10 @@ pub struct ConnProfile {
     pub color: Option<String>,
     /// Statement timeout in milliseconds; 0 = none. Default 30000.
     pub statement_timeout_ms: u32,
+    /// IANA time zone (e.g. "Asia/Jakarta") applied with `SET TIME ZONE` to every
+    /// session; None = server default. Absent in older connections.toml files.
+    #[serde(default)]
+    pub time_zone: Option<String>,
 }
 
 /// Result of parsing a `postgres://` URL or a `~/.pgpass` line.
