@@ -1,4 +1,6 @@
-# pgview — Personal PostgreSQL Desktop Viewer (Tauri 2 + Rust)
+# Slonview — PostgreSQL Desktop Viewer (Tauri 2 + Rust)
+
+> Formerly pgview; renamed to Slonview before the first public release.
 
 Status: DRAFT v2 (GUI decision: Tauri) · Owner: Tomas · Scope: single user, macOS (arm64) first
 
@@ -24,7 +26,7 @@ A fast, read-mostly PostgreSQL browser for daily dev work: connect, browse schem
 | Async / driver | `tokio` + `tokio-postgres` + `deadpool-postgres` | `simple_query` returns every type as text (jsonb, arrays, enums, PostGIS): no per-type decoding |
 | TLS | `tokio-postgres-rustls` + `rustls-native-certs` | Supabase / Neon / RDS require TLS |
 | Secrets | `keyring` (macOS Keychain) | No plaintext passwords on disk |
-| Config | `serde` + `toml` + `directories` | `~/Library/Application Support/pgview/connections.toml` |
+| Config | `serde` + `toml` + `directories` | `~/Library/Application Support/slonview/connections.toml` |
 | TS types from Rust | `ts-rs` | DTOs generated into `src/bindings/`; no hand-written duplicate types |
 | Tauri plugins | `clipboard-manager`, `dialog` (save CSV), `window-state` | Official plugins only |
 | Errors / logs | `thiserror` (serializable `AppError`), `tracing` | |
@@ -37,7 +39,7 @@ flowchart LR
     UI[Components] --> API[src/api.ts invoke wrappers]
   end
   API -- "invoke(cmd, args)" --> CMD[Tauri commands]
-  CMD --> CORE[pgview-core]
+  CMD --> CORE[slonview-core]
   CORE --> POOL[deadpool-postgres per connection]
   POOL --> PG[(PostgreSQL)]
   CMD -- "AppError JSON" --> API
@@ -53,7 +55,7 @@ flowchart LR
 
 ### Repository layout
 ```
-pgview/
+slonview/
   Cargo.toml                    # workspace: crates/core, src-tauri
   package.json  vite.config.ts  tsconfig.json  index.html
   crates/core/                  # no Tauri deps; unit + integration tested
@@ -77,7 +79,7 @@ pgview/
 ```rust
 struct ConnProfile { id: Uuid, name: String, host: String, port: u16, db: String,
                      user: String, ssl: SslMode, read_only: bool, color: Option<String> }
-// password -> Keychain: service "pgview", account = profile.id
+// password -> Keychain: service "slonview", account = profile.id
 
 struct Column   { name: String, type_name: String, nullable: bool, is_pk: bool }
 struct Page     { columns: Vec<Column>, rows: Vec<Vec<Option<String>>>,
@@ -137,9 +139,9 @@ struct QueryResult { statement: String, columns: Vec<Column>, rows: Vec<Vec<Opti
 | ID | Deliverable | Verify |
 |---|---|---|
 | BUILD-01 | Scaffold: `pnpm create tauri-app` (React-TS), cargo workspace with `crates/core`, Tailwind, Zustand, ts-rs export step | `pnpm tauri dev` opens window; `ping` command round-trips |
-| BUILD-02 | `core::config` + `secrets` + profile commands | `cargo test -p pgview-core config`; password absent from TOML |
-| BUILD-03 | `core::conn`: TLS/no-TLS, read-only session, timeout, cancel registry; `AppError` | `cargo test -p pgview-core conn` vs fixture DB |
-| BUILD-04 | Connection dialog, URL paste, pgpass import, test button | Manual: connect to `pgview_fixture` |
+| BUILD-02 | `core::config` + `secrets` + profile commands | `cargo test -p slonview-core config`; password absent from TOML |
+| BUILD-03 | `core::conn`: TLS/no-TLS, read-only session, timeout, cancel registry; `AppError` | `cargo test -p slonview-core conn` vs fixture DB |
+| BUILD-04 | Connection dialog, URL paste, pgpass import, test button | Manual: connect to `slonview_fixture` |
 | BUILD-05 | `core::introspect` + Sidebar tree with search | Test asserts fixture relations listed |
 | BUILD-06 | `core::ident` + `core::paging` (keyset/offset, filters, sort) | Unit tests: quotes, spaces, unicode, injection strings |
 | BUILD-07 | DataGrid (Glide): paging on scroll, NULL style, sort, stale-response drop | Scroll `orders` (1M rows) to 200k smoothly |
@@ -148,24 +150,24 @@ struct QueryResult { statement: String, columns: Vec<Column>, rows: Vec<Vec<Opti
 | BUILD-10 | SqlEditor (CodeMirror), multi-result, cancel, history | `SELECT pg_sleep(60)` cancels < 1s |
 | BUILD-11 | Copy formats + streamed CSV export via dialog plugin | 1M-row export, RAM stays flat |
 | BUILD-12 | Tabs, shortcuts, persisted session, window-state, theme | Restart restores tabs |
-| BUILD-13 | `pnpm tauri build` → `pgview.app` / `.dmg`, install to `/Applications` | Launch from Spotlight |
+| BUILD-13 | `pnpm tauri build` → `Slonview.app` / `.dmg`, install to `/Applications` | Launch from Spotlight |
 
 Usable viewer after BUILD-07 (≈1 week); full v1 after BUILD-13 (≈2 weeks).
 
 ## 7. Test seam
-- `tests/fixtures/seed.sql` creates `pgview_fixture` on local Homebrew Postgres 18:
+- `tests/fixtures/seed.sql` creates `slonview_fixture` on local Homebrew Postgres 18:
   - `orders` 1,000,000 rows (`generate_series`, bigint PK)
   - `all_types`: int, numeric, text, varchar, bool, uuid, date, timestamptz, interval, jsonb, int[], text[], bytea, enum, inet, NULLs, literal text `'NULL'`
   - `"Weird ""Name"" Table"` in schema `"Sales Data"`
   - view, materialized view, partitioned table, table without PK
-  - role `pgview_ro` (SELECT only)
-- Rust: `PGVIEW_TEST_URL` drives integration tests in `crates/core` (all DB logic lives there, so most coverage needs no UI).
+  - role `slonview_ro` (SELECT only)
+- Rust: `SLONVIEW_TEST_URL` drives integration tests in `crates/core` (all DB logic lives there, so most coverage needs no UI).
 - Frontend: Vitest + `@tauri-apps/api/mocks` `mockIPC` for store/component logic (stale-response drop, filter serialization).
 - Note: `tauri-driver` WebDriver does not support macOS, so full-app E2E is the manual checklist below.
 
 ```bash
-createdb pgview_fixture && psql pgview_fixture -f tests/fixtures/seed.sql
-export PGVIEW_TEST_URL=postgres://localhost/pgview_fixture
+createdb slonview_fixture && psql slonview_fixture -f tests/fixtures/seed.sql
+export SLONVIEW_TEST_URL=postgres://localhost/slonview_fixture
 cargo test --workspace && pnpm vitest run
 ```
 

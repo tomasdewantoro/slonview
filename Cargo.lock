@@ -2681,49 +2681,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pgview"
-version = "0.1.0"
-dependencies = [
- "pgview-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-window-state",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "pgview-core"
-version = "0.1.0"
-dependencies = [
- "deadpool-postgres",
- "directories",
- "futures-util",
- "keyring",
- "rustls",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "time",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "toml 0.9.12+spec-1.1.0",
- "tracing",
- "ts-rs",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "phf"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3649,6 +3606,49 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "slonview"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "slonview-core",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-window-state",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "slonview-core"
+version = "0.1.0"
+dependencies = [
+ "deadpool-postgres",
+ "directories",
+ "futures-util",
+ "keyring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+ "toml 0.9.12+spec-1.1.0",
+ "tracing",
+ "ts-rs",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "smallvec"
