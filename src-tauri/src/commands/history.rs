@@ -1,6 +1,6 @@
 //! SQL editor history.
-use pgview_core::model::{ConnId, HistoryEntry};
-use pgview_core::AppResult;
+use slonview_core::model::{ConnId, HistoryEntry};
+use slonview_core::AppResult;
 use tauri::State;
 
 use crate::ops;

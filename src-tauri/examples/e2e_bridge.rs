@@ -1,20 +1,20 @@
 //! Dev-only HTTP bridge for headless E2E runs (never shipped; examples are not bundled).
 //! Serves `POST /invoke/<command>` on 127.0.0.1:1499 with the same JSON args object the
-//! frontend passes to `invoke`, and dispatches to the same `pgview_lib::ops` functions the
+//! frontend passes to `invoke`, and dispatches to the same `slonview_lib::ops` functions the
 //! Tauri commands call. Errors are HTTP 400 with the serialized `AppError`.
 //!
-//! Profiles and history live in a temp dir (`PGVIEW_E2E_DIR` or a fresh one), never in the
+//! Profiles and history live in a temp dir (`SLONVIEW_E2E_DIR` or a fresh one), never in the
 //! real app data directory; passwords go to the real macOS Keychain.
 //!
-//! Run: `cargo run -p pgview --example e2e_bridge`
+//! Run: `cargo run -p slonview --example e2e_bridge`
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pgview_core::config::ProfileStore;
-use pgview_core::history::HistoryStore;
-use pgview_core::secrets::KeychainStore;
-use pgview_core::{AppError, Engine};
-use pgview_lib::ops::{self, PasswordUpdate};
+use slonview_core::config::ProfileStore;
+use slonview_core::history::HistoryStore;
+use slonview_core::secrets::KeychainStore;
+use slonview_core::{AppError, Engine};
+use slonview_lib::ops::{self, PasswordUpdate};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -182,9 +182,9 @@ async fn handle(engine: Arc<Engine>, mut stream: TcpStream) -> std::io::Result<(
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
-    let dir = match std::env::var_os("PGVIEW_E2E_DIR") {
+    let dir = match std::env::var_os("SLONVIEW_E2E_DIR") {
         Some(d) => PathBuf::from(d),
-        None => std::env::temp_dir().join(format!("pgview-e2e-{}", std::process::id())),
+        None => std::env::temp_dir().join(format!("slonview-e2e-{}", std::process::id())),
     };
     std::fs::create_dir_all(&dir)?;
     let engine = Arc::new(Engine::new(

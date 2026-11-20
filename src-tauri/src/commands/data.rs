@@ -1,6 +1,6 @@
 //! Table browsing: pages, exact counts, full cell values.
-use pgview_core::model::{CellRequest, ConnId, Filter, Page, PageRequest, RequestId};
-use pgview_core::AppResult;
+use slonview_core::model::{CellRequest, ConnId, Filter, Page, PageRequest, RequestId};
+use slonview_core::AppResult;
 use tauri::State;
 
 use crate::ops;

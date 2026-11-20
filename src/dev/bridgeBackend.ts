@@ -1,8 +1,8 @@
 // Dev-only E2E bridge (VITE_BRIDGE=1): forwards every invoke to the real Rust engine served by
-// `cargo run -p pgview --example e2e_bridge` on 127.0.0.1:1499, so the real frontend runs in a
+// `cargo run -p slonview --example e2e_bridge` on 127.0.0.1:1499, so the real frontend runs in a
 // headless browser. Plugin calls are faked and observable from the test:
 //   window.__clipboard     last text written to the clipboard
-//   window.__nextSavePath  path returned by the save dialog (default /tmp/pgview-e2e-export.csv)
+//   window.__nextSavePath  path returned by the save dialog (default /tmp/slonview-e2e-export.csv)
 //   window.__askAnswer     answer for confirm dialogs (default true)
 // Never loaded in production (main.tsx gates the import on a build-time constant).
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -28,7 +28,7 @@ export function installBridgeBackend(): void {
           window.__clipboard = String(args.text ?? "");
           return null;
         case "plugin:dialog|save":
-          return window.__nextSavePath ?? "/tmp/pgview-e2e-export.csv";
+          return window.__nextSavePath ?? "/tmp/slonview-e2e-export.csv";
         case "plugin:dialog|ask":
         case "plugin:dialog|confirm":
           return window.__askAnswer ?? true;

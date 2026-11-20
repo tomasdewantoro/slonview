@@ -1,6 +1,6 @@
 //! SQL editor execution and cancellation.
-use pgview_core::model::{ConnId, QueryResult, RequestId};
-use pgview_core::AppResult;
+use slonview_core::model::{ConnId, QueryResult, RequestId};
+use slonview_core::AppResult;
 use tauri::State;
 
 use crate::ops;

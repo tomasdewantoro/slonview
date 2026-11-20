@@ -90,7 +90,7 @@ fn pg_config(profile: &ConnProfile, password: Option<&str>, ssl: PgSslMode) -> C
     cfg.port(profile.port)
         .user(&profile.user)
         .dbname(&profile.database)
-        .application_name("pgview")
+        .application_name("slonview")
         .connect_timeout(CONNECT_TIMEOUT)
         .ssl_mode(ssl);
     if let Some(pw) = password {
@@ -103,7 +103,7 @@ fn pg_config(profile: &ConnProfile, password: Option<&str>, ssl: PgSslMode) -> C
 /// user-issued SETs never leak into the pool.
 pub(crate) fn session_setup_sql(profile: &ConnProfile) -> String {
     let mut sql = format!(
-        "SET application_name = 'pgview'; SET statement_timeout = {}",
+        "SET application_name = 'slonview'; SET statement_timeout = {}",
         profile.statement_timeout_ms
     );
     if profile.read_only {
@@ -316,11 +316,11 @@ mod tests {
     fn setup_sql_respects_read_only() {
         assert_eq!(
             session_setup_sql(&profile(true)),
-            "SET application_name = 'pgview'; SET statement_timeout = 1500; SET default_transaction_read_only = on"
+            "SET application_name = 'slonview'; SET statement_timeout = 1500; SET default_transaction_read_only = on"
         );
         assert_eq!(
             session_setup_sql(&profile(false)),
-            "SET application_name = 'pgview'; SET statement_timeout = 1500"
+            "SET application_name = 'slonview'; SET statement_timeout = 1500"
         );
     }
 }

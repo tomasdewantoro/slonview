@@ -1,8 +1,8 @@
-//! Passwords live in the macOS Keychain: service "pgview", account = profile id.
+//! Passwords live in the macOS Keychain: service "slonview", account = profile id.
 use crate::model::ConnId;
 use crate::{AppError, AppResult};
 
-const SERVICE: &str = "pgview";
+const SERVICE: &str = "slonview";
 
 pub trait SecretStore: Send + Sync {
     fn get(&self, id: ConnId) -> AppResult<Option<String>>;
@@ -77,7 +77,7 @@ mod tests {
     }
 
     /// Touches the real login Keychain; run manually:
-    /// `cargo test -p pgview-core secrets -- --ignored`
+    /// `cargo test -p slonview-core secrets -- --ignored`
     #[test]
     #[ignore]
     fn keychain_roundtrip() {

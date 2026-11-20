@@ -9,7 +9,7 @@ use crate::model::{ConnProfile, ParsedConn, SslMode};
 use crate::{AppError, AppResult};
 
 /// Stand-in host so `url` accepts `postgres://user@/db?host=/tmp` (empty host + userinfo).
-const EMPTY_HOST_PLACEHOLDER: &str = "pgview-empty-host.invalid";
+const EMPTY_HOST_PLACEHOLDER: &str = "slonview-empty-host.invalid";
 
 /// Supports user, password, host, port, database, percent-decoding, and query
 /// params `sslmode` (disable|allow|prefer|require|verify-ca|verify-full; allow->Prefer,
@@ -222,11 +222,11 @@ mod tests {
 
     #[test]
     fn unix_socket_host_param() {
-        let p = parse("postgres://tomas@/pgview_fixture?host=/tmp");
+        let p = parse("postgres://tomas@/slonview_fixture?host=/tmp");
         assert_eq!(p.profile.host, "/tmp");
         assert_eq!(p.profile.user, "tomas");
-        assert_eq!(p.profile.database, "pgview_fixture");
-        assert_eq!(p.profile.name, "pgview_fixture@/tmp");
+        assert_eq!(p.profile.database, "slonview_fixture");
+        assert_eq!(p.profile.name, "slonview_fixture@/tmp");
 
         let p = parse("postgresql:///db?host=%2Fvar%2Frun%2Fpostgresql&user=bob&port=5433");
         assert_eq!(p.profile.host, "/var/run/postgresql");

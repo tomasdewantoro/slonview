@@ -199,9 +199,9 @@ describe("tab persistence", () => {
   });
 
   it("ignores corrupt persisted data", () => {
-    window.localStorage.setItem(`pgview.tabs.${CONN}`, "{not json");
+    window.localStorage.setItem(`slonview.tabs.${CONN}`, "{not json");
     expect(readPersistedTabs(window.localStorage, CONN)).toEqual({ tabs: [], activeTabId: null });
-    window.localStorage.setItem(`pgview.tabs.${CONN}`, JSON.stringify({ tabs: [{ id: "x", kind: "table", title: "t" }], activeTabId: "x" }));
+    window.localStorage.setItem(`slonview.tabs.${CONN}`, JSON.stringify({ tabs: [{ id: "x", kind: "table", title: "t" }], activeTabId: "x" }));
     expect(readPersistedTabs(window.localStorage, CONN)).toEqual({ tabs: [], activeTabId: null });
   });
 });

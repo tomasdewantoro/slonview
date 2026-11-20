@@ -111,8 +111,8 @@ export interface AppState {
   dismissToast(id: number): void;
 }
 
-const LAST_CONN_KEY = "pgview.lastConn";
-const tabsKey = (connId: string) => `pgview.tabs.${connId}`;
+const LAST_CONN_KEY = "slonview.lastConn";
+const tabsKey = (connId: string) => `slonview.tabs.${connId}`;
 
 interface PersistedTabs {
   tabs: Tab[];

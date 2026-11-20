@@ -20,8 +20,8 @@ export interface SqlTabProps {
 }
 
 const MAX_ROWS_OPTIONS = [1000, 10000, 100000];
-const MAX_ROWS_KEY = "pgview.sql.maxRows";
-const SPLIT_KEY = "pgview.sql.split";
+const MAX_ROWS_KEY = "slonview.sql.maxRows";
+const SPLIT_KEY = "slonview.sql.split";
 
 interface Running {
   requestId: string;
@@ -244,7 +244,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
           <div style={{ height: `${split * 100}%` }} className="min-h-0 shrink-0">
             <SqlEditor
               viewRef={viewRef}
-              storageKey={`pgview.sql.${tabId}`}
+              storageKey={`slonview.sql.${tabId}`}
               initialSql={initialSql ?? ""}
               schema={schema}
               onRun={runFromEditor}

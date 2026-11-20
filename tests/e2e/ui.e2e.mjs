@@ -2,8 +2,8 @@
 // through the dev-only bridge. Run `tests/e2e/run.sh` (starts both servers) or, with them
 // already up, `node tests/e2e/ui.e2e.mjs`.
 //
-// Env: PGVIEW_UI_URL (default http://localhost:1450/), CHROME (headless shell binary),
-//      PGVIEW_E2E_SHOTS (screenshot dir, default /tmp/pgview-e2e).
+// Env: SLONVIEW_UI_URL (default http://localhost:1450/), CHROME (headless shell binary),
+//      SLONVIEW_E2E_SHOTS (screenshot dir, default /tmp/slonview-e2e).
 // Needs the seeded fixture DB and an empty profile dir in the bridge. Creates a profile +
 // Keychain entry and deletes both at the end; writes only to scratch_insert_target.
 import { execFileSync } from "node:child_process";
@@ -11,9 +11,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import puppeteer from "puppeteer-core";
 
-const URL = process.env.PGVIEW_UI_URL ?? "http://localhost:1450/";
+const URL = process.env.SLONVIEW_UI_URL ?? "http://localhost:1450/";
 const BRIDGE = "http://127.0.0.1:1499/invoke/";
-const SHOTS = process.env.PGVIEW_E2E_SHOTS ?? "/tmp/pgview-e2e";
+const SHOTS = process.env.SLONVIEW_E2E_SHOTS ?? "/tmp/slonview-e2e";
 const CHROME =
   process.env.CHROME ??
   `${homedir()}/Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
@@ -22,7 +22,7 @@ mkdirSync(SHOTS, { recursive: true });
 
 const results = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const psql = (sql, db = "pgview_fixture") =>
+const psql = (sql, db = "slonview_fixture") =>
   execFileSync("psql", ["-h", process.env.PGHOST ?? "/tmp", "-d", db, "-Atq", "-c", sql], { encoding: "utf8" }).trim();
 const bridge = async (cmd, args = {}) => {
   const res = await fetch(BRIDGE + cmd, { method: "POST", body: JSON.stringify(args) });
@@ -139,9 +139,9 @@ try {
   await check("E2E-01 add connection by URL", async () => {
     await page.click('[aria-label="New connection"]');
     await page.waitForSelector("#cd-url");
-    await page.type("#cd-url", `postgres://${process.env.USER}:${PASSWORD}@localhost:5432/pgview_fixture?sslmode=disable`);
+    await page.type("#cd-url", `postgres://${process.env.USER}:${PASSWORD}@localhost:5432/slonview_fixture?sslmode=disable`);
     await clickText("Fill");
-    await until(() => document.querySelector("#cd-db")?.value === "pgview_fixture");
+    await until(() => document.querySelector("#cd-db")?.value === "slonview_fixture");
     await page.$eval("#cd-name", (el) => el.select());
     await page.type("#cd-name", "E2E Fixture");
     await clickText("Test");
@@ -151,7 +151,7 @@ try {
     await until(() => document.body.innerText.includes("E2E Fixture"));
     const profiles = await bridge("list_profiles");
     connId = profiles.find((p) => p.name === "E2E Fixture").id;
-    const toml = readFileSync(`${process.env.PGVIEW_E2E_DIR ?? "/tmp/pgview-e2e-data"}/connections.toml`, "utf8");
+    const toml = readFileSync(`${process.env.SLONVIEW_E2E_DIR ?? "/tmp/slonview-e2e-data"}/connections.toml`, "utf8");
     assert(!toml.includes(PASSWORD), "password found in connections.toml");
     const kc = await bridge("e2e_keychain_get", { id: connId });
     eq(kc, PASSWORD, "keychain password");
@@ -161,9 +161,9 @@ try {
   await check("E2E-02 wrong password / host down", async () => {
     const out = [];
     for (const [url, kind] of [
-      [`postgres://nosuchrole@localhost:5432/pgview_fixture?sslmode=disable`, /role "nosuchrole" does not exist/],
-      [`postgres://${process.env.USER}@localhost:5999/pgview_fixture?sslmode=disable`, /Connection refused/],
-      [`postgres://${process.env.USER}@no-such-host.invalid:5432/pgview_fixture`, /lookup address/],
+      [`postgres://nosuchrole@localhost:5432/slonview_fixture?sslmode=disable`, /role "nosuchrole" does not exist/],
+      [`postgres://${process.env.USER}@localhost:5999/slonview_fixture?sslmode=disable`, /Connection refused/],
+      [`postgres://${process.env.USER}@no-such-host.invalid:5432/slonview_fixture`, /lookup address/],
     ]) {
       await page.click('[aria-label="New connection"]');
       await page.waitForSelector("#cd-url");
@@ -337,16 +337,16 @@ try {
     const sql = await page.evaluate(() => window.__clipboard);
     eq(sql.split("\n").length, 10, "10 INSERT lines");
     writeFileSync(`${SHOTS}/09-insert.sql`, sql);
-    execFileSync("dropdb", ["-h", "/tmp", "--if-exists", "pgview_e2e_scratch"]);
-    execFileSync("createdb", ["-h", "/tmp", "pgview_e2e_scratch"]);
+    execFileSync("dropdb", ["-h", "/tmp", "--if-exists", "slonview_e2e_scratch"]);
+    execFileSync("createdb", ["-h", "/tmp", "slonview_e2e_scratch"]);
     const labels = psql("select string_agg(quote_literal(enumlabel), ',' order by enumsortorder) from pg_enum where enumtypid = 'order_status'::regtype");
-    psql(`CREATE TYPE order_status AS ENUM (${labels})`, "pgview_e2e_scratch");
+    psql(`CREATE TYPE order_status AS ENUM (${labels})`, "slonview_e2e_scratch");
     psql(
       "CREATE TABLE public.orders (id bigint primary key, customer_id bigint not null, status order_status not null, amount numeric(12,2) not null, note text, created_at timestamptz not null)",
-      "pgview_e2e_scratch",
+      "slonview_e2e_scratch",
     );
-    execFileSync("psql", ["-h", "/tmp", "-d", "pgview_e2e_scratch", "-v", "ON_ERROR_STOP=1", "-q", "-f", `${SHOTS}/09-insert.sql`]);
-    const copied = psql("select string_agg(t::text, '|' order by id) from orders t", "pgview_e2e_scratch");
+    execFileSync("psql", ["-h", "/tmp", "-d", "slonview_e2e_scratch", "-v", "ON_ERROR_STOP=1", "-q", "-f", `${SHOTS}/09-insert.sql`]);
+    const copied = psql("select string_agg(t::text, '|' order by id) from orders t", "slonview_e2e_scratch");
     const source = psql(
       "select string_agg(t::text, '|' order by id) from orders t where id in (select id from orders where status='paid' order by created_at desc, id limit 10)",
     );
@@ -354,7 +354,7 @@ try {
     // Filters off again for the next checks.
     await page.click('[aria-label="Remove filter"]');
     await sleep(500);
-    return "10 INSERTs succeeded in pgview_e2e_scratch; rows identical to source";
+    return "10 INSERTs succeeded in slonview_e2e_scratch; rows identical to source";
   });
 
   await check("A filter values with quotes/injection; NULL vs 'NULL' filters", async () => {
@@ -424,7 +424,7 @@ try {
     await clickText("Cancel");
     await until(() => document.body.innerText.includes("Load cancelled."), 3000);
     await sleep(800);
-    const active = psql("select count(*) from pg_stat_activity where datname='pgview_fixture' and state='active' and pid <> pg_backend_pid()");
+    const active = psql("select count(*) from pg_stat_activity where datname='slonview_fixture' and state='active' and pid <> pg_backend_pid()");
     eq(active, "0", "server-side queries still active");
     await page.$eval('input[aria-label="Raw WHERE expression"]', (e) => e.select());
     await page.keyboard.press("Backspace");
@@ -500,10 +500,10 @@ try {
   await check("E2E-11 export orders to CSV", async () => {
     const out = [];
     await openRel("orders");
-    await page.evaluate(() => (window.__nextSavePath = "/tmp/pgview-e2e/11-orders-table.csv"));
+    await page.evaluate(() => (window.__nextSavePath = "/tmp/slonview-e2e/11-orders-table.csv"));
     await page.click('button[title^="Export every row"]');
     await until(() => /Exported [\d,]+ rows to|Export failed/.test(document.body.innerText), 120000);
-    const lines = execFileSync("wc", ["-l", "/tmp/pgview-e2e/11-orders-table.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
+    const lines = execFileSync("wc", ["-l", "/tmp/slonview-e2e/11-orders-table.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
     eq(lines, "1000001", "table export lines");
     out.push(`table export: ${lines} lines`);
     await page.click('[aria-label="Dismiss"]');
@@ -513,11 +513,11 @@ try {
     await until(() => document.body.innerText.includes("Truncated at") && !!document.querySelector(".dvn-scroller"), 30000);
     const h = await page.evaluate(() => document.querySelector(".dvn-scroller").getBoundingClientRect().height);
     assert(h > 100, `SQL result grid collapsed (${h}px)`);
-    await page.evaluate(() => (window.__nextSavePath = "/tmp/pgview-e2e/11-orders-sql.csv"));
+    await page.evaluate(() => (window.__nextSavePath = "/tmp/slonview-e2e/11-orders-sql.csv"));
     await clickText("Export CSV");
     // The results panel's own status ("Exported N rows", no " to <path>" — that is the table toast).
     await until(() => /Exported [\d,]+ rows(?! to)|Export failed/.test(document.body.innerText), 120000);
-    const lines2 = execFileSync("wc", ["-l", "/tmp/pgview-e2e/11-orders-sql.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
+    const lines2 = execFileSync("wc", ["-l", "/tmp/slonview-e2e/11-orders-sql.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
     eq(lines2, "1000001", "SQL export lines");
     out.push(`SQL result export: ${lines2} lines; result grid ${Math.round(h)}px tall`);
     await page.screenshot({ path: `${SHOTS}/11-export.png` });

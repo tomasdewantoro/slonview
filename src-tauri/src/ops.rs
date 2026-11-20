@@ -3,11 +3,11 @@
 //! (`examples/e2e_bridge.rs`) exercise exactly the code the app runs.
 use std::path::Path;
 
-use pgview_core::model::{
+use slonview_core::model::{
     CellRequest, ConnId, ConnProfile, ExportSource, Filter, HistoryEntry, Page, PageRequest, ParsedConn,
     QueryResult, RequestId, SchemaNode, ServerInfo, TableDescription, DEFAULT_SQL_MAX_ROWS,
 };
-use pgview_core::{connurl, AppError, AppResult, Engine};
+use slonview_core::{connurl, AppError, AppResult, Engine};
 use serde_json::Value;
 
 const DEFAULT_HISTORY_LIMIT: u32 = 200;
@@ -158,10 +158,10 @@ pub async fn clear_history(engine: &Engine) -> AppResult<()> {
 mod tests {
     use std::sync::Arc;
 
-    use pgview_core::config::ProfileStore;
-    use pgview_core::history::HistoryStore;
-    use pgview_core::model::{Cursor, FilterOp, Sort};
-    use pgview_core::secrets::{MemorySecretStore, SecretStore};
+    use slonview_core::config::ProfileStore;
+    use slonview_core::history::HistoryStore;
+    use slonview_core::model::{Cursor, FilterOp, Sort};
+    use slonview_core::secrets::{MemorySecretStore, SecretStore};
     use serde_json::json;
 
     use super::*;
@@ -211,7 +211,7 @@ mod tests {
     /// Every data command against the seeded fixture (tests/fixtures/seed.sql).
     #[tokio::test]
     async fn commands_against_fixture() {
-        let url = std::env::var("PGVIEW_TEST_URL").unwrap_or_else(|_| "postgres://tomas@localhost/pgview_fixture".into());
+        let url = std::env::var("SLONVIEW_TEST_URL").unwrap_or_else(|_| "postgres://tomas@localhost/slonview_fixture".into());
         let dir = tempfile::TempDir::new().unwrap();
         let (engine, _) = engine(&dir);
         let parsed = parse_conn_url(&url).await.unwrap();

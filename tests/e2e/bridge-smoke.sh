@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Engine-level E2E against the dev-only HTTP bridge (src-tauri/examples/e2e_bridge.rs),
-# which calls the same `pgview_lib::ops` functions as the Tauri commands.
+# which calls the same `slonview_lib::ops` functions as the Tauri commands.
 #
-#   PGVIEW_E2E_DIR=$(mktemp -d) cargo run -p pgview --example e2e_bridge &   # 127.0.0.1:1499
+#   SLONVIEW_E2E_DIR=$(mktemp -d) cargo run -p slonview --example e2e_bridge &   # 127.0.0.1:1499
 #   tests/e2e/bridge-smoke.sh
 #
 # Needs the seeded fixture DB (tests/fixtures/seed.sql) on local Postgres, psql, jq, curl.
 # Creates one profile + Keychain entry and deletes both at the end.
 set -euo pipefail
 
-B=${PGVIEW_BRIDGE:-http://127.0.0.1:1499/invoke}
-PSQL=(psql -h "${PGHOST:-/tmp}" -d pgview_fixture -Atq)
+B=${SLONVIEW_BRIDGE:-http://127.0.0.1:1499/invoke}
+PSQL=(psql -h "${PGHOST:-/tmp}" -d slonview_fixture -Atq)
 OUT=$(mktemp -d)
 pass=0
 fail=0
@@ -23,7 +23,7 @@ expect() { # name, expected, actual
 }
 
 ID=$(uuidgen | tr 'A-Z' 'a-z')
-PROFILE=$(jq -nc --arg id "$ID" '{id:$id,name:"e2e smoke",host:"localhost",port:5432,database:"pgview_fixture",user:(env.USER),ssl:"disable",readOnly:true,color:null,statementTimeoutMs:30000}')
+PROFILE=$(jq -nc --arg id "$ID" '{id:$id,name:"e2e smoke",host:"localhost",port:5432,database:"slonview_fixture",user:(env.USER),ssl:"disable",readOnly:true,color:null,statementTimeoutMs:30000}')
 cleanup() {
   call delete_profile "{\"id\":\"$ID\"}" >/dev/null || true
   rm -rf "$OUT"

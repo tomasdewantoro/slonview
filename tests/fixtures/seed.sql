@@ -1,5 +1,5 @@
--- pgview test fixture. Usage:
---   dropdb --if-exists pgview_fixture && createdb pgview_fixture && psql -v ON_ERROR_STOP=1 pgview_fixture -f tests/fixtures/seed.sql
+-- Slonview test fixture. Usage:
+--   dropdb --if-exists slonview_fixture && createdb slonview_fixture && psql -v ON_ERROR_STOP=1 slonview_fixture -f tests/fixtures/seed.sql
 
 CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
 
@@ -95,9 +95,9 @@ CREATE TABLE scratch_insert_target (LIKE orders INCLUDING DEFAULTS);
 ANALYZE;
 
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgview_ro') THEN
-    CREATE ROLE pgview_ro LOGIN PASSWORD 'pgview_ro';
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'slonview_ro') THEN
+    CREATE ROLE slonview_ro LOGIN PASSWORD 'slonview_ro';
   END IF;
 END $$;
-GRANT USAGE ON SCHEMA public, "Sales Data" TO pgview_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA public, "Sales Data" TO pgview_ro;
+GRANT USAGE ON SCHEMA public, "Sales Data" TO slonview_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA public, "Sales Data" TO slonview_ro;

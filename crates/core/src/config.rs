@@ -1,5 +1,5 @@
 //! Connection profiles persisted as TOML (no passwords) at
-//! `~/Library/Application Support/pgview/connections.toml`.
+//! `~/Library/Application Support/slonview/connections.toml`.
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 use crate::model::{ConnId, ConnProfile, SslMode};
 use crate::{AppError, AppResult};
 
-/// `~/Library/Application Support/pgview` (created if missing).
+/// `~/Library/Application Support/slonview` (created if missing).
 pub fn app_data_dir() -> AppResult<PathBuf> {
     let base = directories::BaseDirs::new()
         .ok_or_else(|| AppError::internal("cannot determine the home directory"))?;
-    let dir = base.data_dir().join("pgview");
+    let dir = base.data_dir().join("slonview");
     fs::create_dir_all(&dir).map_err(|e| io_error("create", &dir, e))?;
     Ok(dir)
 }
@@ -113,7 +113,7 @@ fn sort_profiles(profiles: &mut [ConnProfile]) {
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> AppResult<()> {
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     fs::create_dir_all(dir).map_err(|e| io_error("create", dir, e))?;
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("pgview");
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("slonview");
     let tmp = dir.join(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4().simple()));
     let result = (|| {
         let mut options = fs::OpenOptions::new();
@@ -155,10 +155,10 @@ mod tests {
     }
 
     #[test]
-    fn app_data_dir_is_application_support_pgview() {
+    fn app_data_dir_is_application_support_slonview() {
         let dir = app_data_dir().unwrap();
         let home = std::env::var("HOME").unwrap();
-        assert_eq!(dir, Path::new(&home).join("Library/Application Support/pgview"));
+        assert_eq!(dir, Path::new(&home).join("Library/Application Support/slonview"));
         assert!(dir.is_dir());
     }
 

@@ -1,4 +1,4 @@
-//! pgview-core: all PostgreSQL, config, and secret logic. No Tauri dependency.
+//! slonview-core: all PostgreSQL, config, and secret logic. No Tauri dependency.
 pub mod config;
 pub mod engine;
 pub mod connurl;

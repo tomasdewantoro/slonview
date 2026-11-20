@@ -207,7 +207,7 @@ const seedProfiles: ConnProfile[] = [
     name: "fixture (local)",
     host: "localhost",
     port: 5432,
-    database: "pgview_fixture",
+    database: "slonview_fixture",
     user: "tomas",
     ssl: "disable",
     readOnly: true,
@@ -368,8 +368,8 @@ async function fetchPage(requestId: string, req: PageRequest): Promise<Page> {
       kind: "sql",
       code: "42501",
       message: "permission denied for table broken_table",
-      detail: "Role pgview_ro lacks SELECT on public.broken_table.",
-      hint: "GRANT SELECT ON public.broken_table TO pgview_ro;",
+      detail: "Role slonview_ro lacks SELECT on public.broken_table.",
+      hint: "GRANT SELECT ON public.broken_table TO slonview_ro;",
       position: null,
     });
   const ids = viewIndexes(t, req);
@@ -519,7 +519,7 @@ export function installMockBackend(): void {
         return parseUrl(a.url);
       case "import_pgpass":
         return [
-          parseUrl("postgres://tomas:pw1@localhost:5432/pgview_fixture"),
+          parseUrl("postgres://tomas:pw1@localhost:5432/slonview_fixture"),
           parseUrl("postgres://report:hunter2@reports.example.com:5433/analytics?sslmode=require"),
           parseUrl("postgres://postgres@127.0.0.1/postgres"),
         ];

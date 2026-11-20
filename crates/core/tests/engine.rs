@@ -1,15 +1,15 @@
 //! Integration tests against the seeded fixture DB (tests/fixtures/seed.sql).
-//! `PGVIEW_TEST_URL` overrides the default `postgres://tomas@localhost/pgview_fixture`.
+//! `SLONVIEW_TEST_URL` overrides the default `postgres://tomas@localhost/slonview_fixture`.
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pgview_core::config::ProfileStore;
-use pgview_core::connurl::parse_conn_url;
-use pgview_core::history::HistoryStore;
-use pgview_core::model::*;
-use pgview_core::secrets::{MemorySecretStore, SecretStore};
-use pgview_core::{AppError, Engine};
+use slonview_core::config::ProfileStore;
+use slonview_core::connurl::parse_conn_url;
+use slonview_core::history::HistoryStore;
+use slonview_core::model::*;
+use slonview_core::secrets::{MemorySecretStore, SecretStore};
+use slonview_core::{AppError, Engine};
 use tempfile::TempDir;
 
 struct Fixture {
@@ -19,7 +19,7 @@ struct Fixture {
 }
 
 fn test_url() -> String {
-    std::env::var("PGVIEW_TEST_URL").unwrap_or_else(|_| "postgres://tomas@localhost/pgview_fixture".into())
+    std::env::var("SLONVIEW_TEST_URL").unwrap_or_else(|_| "postgres://tomas@localhost/slonview_fixture".into())
 }
 
 async fn fixture_with(edit: impl FnOnce(&mut ConnProfile)) -> Fixture {
@@ -79,7 +79,7 @@ async fn connect_reports_server_info() {
     let profile = f.engine.profiles.get(f.conn).unwrap();
     let info = f.engine.test_connection(&profile, None).await.unwrap();
     assert!(info.version.starts_with("PostgreSQL"));
-    assert_eq!(info.database, "pgview_fixture");
+    assert_eq!(info.database, "slonview_fixture");
     assert!(info.read_only);
     let again = f.engine.connect(f.conn).await.unwrap();
     assert!(again.read_only);
@@ -90,7 +90,7 @@ async fn bad_credentials_and_hosts_map_to_typed_errors() {
     let f = fixture().await;
     let mut profile = f.engine.profiles.get(f.conn).unwrap();
     // Local trust auth accepts any password, so an unknown role is the portable auth failure.
-    profile.user = "pgview_core_db_no_such_role".into();
+    profile.user = "slonview_core_db_no_such_role".into();
     profile.ssl = SslMode::Disable;
     let err = f.engine.test_connection(&profile, Some("wrong")).await.unwrap_err();
     assert!(matches!(err, AppError::Auth { .. }), "{err:?}");
@@ -333,8 +333,8 @@ async fn writes_allowed_when_not_read_only() {
         .run_sql(
             "w",
             f.conn,
-            "CREATE TEMP TABLE pgview_core_db_w (a int); INSERT INTO pgview_core_db_w SELECT generate_series(1, 5); \
-             UPDATE pgview_core_db_w SET a = a + 1 WHERE a > 2; SELECT count(*) FROM pgview_core_db_w",
+            "CREATE TEMP TABLE slonview_core_db_w (a int); INSERT INTO slonview_core_db_w SELECT generate_series(1, 5); \
+             UPDATE slonview_core_db_w SET a = a + 1 WHERE a > 2; SELECT count(*) FROM slonview_core_db_w",
             10,
         )
         .await
@@ -345,9 +345,9 @@ async fn writes_allowed_when_not_read_only() {
     assert_eq!(r[3].rows_affected, None);
     assert_eq!(r[3].rows[0][0].as_deref(), Some("5"));
     // An open transaction is rolled back after the call.
-    let r = f.engine.run_sql("tx", f.conn, "BEGIN; CREATE TABLE pgview_core_db_tx (a int)", 10).await.unwrap();
+    let r = f.engine.run_sql("tx", f.conn, "BEGIN; CREATE TABLE slonview_core_db_tx (a int)", 10).await.unwrap();
     assert_eq!(r.len(), 2);
-    let r = f.engine.run_sql("tx2", f.conn, "SELECT to_regclass('pgview_core_db_tx')::text", 10).await.unwrap();
+    let r = f.engine.run_sql("tx2", f.conn, "SELECT to_regclass('slonview_core_db_tx')::text", 10).await.unwrap();
     assert_eq!(r[0].rows[0][0], None);
 }
 

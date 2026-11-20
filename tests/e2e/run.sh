@@ -4,26 +4,26 @@
 #
 #   tests/e2e/run.sh            # bridge smoke + full UI suite
 #
-# Prereqs: seeded `pgview_fixture` (tests/fixtures/seed.sql) on local Postgres via /tmp socket,
+# Prereqs: seeded `slonview_fixture` (tests/fixtures/seed.sql) on local Postgres via /tmp socket,
 # `pnpm install`, a Chromium headless shell (set CHROME=... if not the Playwright cache one).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 source "$HOME/.cargo/env" 2>/dev/null || true
 
-export PGVIEW_E2E_DIR=$(mktemp -d /tmp/pgview-e2e-data.XXXXXX)
-export PGVIEW_E2E_SHOTS=${PGVIEW_E2E_SHOTS:-/tmp/pgview-e2e}
-mkdir -p "$PGVIEW_E2E_SHOTS"
+export SLONVIEW_E2E_DIR=$(mktemp -d /tmp/slonview-e2e-data.XXXXXX)
+export SLONVIEW_E2E_SHOTS=${SLONVIEW_E2E_SHOTS:-/tmp/slonview-e2e}
+mkdir -p "$SLONVIEW_E2E_SHOTS"
 
-cargo build -q -p pgview --example e2e_bridge
-./target/debug/examples/e2e_bridge >"$PGVIEW_E2E_SHOTS/bridge.log" 2>&1 &
+cargo build -q -p slonview --example e2e_bridge
+./target/debug/examples/e2e_bridge >"$SLONVIEW_E2E_SHOTS/bridge.log" 2>&1 &
 BRIDGE_PID=$!
 # Run vite's entry point in this process tree (no pnpm/shim wrapper) so killing $VITE_PID stops it.
-VITE_BRIDGE=1 node node_modules/vite/bin/vite.js --port 1450 --strictPort >"$PGVIEW_E2E_SHOTS/vite.log" 2>&1 &
+VITE_BRIDGE=1 node node_modules/vite/bin/vite.js --port 1450 --strictPort >"$SLONVIEW_E2E_SHOTS/vite.log" 2>&1 &
 VITE_PID=$!
 cleanup() {
   kill "$BRIDGE_PID" "$VITE_PID" 2>/dev/null || true
   wait "$BRIDGE_PID" "$VITE_PID" 2>/dev/null || true
-  rm -rf "$PGVIEW_E2E_DIR"
+  rm -rf "$SLONVIEW_E2E_DIR"
 }
 trap cleanup EXIT
 

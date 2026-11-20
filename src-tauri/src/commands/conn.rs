@@ -1,6 +1,6 @@
 //! Profiles, URL/pgpass parsing, and connection lifecycle.
-use pgview_core::model::{ConnId, ConnProfile, ParsedConn, ServerInfo};
-use pgview_core::AppResult;
+use slonview_core::model::{ConnId, ConnProfile, ParsedConn, ServerInfo};
+use slonview_core::AppResult;
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
 use tauri::{Runtime, State};
 
