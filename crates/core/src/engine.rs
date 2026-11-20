@@ -95,6 +95,10 @@ impl Engine {
         let limit = if req.limit == 0 { DEFAULT_PAGE_LIMIT } else { req.limit };
         let q = paging::page_query(req, &meta, limit)?;
         let guard = self.cancels.register(request_id, client.cancel_token());
+        if q.raw_span.is_some() {
+            query::require_single_statement(&client, &q.sql, &guard)
+                .await.map_err(|e| raw_expression_error(q.raw_span, e))?;
+        }
         let messages = client
             .simple_query(&q.sql)
             .await
@@ -156,6 +160,10 @@ impl Engine {
         let meta = introspect::table_meta(&client, schema, table).await?;
         let (sql, raw_span) = paging::count_query(schema, table, &meta, filters, raw_where)?;
         let guard = self.cancels.register(request_id, client.cancel_token());
+        if raw_span.is_some() {
+            query::require_single_statement(&client, &sql, &guard)
+                .await.map_err(|e| raw_expression_error(raw_span, e))?;
+        }
         let messages = client
             .simple_query(&sql)
             .await
@@ -198,24 +206,44 @@ impl Engine {
         }
         let (session, client) = self.client(conn_id).await?;
         let guard = self.cancels.register(request_id, client.cancel_token());
-        let mut results = Vec::with_capacity(statements.len());
-        let mut outcome = Ok(());
-        for st in &statements {
-            match query::run_statement(&client, &st.text, max_rows, &guard).await {
-                Ok(mut r) => results.append(&mut r),
-                Err(mut e) => {
-                    // Report positions relative to the whole submitted text.
-                    if let AppError::Sql { position: Some(p), .. } = &mut e {
-                        *p += st.char_offset as u32;
+        let outcome = async {
+            if session.profile.read_only {
+                // Preflight the entire script before any user command runs.
+                for st in &statements { reject_read_only(st)?; }
+            }
+            let transaction = if session.profile.read_only {
+                Some(query::begin_read_only(&client, &guard).await?)
+            } else { None };
+            let mut results = Vec::with_capacity(statements.len());
+            for st in &statements {
+                let result = async {
+                    if transaction.is_some() {
+                        query::require_single_statement(&client, &st.text, &guard).await?;
                     }
-                    outcome = Err(e);
-                    break;
+                    let r = query::run_statement(&client, &st.text, max_rows, &guard).await?;
+                    if let Some(start) = &transaction {
+                        if r.len() > 1 { return Err(AppError::internal(query::READ_ONLY_GUARD_ERROR)); }
+                        query::verify_read_only(&client, start, &guard).await?;
+                    }
+                    Ok(r)
+                }.await;
+                match result {
+                    Ok(mut r) => results.append(&mut r),
+                    Err(mut e) => {
+                        if let AppError::Sql { position: Some(p), .. } = &mut e {
+                            *p += st.char_offset as u32;
+                        }
+                        return Err(e);
+                    }
                 }
             }
-        }
+            Ok(results)
+        }.await;
         drop(guard);
+        // ROLLBACK always ends the wrapper, including aborted/cancelled runs;
+        // RESET ALL and profile setup then clean the pooled session as before.
         restore_session(client, &session.profile).await;
-        outcome.map(|()| results)
+        outcome
     }
 
     /// No-op if request_id unknown or already finished.
@@ -246,20 +274,34 @@ impl Engine {
                 if statements.len() != 1 {
                     return Err(AppError::invalid("export needs exactly one SQL statement"));
                 }
-                let text = statements.remove(0).text;
-                let span = paging::RawSpan { start: 0, chars: text.chars().count() };
-                (text, Some(span))
+                let statement = statements.remove(0);
+                if session.profile.read_only { reject_read_only(&statement)?; }
+                let span = paging::RawSpan { start: 0, chars: statement.text.chars().count() };
+                (statement.text, Some(span))
             }
         };
-        // A long export must not hit the interactive statement_timeout.
-        client
-            .batch_execute("SET statement_timeout = 0")
-            .await
-            .map_err(|e| conn::map_query_error(e, false))?;
         let guard = self.cancels.register(request_id, client.cancel_token());
-        let result = export::copy_to_file(&client, &select, path, &guard)
-            .await
-            .map_err(|e| paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e));
+        let result = async {
+            // A long export must not hit the interactive statement_timeout.
+            client.batch_execute("SET statement_timeout = 0").await.map_err(|e| guard.map_err(e))?;
+            let transaction = if session.profile.read_only {
+                Some(query::begin_read_only(&client, &guard).await?)
+            } else { None };
+            let copy = export::copy_sql(&select);
+            query::require_single_statement(&client, &copy, &guard).await.map_err(|e| {
+                let e = paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e);
+                if matches!(source, ExportSource::Table { .. }) { raw_expression_error(None, e) } else { e }
+            })?;
+            let rows = export::copy_to_file(&client, &select, path, &guard)
+                .await.map_err(|e| paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e))?;
+            if let Some(start) = &transaction {
+                if let Err(e) = query::verify_read_only(&client, start, &guard).await {
+                    let _ = tokio::fs::remove_file(path).await;
+                    return Err(e);
+                }
+            }
+            Ok(rows)
+        }.await;
         drop(guard);
         restore_session(client, &session.profile).await;
         result
@@ -286,6 +328,26 @@ impl Engine {
             tracing::warn!("failed to append query history: {e}");
         }
     }
+}
+
+fn reject_read_only(statement: &crate::split::Statement) -> AppResult<()> {
+    if let Some(keyword) = crate::split::read_only_rejection(&statement.text) {
+        return Err(AppError::invalid_at(
+            format!("Read-only mode: command ({keyword}) is not allowed. Turn on “Allow writes” for this connection to run it."),
+            statement.char_offset as u32 + 1,
+        ));
+    }
+    Ok(())
+}
+
+fn raw_expression_error(span: Option<paging::RawSpan>, e: AppError) -> AppError {
+    let mut e = paging::RawSpan::relocate(span, e);
+    if let AppError::Sql { code, message, .. } = &mut e
+        && code == "42601" && message.contains("multiple commands")
+    {
+        *message = "Raw WHERE must be a single expression; multiple SQL commands are not allowed.".into();
+    }
+    e
 }
 
 async fn server_info(client: &Client) -> AppResult<ServerInfo> {

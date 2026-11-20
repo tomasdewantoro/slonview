@@ -480,6 +480,28 @@ try {
     return msg.replace(/\n+/g, " ");
   });
 
+  await check("RO-01 explicit transaction escape rejected", async () => {
+    await setSql("BEGIN READ WRITE; DELETE FROM orders; COMMIT;");
+    await runAll();
+    await until(() => document.querySelector('[role="alert"]')?.innerText.includes("Read-only mode:"));
+    const msg = await page.$eval('[role="alert"]', (e) => e.innerText);
+    assert(msg.includes("BEGIN") && msg.includes("Allow writes"), msg);
+    eq(psql("select count(*) from orders"), "1000000", "orders intact after BEGIN bypass");
+    return msg.replace(/\n+/g, " ");
+  });
+
+  await check("RO-02 GUC escape rolled back and next run stays read-only", async () => {
+    await setSql("SET default_transaction_read_only = off; DELETE FROM orders;");
+    await runAll();
+    await until(() => document.querySelector('[role="alert"]')?.innerText.includes("25006"));
+    eq(psql("select count(*) from orders"), "1000000", "orders intact after SET bypass");
+    await setSql("DELETE FROM orders;");
+    await runAll();
+    await until(() => document.querySelector('[role="alert"]')?.innerText.includes("25006"));
+    eq(psql("select count(*) from orders"), "1000000", "orders intact on subsequent run");
+    return "SET bypass and following DELETE both SQLSTATE 25006; 1,000,000 orders remain";
+  });
+
   await check("E2E-08 SELECT pg_sleep(60) then Esc", async () => {
     await setSql("SELECT pg_sleep(60)");
     await runAll();

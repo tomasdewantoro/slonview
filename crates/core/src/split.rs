@@ -89,6 +89,77 @@ fn is_ident_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '$'
 }
 
+/// Leading SQL words, with nested comments skipped. Identifiers must match a
+/// whole token: `begin_date` is not BEGIN. Quotes/punctuation end the prefix.
+fn leading_words(sql: &str) -> impl Iterator<Item = &str> {
+    let mut rest = sql;
+    std::iter::from_fn(move || {
+        loop {
+            rest = rest.trim_start();
+            if let Some(comment) = rest.strip_prefix("--") {
+                rest = comment.split_once('\n').map_or("", |(_, tail)| tail);
+            } else if rest.starts_with("/*") {
+                let mut depth = 1;
+                let mut i = 2;
+                let bytes = rest.as_bytes();
+                while i + 1 < bytes.len() && depth != 0 {
+                    match &bytes[i..i + 2] {
+                        b"/*" => { depth += 1; i += 2; }
+                        b"*/" => { depth -= 1; i += 2; }
+                        _ => i += 1,
+                    }
+                }
+                rest = if depth == 0 { &rest[i..] } else { "" };
+            } else {
+                break;
+            }
+        }
+        let end = rest.find(|c: char| !is_ident_char(c)).unwrap_or(rest.len());
+        if end == 0 { return None; }
+        let word = &rest[..end];
+        rest = &rest[end..];
+        Some(word)
+    })
+}
+
+/// Commands that can end/change the wrapper, or cannot run inside it.
+/// SAVEPOINT, RELEASE [SAVEPOINT], and ROLLBACK [WORK|TRANSACTION] TO stay inside it.
+pub(crate) fn read_only_rejection(sql: &str) -> Option<&'static str> {
+    let mut words = leading_words(sql);
+    let first = words.next()?;
+    let second = words.next().unwrap_or("");
+    let third = words.next().unwrap_or("");
+    let is = |word: &str, keyword: &str| word.eq_ignore_ascii_case(keyword);
+    if is(first, "ROLLBACK") {
+        return if is(second, "TO") || ((is(second, "WORK") || is(second, "TRANSACTION")) && is(third, "TO")) {
+            None
+        } else { Some("ROLLBACK") };
+    }
+    for keyword in ["BEGIN", "START", "COMMIT", "END", "ABORT", "VACUUM", "LOCK"] {
+        if is(first, keyword) { return Some(keyword); }
+    }
+    if is(first, "PREPARE") && is(second, "TRANSACTION") { return Some("PREPARE TRANSACTION"); }
+    if is(first, "SET") {
+        if is(second, "TRANSACTION") { return Some("SET TRANSACTION"); }
+        if is(second, "SESSION") && is(third, "CHARACTERISTICS") { return Some("SET SESSION CHARACTERISTICS"); }
+    }
+    if is(first, "ALTER") && is(second, "SYSTEM") { return Some("ALTER SYSTEM"); }
+    if is(first, "CREATE") || is(first, "DROP") {
+        if is(second, "DATABASE") { return Some(if is(first, "CREATE") { "CREATE DATABASE" } else { "DROP DATABASE" }); }
+        if is(second, "TABLESPACE") { return Some(if is(first, "CREATE") { "CREATE TABLESPACE" } else { "DROP TABLESPACE" }); }
+    }
+    if is(first, "CREATE") && (is(second, "INDEX") || (is(second, "UNIQUE") && is(third, "INDEX"))) {
+        let concurrent = if is(second, "INDEX") { third } else { words.next().unwrap_or("") };
+        if is(concurrent, "CONCURRENTLY") { return Some("CREATE INDEX CONCURRENTLY"); }
+    }
+    // REINDEX [(options)] target CONCURRENTLY ...: CONCURRENTLY is outside
+    // parentheses. Server Parse still rejects malformed statements before execution.
+    if is(first, "REINDEX") && sql.split(|c: char| !is_ident_char(c)).any(|w| is(w, "CONCURRENTLY")) {
+        return Some("REINDEX CONCURRENTLY");
+    }
+    None
+}
+
 /// Returns the index just past the closing quote (or `chars.len()` if unterminated).
 fn skip_single_quoted(chars: &[char], mut i: usize, backslash_escapes: bool) -> usize {
     while i < chars.len() {
@@ -174,6 +245,25 @@ mod tests {
 
     fn texts(sql: &str) -> Vec<String> {
         split_statements(sql).into_iter().map(|s| s.text).collect()
+    }
+
+    #[test]
+    fn read_only_leading_keywords() {
+        for (sql, expected) in [
+            (" \n-- comment\n/* outer /* nested */ */ BeGiN;", Some("BEGIN")),
+            ("begin_date", None), ("begin$foo", None), ("\"BEGIN\"", None),
+            ("SAVEPOINT a", None), ("RELEASE SAVEPOINT a", None),
+            ("ROLLBACK TO a", None), ("rollback work to savepoint a", None),
+            ("ROLLBACK TRANSACTION TO a", None), ("ROLLBACK WORK", Some("ROLLBACK")),
+            ("PREPARE x AS SELECT 1", None), ("prepare /* c */ transaction 'x'", Some("PREPARE TRANSACTION")),
+            ("SET default_transaction_read_only = off", None),
+            ("set transaction read write", Some("SET TRANSACTION")),
+            ("set session characteristics as transaction read write", Some("SET SESSION CHARACTERISTICS")),
+            ("LOCK TABLE orders IN ACCESS SHARE MODE", Some("LOCK")),
+            ("CREATE /*x*/ UNIQUE INDEX CONCURRENTLY x ON t(a)", Some("CREATE INDEX CONCURRENTLY")),
+            ("REINDEX (VERBOSE) TABLE CONCURRENTLY t", Some("REINDEX CONCURRENTLY")),
+            ("SELECT 'COMMIT'", None), ("/* COMMIT */ select 1", None),
+        ] { assert_eq!(read_only_rejection(sql), expected, "{sql}"); }
     }
 
     #[test]

@@ -6,7 +6,7 @@ use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::conn::CancelGuard;
 use crate::model::{Column, QueryResult};
-use crate::AppResult;
+use crate::{AppError, AppResult};
 
 /// Runs one statement. Normally yields one result; a statement the splitter could
 /// not separate yields one result per server-side command.
@@ -55,4 +55,41 @@ pub(crate) async fn run_statement(
         }
     }
     Ok(results)
+}
+
+/// Server Parse is authoritative about command boundaries. A post-execution
+/// check alone is too late if a mis-split piece contains COMMIT followed by writes.
+pub(crate) async fn require_single_statement(client: &Client, sql: &str, guard: &CancelGuard<'_>) -> AppResult<()> {
+    client.prepare(sql).await.map(|_| ()).map_err(|e| guard.map_err(e))
+}
+
+const READ_ONLY_STATE: &str = "SELECT current_setting('transaction_read_only'), extract(epoch FROM now())::text";
+pub(crate) const READ_ONLY_GUARD_ERROR: &str =
+    "Read-only guard: statement left the read-only transaction; it was rolled back.";
+
+/// The SELECT acquires a snapshot, preventing subsequent SET TRANSACTION READ
+/// WRITE (including SET transaction_read_only / set_config) from upgrading it.
+pub(crate) async fn begin_read_only(client: &Client, guard: &CancelGuard<'_>) -> AppResult<String> {
+    client.batch_execute("BEGIN TRANSACTION READ ONLY").await.map_err(|e| guard.map_err(e))?;
+    read_only_state(client, guard).await
+}
+
+async fn read_only_state(client: &Client, guard: &CancelGuard<'_>) -> AppResult<String> {
+    let messages = client.simple_query(READ_ONLY_STATE).await.map_err(|e| guard.map_err(e))?;
+    for message in messages {
+        if let SimpleQueryMessage::Row(row) = message {
+            if row.get(0) == Some("on") && let Some(start) = row.get(1) {
+                return Ok(start.to_owned());
+            }
+            break;
+        }
+    }
+    Err(AppError::internal(READ_ONLY_GUARD_ERROR))
+}
+
+pub(crate) async fn verify_read_only(client: &Client, start: &str, guard: &CancelGuard<'_>) -> AppResult<()> {
+    if read_only_state(client, guard).await? != start {
+        return Err(AppError::internal(READ_ONLY_GUARD_ERROR));
+    }
+    Ok(())
 }

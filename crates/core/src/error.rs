@@ -35,14 +35,21 @@ pub enum AppError {
     NotConnected,
     /// Unknown profile, missing table, bad input from the frontend.
     #[error("{message}")]
-    Invalid { message: String },
+    Invalid {
+        message: String,
+        /// 1-based character position in the submitted SQL, when the input is SQL text.
+        position: Option<u32>,
+    },
     #[error("{message}")]
     Internal { message: String },
 }
 
 impl AppError {
     pub fn invalid(message: impl Into<String>) -> Self {
-        Self::Invalid { message: message.into() }
+        Self::Invalid { message: message.into(), position: None }
+    }
+    pub fn invalid_at(message: impl Into<String>, position: u32) -> Self {
+        Self::Invalid { message: message.into(), position: Some(position) }
     }
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal { message: message.into() }

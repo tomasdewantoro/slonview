@@ -88,8 +88,8 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
         if (
           view &&
           "kind" in error &&
-          error.kind === "sql" &&
-          error.position !== null &&
+          (error.kind === "sql" || error.kind === "invalid") &&
+          error.position != null &&
           executed.docOffset !== null &&
           view.state.doc.toString() === executed.doc
         ) {

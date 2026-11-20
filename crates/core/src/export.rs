@@ -22,9 +22,14 @@ pub(crate) async fn copy_to_file(client: &Client, select: &str, path: &Path, gua
 /// Text placed before the caller's SELECT; error positions shift by its length.
 pub(crate) const COPY_PREFIX: &str = "COPY (";
 
+/// The exact COPY statement sent for `select`; also used for the server-side Parse check.
+pub(crate) fn copy_sql(select: &str) -> String {
+    format!("{COPY_PREFIX}{select}) TO STDOUT WITH (FORMAT csv, HEADER true)")
+}
+
 async fn copy_inner(client: &Client, select: &str, path: &Path, guard: &CancelGuard<'_>) -> AppResult<u64> {
     let io_err = |e: std::io::Error| AppError::internal(format!("writing {}: {e}", path.display()));
-    let copy = format!("{COPY_PREFIX}{select}) TO STDOUT WITH (FORMAT csv, HEADER true)");
+    let copy = copy_sql(select);
     let stream = client.copy_out(copy.as_str()).await.map_err(|e| guard.map_err(e))?;
     pin_mut!(stream);
     let mut out = BufWriter::with_capacity(1 << 20, tokio::fs::File::create(path).await.map_err(io_err)?);

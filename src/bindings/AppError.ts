@@ -12,4 +12,8 @@ code: string, message: string, detail: string | null, hint: string | null,
 /**
  * 1-based character position in the statement, if reported.
  */
-position: number | null, } | { "kind": "cancelled" } | { "kind": "timeout" } | { "kind": "notConnected" } | { "kind": "invalid", message: string, } | { "kind": "internal", message: string, };
+position: number | null, } | { "kind": "cancelled" } | { "kind": "timeout" } | { "kind": "notConnected" } | { "kind": "invalid", message: string, 
+/**
+ * 1-based character position in the submitted SQL, when the input is SQL text.
+ */
+position: number | null, } | { "kind": "internal", message: string, };

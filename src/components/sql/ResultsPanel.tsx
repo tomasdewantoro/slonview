@@ -151,6 +151,7 @@ function ErrorPanel({ error }: { error: AppError | Error }) {
     return <div className="flex h-full items-center justify-center text-neutral-500">Query cancelled.</div>;
   }
   const sqlError = "kind" in error && error.kind === "sql" ? error : null;
+  const invalidAt = "kind" in error && error.kind === "invalid" && error.position != null ? error.position : null;
   return (
     <div className="h-full overflow-auto p-3">
       <div role="alert" className="flex gap-2 rounded border border-red-300 bg-red-50 p-3 text-red-900 dark:border-red-900 dark:bg-red-950/50 dark:text-red-200">
@@ -165,6 +166,7 @@ function ErrorPanel({ error }: { error: AppError | Error }) {
               {sqlError.position !== null && ` · position ${sqlError.position}`}
             </p>
           )}
+          {invalidAt !== null && <p className="font-mono text-xs text-red-700/80 tabular-nums dark:text-red-300/70">position {invalidAt}</p>}
         </div>
       </div>
     </div>

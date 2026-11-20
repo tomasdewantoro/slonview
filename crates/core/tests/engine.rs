@@ -326,6 +326,115 @@ async fn read_only_blocks_writes() {
 }
 
 #[tokio::test]
+async fn read_only_preflights_transaction_and_maintenance_commands() {
+    let f = fixture().await;
+    let writable = fixture_with(|p| p.read_only = false).await;
+    for command in [
+        "BEGIN READ WRITE", "START TRANSACTION", "COMMIT", "END", "ROLLBACK", "ABORT",
+        "PREPARE TRANSACTION 'x'", "COMMIT PREPARED 'x'", "ROLLBACK PREPARED 'x'",
+        "SET TRANSACTION READ WRITE", "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
+        "VACUUM orders", "CREATE DATABASE ro_guard_db", "DROP DATABASE ro_guard_db",
+        "CREATE TABLESPACE ro_guard_space LOCATION '/tmp'", "DROP TABLESPACE ro_guard_space",
+        "ALTER SYSTEM SET work_mem = '8MB'", "CREATE INDEX CONCURRENTLY x ON orders(id)",
+        "CREATE UNIQUE INDEX CONCURRENTLY x ON orders(id)", "REINDEX TABLE CONCURRENTLY orders",
+        "LOCK TABLE orders IN ACCESS EXCLUSIVE MODE",
+    ] {
+        let sql = format!("SELECT 'ñ';  /* comment */ {command}; CREATE TABLE ro_guard_escape(a int)");
+        let err = f.engine.run_sql("preflight", f.conn, &sql, 10).await.unwrap_err();
+        assert!(matches!(err, AppError::Invalid { position: Some(13), ref message } if message.contains("Read-only mode:") && message.contains("Allow writes")), "{command}: {err:?}");
+    }
+    for script in [
+        "BEGIN READ WRITE; CREATE TABLE ro_guard_escape(a int); COMMIT",
+        "BEGIN READ ONLY; SET TRANSACTION READ WRITE; CREATE TABLE ro_guard_escape(a int); COMMIT",
+        "COMMIT; BEGIN READ WRITE; CREATE TABLE ro_guard_escape(a int); COMMIT",
+        "SET default_transaction_read_only = off; COMMIT; CREATE TABLE ro_guard_escape(a int)",
+    ] {
+        assert!(matches!(f.engine.run_sql("escape", f.conn, script, 10).await.unwrap_err(), AppError::Invalid { .. }));
+    }
+    assert_eq!(psql_values(&writable, "SELECT to_regclass('ro_guard_escape')::text").await[0][0], None);
+    assert!(f.engine.history.list(Some(f.conn), Some("ro_guard_escape"), 100).unwrap().iter().all(|h| h.error.is_some()));
+}
+
+#[tokio::test]
+async fn read_only_snapshot_and_guc_changes_cannot_enable_writes() {
+    let f = fixture().await;
+    for script in [
+        "SET default_transaction_read_only = off; DELETE FROM scratch_insert_target",
+        "SET transaction_read_only = off; DELETE FROM scratch_insert_target",
+        "SELECT set_config('transaction_read_only','off',true); DELETE FROM scratch_insert_target",
+    ] {
+        let err = f.engine.run_sql("guc", f.conn, script, 10).await.unwrap_err();
+        assert!(matches!(err, AppError::Sql { ref code, .. } if code == "25006" || code == "25001"), "{err:?}");
+        assert_eq!(psql_values(&f, "SHOW transaction_read_only").await[0][0].as_deref(), Some("on"));
+    }
+    f.engine.run_sql("setconfig", f.conn, "SELECT set_config('default_transaction_read_only','off',false)", 10).await.unwrap();
+    let err = f.engine.run_sql("later", f.conn, "DELETE FROM scratch_insert_target", 10).await.unwrap_err();
+    assert!(matches!(err, AppError::Sql { ref code, .. } if code == "25006"), "{err:?}");
+    let r = f.engine.run_sql("savepoints", f.conn,
+        "SAVEPOINT a; SELECT 1; ROLLBACK TO SAVEPOINT a; RELEASE a; SELECT 2", 10).await.unwrap();
+    assert_eq!(r.len(), 5);
+    assert_eq!(r[1].rows[0][0].as_deref(), Some("1"));
+    assert_eq!(r[4].rows[0][0].as_deref(), Some("2"));
+    let err = f.engine.run_sql("nextval", f.conn, "SELECT nextval('orders_id_seq')", 10).await.unwrap_err();
+    assert!(matches!(err, AppError::Sql { ref code, .. } if code == "25006"), "{err:?}");
+}
+
+#[tokio::test]
+async fn writable_explicit_transaction_still_commits() {
+    let f = fixture_with(|p| p.read_only = false).await;
+    let sql = "BEGIN; CREATE TABLE ro_guard_writable(a int); INSERT INTO ro_guard_writable VALUES (1); COMMIT";
+    assert_eq!(f.engine.run_sql("write-tx", f.conn, sql, 10).await.unwrap().len(), 4);
+    assert_eq!(psql_values(&f, "SELECT count(*) FROM ro_guard_writable").await[0][0].as_deref(), Some("1"));
+    f.engine.run_sql("cleanup", f.conn, "DROP TABLE ro_guard_writable", 10).await.unwrap();
+}
+
+#[tokio::test]
+async fn raw_where_rejects_multiple_server_commands_in_all_modes() {
+    let verifier = fixture_with(|p| p.read_only = false).await;
+    let before = psql_values(&verifier, "SELECT count(*) FROM scratch_insert_target").await;
+    for read_only in [true, false] {
+        let f = fixture_with(|p| p.read_only = read_only).await;
+        let raw = "true); COMMIT; SET default_transaction_read_only=off; COMMIT; DELETE FROM scratch_insert_target; SELECT (1";
+        let mut req = page_req(f.conn, "public", "scratch_insert_target");
+        req.raw_where = Some(raw.into());
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("injected.csv");
+        let source = ExportSource::Table { conn_id: f.conn, schema: "public".into(), table: "scratch_insert_target".into(),
+            filters: vec![], raw_where: Some(raw.into()), sort: vec![] };
+        let errors = [
+            f.engine.fetch_page("raw-page", &req).await.unwrap_err(),
+            f.engine.count_exact("raw-count", f.conn, "public", "scratch_insert_target", &[], Some(raw)).await.unwrap_err(),
+            f.engine.export_csv("raw-export", &source, &path).await.unwrap_err(),
+        ];
+        for err in errors { assert!(matches!(err, AppError::Invalid { .. } | AppError::Sql { .. }), "{err:?}"); }
+        assert!(!path.exists());
+        assert_eq!(psql_values(&verifier, "SELECT count(*) FROM scratch_insert_target").await, before);
+    }
+}
+
+#[tokio::test]
+async fn read_only_export_rejects_writes_and_splitter_disagreement() {
+    let f = fixture().await;
+    let verifier = fixture_with(|p| p.read_only = false).await;
+    let before = psql_values(&verifier, "SELECT count(*) FROM scratch_insert_target").await;
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("readonly.csv");
+    for sql in ["DELETE FROM scratch_insert_target RETURNING *", "BEGIN READ WRITE", "COMMIT", "VACUUM orders"] {
+        let source = ExportSource::Sql { conn_id: f.conn, sql: sql.into() };
+        assert!(f.engine.export_csv("write-export", &source, &path).await.is_err());
+        assert!(!path.exists());
+    }
+    // PostgreSQL treats non-ASCII bytes (including emoji) as identifier letters;
+    // our splitter treats this emoji as a boundary and consumes a dollar body.
+    // Server Parse must reject the resulting piece before any command executes.
+    let sql = "SELECT 1 AS a😀$tag$; COMMIT; SET default_transaction_read_only=off; COMMIT; DELETE FROM scratch_insert_target; SELECT 1 AS a😀$tag$";
+    assert!(f.engine.run_sql("split-edge", f.conn, sql, 10).await.is_err());
+    let src = ExportSource::Sql { conn_id: f.conn, sql: "SELECT 1 AS n".into() };
+    assert_eq!(f.engine.export_csv("good-export", &src, &path).await.unwrap(), 1);
+    assert_eq!(psql_values(&verifier, "SELECT count(*) FROM scratch_insert_target").await, before);
+}
+
+#[tokio::test]
 async fn writes_allowed_when_not_read_only() {
     let f = fixture_with(|p| p.read_only = false).await;
     let r = f
