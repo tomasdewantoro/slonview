@@ -107,3 +107,21 @@ Run hygiene: each run uses a fresh temp profile dir (never `~/Library/Applicatio
 - "App memory < 600 MB" as total process RSS of the Tauri app: only the JS heap (202 MB) and the engine were measured.
 - E2E-LIVE-01 (TLS remote, `sslmode=require`): no remote credentials available.
 - `pnpm tauri build` / `.dmg` / Spotlight launch (BUILD-13).
+
+## 6. Read-only hardening (2026-11-21)
+
+Branch `feat/readonly-hardening`. Problem found by the brand review: on a read-only connection, the SQL editor and Raw WHERE could still write (`BEGIN READ WRITE`, `SET TRANSACTION READ WRITE`, `COMMIT` then reopen, `SET default_transaction_read_only = off`, multi-command Raw WHERE, and a single-expression `set_config(...)` that turned off the pooled session's read-only default).
+
+| Path | Protection |
+|---|---|
+| SQL editor, read-only | Whole script preflighted: `BEGIN`, `START`, `COMMIT`, `END`, `ROLLBACK` (except `ROLLBACK TO`), `ABORT`, `PREPARE TRANSACTION`, `SET TRANSACTION`, `SET SESSION CHARACTERISTICS`, `LOCK`, `VACUUM`, `ALTER SYSTEM`, `CREATE/DROP DATABASE`, `CREATE/DROP TABLESPACE`, `CREATE [UNIQUE] INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY` are refused with position before anything runs. Script runs inside `BEGIN TRANSACTION READ ONLY` + snapshot; each piece is Parse-checked as a single command; after each piece the guard verifies the same read-only transaction. Session reset afterwards. |
+| Raw WHERE (browse, count), all modes | Server Parse check rejects multi-command text ("Raw WHERE must be a single expression…"). Read-only mode: runs inside a READ ONLY transaction, session reset afterwards. |
+| Export (table and SQL source) | Same Parse check on the exact COPY statement; read-only mode wraps in a READ ONLY transaction and verifies it after COPY; partial file removed on failure. |
+
+Tests: `read_only_preflights_transaction_and_maintenance_commands`, `read_only_snapshot_and_guc_changes_cannot_enable_writes`, `raw_where_rejects_multiple_server_commands_in_all_modes`, `read_only_raw_where_cannot_change_session_or_write` (fails without the fix), `read_only_export_rejects_writes_and_splitter_disagreement`, `writable_explicit_transaction_still_commits`, `split::tests::read_only_leading_keywords`; UI checks RO-01 (`BEGIN READ WRITE; DELETE FROM orders; COMMIT;` refused, 1,000,000 rows remain) and RO-02 (SET bypass then DELETE both 25006).
+
+Verified residual limits (documented in README): `nextval` is rejected inside the read-only transaction (25006); `CREATE TEMP TABLE` is rejected; `pg_advisory_lock` succeeds; extensions that open their own connections (`dblink`, `postgres_fdw`) are not covered. For a hard guarantee, use a `SELECT`-only role.
+
+Overhead (local PostgreSQL 18.4 over Unix socket, 50 `fetch_page` calls of 500 `orders` rows via the engine bridge): no Raw WHERE median 5.0 ms (p90 6.0); with Raw WHERE median 6.6 ms (p90 7.0), i.e. about +1.6 ms.
+
+Results: `cargo test --workspace` (79 unit + 26 integration), clippy clean, `pnpm typecheck`, `pnpm test` 59/59, `tests/e2e/run.sh` bridge 24/24, UI 24/24.
