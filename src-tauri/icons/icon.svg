@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- macOS icon grid: 824x824 rounded square centred on a 1024 canvas. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#273445"/>
+      <stop offset="1" stop-color="#1f2937"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#bg)"/>
+  <!-- Table-grid glyph: solid header row, outlined body, one selected cell. -->
+  <g transform="translate(232 262)">
+    <rect x="0" y="0" width="560" height="500" rx="56" fill="none" stroke="#2dd4bf" stroke-width="40"/>
+    <path d="M56 0 H504 A56 56 0 0 1 560 56 V130 H0 V56 A56 56 0 0 1 56 0 Z" fill="#2dd4bf"/>
+    <path d="M0 253 H560 M0 376 H560 M187 130 V500 M373 130 V500" stroke="#2dd4bf" stroke-width="28" stroke-opacity="0.55" fill="none"/>
+    <rect x="187" y="253" width="186" height="123" fill="#2dd4bf"/>
+  </g>
+</svg>
