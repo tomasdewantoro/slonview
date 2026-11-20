@@ -341,7 +341,8 @@ async fn read_only_preflights_transaction_and_maintenance_commands() {
     ] {
         let sql = format!("SELECT 'ñ';  /* comment */ {command}; CREATE TABLE ro_guard_escape(a int)");
         let err = f.engine.run_sql("preflight", f.conn, &sql, 10).await.unwrap_err();
-        assert!(matches!(err, AppError::Invalid { position: Some(13), ref message } if message.contains("Read-only mode:") && message.contains("Allow writes")), "{command}: {err:?}");
+        // `/* comment */ …` starts at char 14 (1-based), after "SELECT 'ñ';" (11 chars) and two spaces.
+        assert!(matches!(err, AppError::Invalid { position: Some(14), ref message } if message.contains("Read-only mode:") && message.contains("Allow writes")), "{command}: {err:?}");
     }
     for script in [
         "BEGIN READ WRITE; CREATE TABLE ro_guard_escape(a int); COMMIT",
@@ -410,6 +411,40 @@ async fn raw_where_rejects_multiple_server_commands_in_all_modes() {
         assert!(!path.exists());
         assert_eq!(psql_values(&verifier, "SELECT count(*) FROM scratch_insert_target").await, before);
     }
+}
+
+#[tokio::test]
+async fn read_only_raw_where_cannot_change_session_or_write() {
+    // A single-expression Raw WHERE can still call set_config/nextval. In read-only mode
+    // it runs inside a READ ONLY transaction and the session is reset afterwards.
+    let f = fixture().await;
+    let verifier = fixture_with(|p| p.read_only = false).await;
+    let seq_before = psql_values(&verifier, "SELECT last_value::text FROM orders_id_seq").await;
+    let mut req = page_req(f.conn, "public", "no_pk");
+    req.raw_where = Some("set_config('default_transaction_read_only', 'off', false) IS NOT NULL".into());
+    // More pages than the pool size (4), so every pooled session has run the expression.
+    for i in 0..6 {
+        f.engine.fetch_page(&format!("guc-{i}"), &req).await.unwrap();
+    }
+    // Every pooled session must still default to read-only. Probe through the pool with a
+    // count whose Raw WHERE is true only while the session default is still on.
+    for i in 0..6 {
+        let n = f.engine
+            .count_exact(&format!("probe-{i}"), f.conn, "public", "no_pk", &[],
+                Some("current_setting('default_transaction_read_only') = 'on'"))
+            .await
+            .unwrap();
+        assert_eq!(n, 1200, "pooled session {i} lost default_transaction_read_only");
+    }
+    req.raw_where = Some("nextval('orders_id_seq') > 0".into());
+    let err = f.engine.fetch_page("nextval", &req).await.unwrap_err();
+    assert!(matches!(err, AppError::Sql { ref code, .. } if code == "25006"), "{err:?}");
+    let err = f.engine
+        .count_exact("nextval-count", f.conn, "public", "no_pk", &[], Some("nextval('orders_id_seq') > 0"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::Sql { ref code, .. } if code == "25006"), "{err:?}");
+    assert_eq!(psql_values(&verifier, "SELECT last_value::text FROM orders_id_seq").await, seq_before);
 }
 
 #[tokio::test]

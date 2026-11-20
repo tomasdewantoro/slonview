@@ -90,20 +90,25 @@ impl Engine {
 
     pub async fn fetch_page(&self, request_id: &str, req: &PageRequest) -> AppResult<Page> {
         let started = Instant::now();
-        let (_, client) = self.client(req.conn_id).await?;
+        let (session, client) = self.client(req.conn_id).await?;
         let meta = introspect::table_meta(&client, &req.schema, &req.table).await?;
         let limit = if req.limit == 0 { DEFAULT_PAGE_LIMIT } else { req.limit };
         let q = paging::page_query(req, &meta, limit)?;
         let guard = self.cancels.register(request_id, client.cancel_token());
-        if q.raw_span.is_some() {
-            query::require_single_statement(&client, &q.sql, &guard)
-                .await.map_err(|e| raw_expression_error(q.raw_span, e))?;
-        }
-        let messages = client
-            .simple_query(&q.sql)
-            .await
-            .map_err(|e| paging::RawSpan::relocate(q.raw_span, guard.map_err(e)))?;
-        drop(guard);
+        let messages = if q.raw_span.is_some() {
+            // User text: same protection as the SQL editor, then reset the pooled session.
+            let result = raw_where_query(&client, &session.profile, &q.sql, q.raw_span, &guard).await;
+            drop(guard);
+            restore_session(client, &session.profile).await;
+            result?
+        } else {
+            let messages = client
+                .simple_query(&q.sql)
+                .await
+                .map_err(|e| guard.map_err(e))?;
+            drop(guard);
+            messages
+        };
 
         let mut rows = Vec::with_capacity(limit as usize + 1);
         let mut truncated = Vec::new();
@@ -156,18 +161,18 @@ impl Engine {
         filters: &[Filter],
         raw_where: Option<&str>,
     ) -> AppResult<i64> {
-        let (_, client) = self.client(conn_id).await?;
+        let (session, client) = self.client(conn_id).await?;
         let meta = introspect::table_meta(&client, schema, table).await?;
         let (sql, raw_span) = paging::count_query(schema, table, &meta, filters, raw_where)?;
         let guard = self.cancels.register(request_id, client.cancel_token());
-        if raw_span.is_some() {
-            query::require_single_statement(&client, &sql, &guard)
-                .await.map_err(|e| raw_expression_error(raw_span, e))?;
-        }
-        let messages = client
-            .simple_query(&sql)
-            .await
-            .map_err(|e| paging::RawSpan::relocate(raw_span, guard.map_err(e)))?;
+        let messages = if raw_span.is_some() {
+            let result = raw_where_query(&client, &session.profile, &sql, raw_span, &guard).await;
+            drop(guard);
+            restore_session(client, &session.profile).await;
+            result?
+        } else {
+            client.simple_query(&sql).await.map_err(|e| guard.map_err(e))?
+        };
         first_value(&messages)
             .flatten()
             .and_then(|v| v.parse().ok())
@@ -294,11 +299,11 @@ impl Engine {
             })?;
             let rows = export::copy_to_file(&client, &select, path, &guard)
                 .await.map_err(|e| paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e))?;
-            if let Some(start) = &transaction {
-                if let Err(e) = query::verify_read_only(&client, start, &guard).await {
-                    let _ = tokio::fs::remove_file(path).await;
-                    return Err(e);
-                }
+            if let Some(start) = &transaction
+                && let Err(e) = query::verify_read_only(&client, start, &guard).await
+            {
+                let _ = tokio::fs::remove_file(path).await;
+                return Err(e);
             }
             Ok(rows)
         }.await;
@@ -348,6 +353,29 @@ fn raw_expression_error(span: Option<paging::RawSpan>, e: AppError) -> AppError 
         *message = "Raw WHERE must be a single expression; multiple SQL commands are not allowed.".into();
     }
     e
+}
+
+/// Runs a browse/count query that embeds the user's Raw WHERE text. The server Parse
+/// check rejects multi-command text in every mode. In read-only mode the query runs
+/// inside a READ ONLY transaction (so a GUC change in the expression can't enable
+/// writes); callers always reset the pooled session afterwards.
+async fn raw_where_query(
+    client: &Client,
+    profile: &ConnProfile,
+    sql: &str,
+    span: Option<paging::RawSpan>,
+    guard: &conn::CancelGuard<'_>,
+) -> AppResult<Vec<SimpleQueryMessage>> {
+    query::require_single_statement(client, sql, guard)
+        .await
+        .map_err(|e| raw_expression_error(span, e))?;
+    if profile.read_only {
+        query::begin_read_only(client, guard).await?;
+    }
+    client
+        .simple_query(sql)
+        .await
+        .map_err(|e| paging::RawSpan::relocate(span, guard.map_err(e)))
 }
 
 async fn server_info(client: &Client) -> AppResult<ServerInfo> {

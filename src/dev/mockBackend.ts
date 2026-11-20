@@ -430,9 +430,9 @@ function parseUrl(url: string): ParsedConn {
   try {
     u = new URL(url.trim());
   } catch {
-    throw err({ kind: "invalid", message: "Not a valid postgres:// URL" });
+    throw err({ kind: "invalid", message: "Not a valid postgres:// URL", position: null });
   }
-  if (u.protocol !== "postgres:" && u.protocol !== "postgresql:") throw err({ kind: "invalid", message: "URL must start with postgres:// or postgresql://" });
+  if (u.protocol !== "postgres:" && u.protocol !== "postgresql:") throw err({ kind: "invalid", message: "URL must start with postgres:// or postgresql://", position: null });
   const database = decodeURIComponent(u.pathname.replace(/^\//, "")) || "postgres";
   const host = u.hostname || "localhost";
   const sslParam = u.searchParams.get("sslmode") ?? "prefer";
@@ -533,7 +533,7 @@ export function installMockBackend(): void {
         return testConnection(a.profile, a.password);
       case "connect": {
         const p = profiles.find((x) => x.id === a.connId);
-        if (!p) throw err({ kind: "invalid", message: "Unknown connection" });
+        if (!p) throw err({ kind: "invalid", message: "Unknown connection", position: null });
         const info = await testConnection(p, passwords.get(p.id) ?? null);
         connected.add(p.id);
         return info;

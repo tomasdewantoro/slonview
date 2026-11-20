@@ -6,7 +6,7 @@ Slonview is for looking at data quickly: connect, browse schemas, page through m
 
 ## Features
 
-- **Read-only by default.** Each session runs with `default_transaction_read_only = on`. Writes are possible only on profiles where you turn read-only off.
+- **Read-only by default.** New connections run with `default_transaction_read_only = on`. In read-only mode, everything you run from the SQL editor or type into a filter or Raw WHERE runs inside a read-only transaction, and commands that could leave it (`BEGIN`, `COMMIT`, `SET TRANSACTION`, `LOCK`, `VACUUM`, …) are refused before anything runs. To write, turn on **Allow writes** for that connection.
 - **Large tables.** Keyset paging (offset paging for tables without a usable key) and a canvas-rendered grid keep scrolling smooth through millions of rows.
 - **Filters and sorting** built server-side with properly quoted identifiers and parameters, plus an optional raw `WHERE` expression.
 - **SQL editor** with autocomplete, multiple statements, per-query history, a row limit, and cancel (`Esc`) that stops the query on the server.
@@ -59,7 +59,7 @@ tests/e2e/run.sh
 
 ## Security notes
 
-- **Read-only sessions by default**, as described above. The setting is per connection profile.
+- **Read-only mode is a guard, not a permission system.** It stops ordinary writes, transaction escapes, and multi-command text in Raw WHERE and filters. It does not stop functions with effects outside the transaction (for example `pg_advisory_lock`, or extensions such as `dblink` and `postgres_fdw` that open their own connections). For a hard guarantee, connect as a database role that only has `SELECT`.
 - **Passwords live in the macOS Keychain** (service `slonview`, one item per profile). Connection profiles are stored without passwords in `~/Library/Application Support/slonview/connections.toml` (file mode `0600`).
 - **TLS encrypts but does not verify the server certificate.** `prefer` and `require` behave like libpq `sslmode=require`: the connection is encrypted, but the certificate chain is not validated against a CA, so it does not protect against an active man-in-the-middle. `verify-ca` and `verify-full` in pasted URLs are currently treated as `require`.
 - The frontend never builds SQL for table browsing; the Rust core quotes identifiers and binds values.
