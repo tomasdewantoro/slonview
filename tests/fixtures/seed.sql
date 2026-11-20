@@ -1,0 +1,103 @@
+-- pgview test fixture. Usage:
+--   dropdb --if-exists pgview_fixture && createdb pgview_fixture && psql -v ON_ERROR_STOP=1 pgview_fixture -f tests/fixtures/seed.sql
+
+CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
+
+CREATE TABLE customers (
+  id bigserial PRIMARY KEY,
+  email text NOT NULL UNIQUE,
+  name text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO customers (email, name, created_at)
+SELECT 'user' || g || '@example.com', 'Customer ' || g, timestamptz '2024-01-01' + (g || ' minutes')::interval
+FROM generate_series(1, 1000) g;
+
+CREATE TABLE orders (
+  id bigserial PRIMARY KEY,
+  customer_id bigint NOT NULL REFERENCES customers(id),
+  status order_status NOT NULL,
+  amount numeric(12,2) NOT NULL,
+  note text,
+  created_at timestamptz NOT NULL
+);
+
+INSERT INTO orders (customer_id, status, amount, note, created_at)
+SELECT 1 + (g % 1000),
+       (ARRAY['pending','paid','shipped','cancelled']::order_status[])[1 + (g % 4)],
+       round(((g::bigint * 7919) % 100000) / 100.0, 2),
+       CASE WHEN g % 10 = 0 THEN NULL ELSE 'note ' || g END,
+       timestamptz '2024-01-01' + (g || ' seconds')::interval
+FROM generate_series(1, 1000000) g;
+
+CREATE INDEX orders_status_idx ON orders(status);
+CREATE INDEX orders_created_at_idx ON orders(created_at);
+
+CREATE TABLE all_types (
+  id serial PRIMARY KEY,
+  c_int integer,
+  c_numeric numeric,
+  c_text text,
+  c_varchar varchar(20),
+  c_bool boolean,
+  c_uuid uuid,
+  c_date date,
+  c_ts timestamptz,
+  c_interval interval,
+  c_jsonb jsonb,
+  c_int_arr int[],
+  c_text_arr text[],
+  c_bytea bytea,
+  c_enum order_status,
+  c_inet inet
+);
+
+INSERT INTO all_types (c_int, c_numeric, c_text, c_varchar, c_bool, c_uuid, c_date, c_ts, c_interval,
+                       c_jsonb, c_int_arr, c_text_arr, c_bytea, c_enum, c_inet) VALUES
+  (1, 3.14159, 'hello', 'short', true, '6f1c1f5e-1d2b-4c1a-9a51-0e1f2a3b4c5d', '2024-02-29', '2024-02-29 12:34:56+00', '1 day 2 hours',
+   '{"a": 1, "nested": {"b": [1, 2, 3]}, "s": "x"}', '{1,2,3}', '{"a","b c","d\"e"}', '\xdeadbeef', 'paid', '192.168.1.1'),
+  (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+  (-2147483648, -0.000001, 'NULL', '', false, '00000000-0000-0000-0000-000000000000', '1970-01-01', '1970-01-01 00:00:00+00', '-1 second',
+   '[]', '{}', '{}', '\x', 'pending', '::1'),
+  (42, 1e20, repeat('long text ', 1000), 'tab	and newline
+here', true, gen_random_uuid(), '9999-12-31', 'infinity', '100 years',
+   '{"emoji": "🐘", "quote": "it''s \"quoted\""}', '{NULL,5}', '{NULL,"x"}', decode(repeat('ab', 5000), 'hex'), 'shipped', '10.0.0.0/8'),
+  (7, 0, 'O''Brien; DROP TABLE orders; --', 'unicode ñ 日本', NULL, gen_random_uuid(), now()::date, now(), '0', '"just a string"', '{7}', '{"single"}', '\x00ff', 'cancelled', '2001:db8::1');
+
+CREATE SCHEMA "Sales Data";
+CREATE TABLE "Sales Data"."Weird ""Name"" Table" (
+  "Id" integer PRIMARY KEY,
+  "Column With Space" text,
+  "select" text,
+  "ünïcödé" text
+);
+INSERT INTO "Sales Data"."Weird ""Name"" Table"
+SELECT g, 'value ' || g, 'kw ' || g, 'ü' || g FROM generate_series(1, 250) g;
+
+CREATE TABLE no_pk (a int, b text);
+INSERT INTO no_pk SELECT g % 50, 'row ' || g FROM generate_series(1, 1200) g;
+
+CREATE TABLE composite_pk (tenant int, item int, label text, PRIMARY KEY (tenant, item));
+INSERT INTO composite_pk SELECT t, i, 't' || t || 'i' || i FROM generate_series(1, 30) t, generate_series(1, 40) i;
+
+CREATE VIEW paid_orders AS SELECT id, customer_id, amount, created_at FROM orders WHERE status = 'paid';
+CREATE MATERIALIZED VIEW order_totals AS SELECT customer_id, count(*) AS n, sum(amount) AS total FROM orders GROUP BY customer_id;
+
+CREATE TABLE events (id bigint NOT NULL, happened_at date NOT NULL, payload jsonb, PRIMARY KEY (id, happened_at))
+  PARTITION BY RANGE (happened_at);
+CREATE TABLE events_2024 PARTITION OF events FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE TABLE events_2025 PARTITION OF events FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+INSERT INTO events SELECT g, date '2024-01-01' + (g % 700), jsonb_build_object('n', g) FROM generate_series(1, 5000) g;
+
+CREATE TABLE scratch_insert_target (LIKE orders INCLUDING DEFAULTS);
+
+ANALYZE;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgview_ro') THEN
+    CREATE ROLE pgview_ro LOGIN PASSWORD 'pgview_ro';
+  END IF;
+END $$;
+GRANT USAGE ON SCHEMA public, "Sales Data" TO pgview_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA public, "Sales Data" TO pgview_ro;

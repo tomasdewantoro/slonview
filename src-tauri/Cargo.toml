@@ -1,0 +1,25 @@
+[package]
+name = "pgview"
+version.workspace = true
+edition.workspace = true
+description = "Personal PostgreSQL viewer"
+
+[lib]
+name = "pgview_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+pgview-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-window-state = "2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
