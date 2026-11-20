@@ -32,7 +32,7 @@ export function StatusBar() {
           <span className="flex shrink-0 items-center gap-1">
             {data.loading && <LoaderCircle size={11} className="animate-spin" aria-hidden />}
             {data.rows.length.toLocaleString()}
-            {data.nextCursor ? "+" : ""} rows loaded
+            {data.nextCursor ? "+" : ""} {data.rows.length === 1 && !data.nextCursor ? "row" : "rows"} loaded
             {data.exactCount !== null
               ? ` of ${data.exactCount.toLocaleString()}`
               : rel && rel.estRows >= 0 && data.nextCursor && tab.query.filters.length === 0 && !tab.query.rawWhere.trim()

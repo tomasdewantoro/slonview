@@ -56,9 +56,20 @@ const NUMERIC_TYPE = /^(smallint|integer|bigint|numeric|decimal|real|double prec
 
 export const isNumericType = (typeName: string) => NUMERIC_TYPE.test(typeName) && !typeName.endsWith("[]");
 
-/** Initial width from type and name; users resize from there. */
-function defaultWidth(c: Column): number {
+const CHAR_PX = 7.3;
+const WIDTH_SAMPLE_ROWS = 200;
+
+/** Initial width from type and name; users resize from there. Untyped columns (SQL results)
+ *  are sized from the header and a sample of their values. */
+function defaultWidth(c: Column, rows: (string | null)[][], index: number): number {
   const t = c.typeName;
+  if (t === "") {
+    let chars = c.name.length;
+    for (let r = 0; r < Math.min(rows.length, WIDTH_SAMPLE_ROWS); r++) {
+      chars = Math.max(chars, Math.min(rows[r][index]?.length ?? 4, 60));
+    }
+    return Math.min(420, Math.max(60, Math.ceil(chars * CHAR_PX) + 24));
+  }
   let w: number;
   if (t === "boolean") w = 70;
   else if (/^(smallint|integer|oid)$/.test(t)) w = 90;
@@ -190,14 +201,24 @@ export function ResultGrid({
     return m;
   }, [sort]);
 
+  // Default widths are fixed per column set: sampled from the rows present when the columns
+  // appear, so later page appends never make columns jump.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const defaults = useMemo(
+    () => columns.map((c, i) => defaultWidth(c, rowsRef.current, i)),
+    // Recompute only when the column set changes (rows are read through the ref).
+    [columnsKey],
+  );
+
   const gridColumns: GridColumn[] = useMemo(
     () =>
       columns.map((c, i) => ({
         id: String(i),
         title: c.name,
-        width: widths[c.name] ?? defaultWidth(c),
+        width: widths[c.name] ?? defaults[i] ?? 140,
       })),
-    [columns, widths],
+    [columns, widths, defaults],
   );
 
   const numericCols = useMemo(() => columns.map((c) => isNumericType(c.typeName)), [columns]);

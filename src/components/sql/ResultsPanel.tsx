@@ -83,11 +83,11 @@ function ResultTabs({ connId, results, maxRows }: { connId: string; results: Que
           ))}
         </div>
       )}
-      <div className="min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col">
         {result.columns.length > 0 ? (
           <ResultGrid columns={result.columns} rows={result.rows} />
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-1">
+          <div className="flex flex-1 flex-col items-center justify-center gap-1">
             <span className="text-sm font-medium text-neutral-800 tabular-nums dark:text-neutral-200">{affectedMessage(result)}</span>
             <code className="max-w-[80%] truncate font-mono text-xs text-neutral-500">{result.statement}</code>
           </div>

@@ -1,8 +1,9 @@
-import { Ban, Filter, LoaderCircle, PanelRight, RefreshCw, Sigma, TableProperties } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { Ban, FileDown, Filter, LoaderCircle, PanelRight, RefreshCw, Sigma, TableProperties } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { errorMessage } from "../api";
+import { api, errorMessage, newRequestId } from "../api";
 import { appStore, emptyTableData, useApp, type TableTab as TableTabInfo } from "../store/app";
-import { nextSort } from "../store/queries";
+import { filtersToRequest, nextSort, normalizeRawWhere } from "../store/queries";
 import { CellInspector } from "./CellInspector";
 import { ErrorPanel } from "./ErrorPanel";
 import { FilterBar } from "./FilterBar";
@@ -17,6 +18,33 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
   const [selected, setSelected] = useState<CellRef | null>(null);
   const [inspecting, setInspecting] = useState<CellRef | null>(null);
   const shiftDown = useRef(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Streams the whole relation (current filters and sort) to disk in Rust; the grid's loaded rows don't matter.
+  const exportCsv = async () => {
+    const q = tab.query;
+    const path = await save({ defaultPath: `${q.table}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] });
+    if (!path) return;
+    setExporting(true);
+    const { pushToast } = appStore.getState();
+    try {
+      const source = {
+        kind: "table" as const,
+        connId,
+        schema: q.schema,
+        table: q.table,
+        filters: filtersToRequest(q.filters),
+        rawWhere: normalizeRawWhere(q.rawWhere),
+        sort: q.sort,
+      };
+      const rows = await api.exportCsv(newRequestId(), source, path);
+      pushToast("info", `Exported ${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"} to ${path}`);
+    } catch (e) {
+      pushToast("error", `Export failed: ${errorMessage(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => ensureLoaded(tab.id), [tab.id, ensureLoaded]);
 
@@ -90,6 +118,14 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
             <RefreshCw size={12} aria-hidden /> Refresh
           </button>
         )}
+        <button
+          className="btn h-6 px-2 text-xs"
+          onClick={() => void exportCsv()}
+          disabled={exporting || data.columns.length === 0}
+          title="Export every row matching the current filters and sort to CSV"
+        >
+          {exporting ? <LoaderCircle size={12} className="animate-spin" aria-hidden /> : <FileDown size={12} aria-hidden />} Export CSV
+        </button>
         <button
           className={`icon-btn ${inspecting ? "bg-hover text-fg" : ""}`}
           aria-label="Toggle cell inspector"
