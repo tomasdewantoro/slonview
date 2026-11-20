@@ -1,0 +1,629 @@
+// Full-UI E2E: the real React frontend in headless Chromium, talking to the real Rust engine
+// through the dev-only bridge. Run `tests/e2e/run.sh` (starts both servers) or, with them
+// already up, `node tests/e2e/ui.e2e.mjs`.
+//
+// Env: PGVIEW_UI_URL (default http://localhost:1450/), CHROME (headless shell binary),
+//      PGVIEW_E2E_SHOTS (screenshot dir, default /tmp/pgview-e2e).
+// Needs the seeded fixture DB and an empty profile dir in the bridge. Creates a profile +
+// Keychain entry and deletes both at the end; writes only to scratch_insert_target.
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import puppeteer from "puppeteer-core";
+
+const URL = process.env.PGVIEW_UI_URL ?? "http://localhost:1450/";
+const BRIDGE = "http://127.0.0.1:1499/invoke/";
+const SHOTS = process.env.PGVIEW_E2E_SHOTS ?? "/tmp/pgview-e2e";
+const CHROME =
+  process.env.CHROME ??
+  `${homedir()}/Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
+const PASSWORD = "e2e-ui-s3cret";
+mkdirSync(SHOTS, { recursive: true });
+
+const results = [];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const psql = (sql, db = "pgview_fixture") =>
+  execFileSync("psql", ["-h", process.env.PGHOST ?? "/tmp", "-d", db, "-Atq", "-c", sql], { encoding: "utf8" }).trim();
+const bridge = async (cmd, args = {}) => {
+  const res = await fetch(BRIDGE + cmd, { method: "POST", body: JSON.stringify(args) });
+  return res.json();
+};
+
+async function check(id, fn) {
+  const t0 = Date.now();
+  try {
+    const evidence = await fn();
+    results.push({ id, status: "PASS", evidence, ms: Date.now() - t0 });
+    console.log(`PASS ${id}  ${evidence ?? ""}`);
+  } catch (e) {
+    results.push({ id, status: "FAIL", evidence: String(e?.stack ?? e), ms: Date.now() - t0 });
+    console.log(`FAIL ${id}  ${e?.stack ?? e}`);
+    await page.screenshot({ path: `${SHOTS}/FAIL-${id}.png` }).catch(() => {});
+  }
+}
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+function eq(actual, expected, msg) {
+  if (actual !== expected) throw new Error(`${msg}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+}
+
+const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--window-size=1400,900"] });
+const page = await browser.newPage();
+await page.setViewport({ width: 1400, height: 900 });
+const consoleErrors = [];
+page.on("console", (m) => {
+  // Expected AppErrors travel as HTTP 400 from the bridge; Chromium logs each as a failed
+  // resource load. Tauri IPC has no such log, so those are not app errors.
+  if (m.type() === "error" && !(m.location()?.url ?? "").startsWith(BRIDGE)) consoleErrors.push(m.text());
+});
+page.on("pageerror", (e) => consoleErrors.push(String(e)));
+
+// ---- helpers over the real DOM -------------------------------------------------------
+const until = async (fn, timeout = 15000, ...args) => page.waitForFunction(fn, { timeout, polling: 50 }, ...args);
+const text = () => page.evaluate(() => document.body.innerText);
+const clickText = async (label, sel = "button") => {
+  const ok = await page.evaluate(
+    (label, sel) => {
+      const el = [...document.querySelectorAll(sel)].find((b) => b.innerText.trim() === label);
+      el?.click();
+      return !!el;
+    },
+    label,
+    sel,
+  );
+  assert(ok, `no ${sel} "${label}"`);
+};
+const openRel = async (name, schema = "public") => {
+  const ok = await page.evaluate((nm) => {
+    const b = [...document.querySelectorAll('[role="group"] button[role="treeitem"]')].find((x) => x.querySelector("span")?.textContent === nm);
+    b?.click();
+    return !!b;
+  }, name);
+  assert(ok, `relation ${name} not in tree`);
+  const title = schema === "public" ? name : `${schema}.${name}`;
+  await until((t) => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === t, 10000, title);
+  // The footer SQL names this relation and its grid is mounted.
+  const fromClause = `FROM "${schema.replace(/"/g, '""')}"."${name.replace(/"/g, '""')}"`;
+  await until(
+    (f) =>
+      (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes(f) &&
+      !document.querySelector("footer .animate-spin") &&
+      !!document.querySelector(".dvn-scroller"),
+    15000,
+    fromClause,
+  );
+};
+const activateTab = async (title) => {
+  await page.evaluate((t) => {
+    const el = [...document.querySelectorAll('[role="tab"]')].find((x) => x.innerText.trim() === t);
+    el?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+  }, title);
+  await sleep(300);
+};
+const footerSql = () => page.evaluate(() => document.querySelector('footer span[title^="SELECT"]')?.title ?? "");
+const loadedLabel = () => page.evaluate(() => document.querySelector("footer span")?.innerText ?? "");
+const gridTop = () => page.evaluate(() => document.querySelector(".dvn-scroller").getBoundingClientRect().y);
+const ROW = 24;
+const HEADER = 34;
+const MARKER_X = 286;
+const selectRows = async (from, to) => {
+  const y = await gridTop();
+  await page.mouse.click(MARKER_X, y + HEADER + ROW * from + 12);
+  await page.keyboard.down("Shift");
+  await page.mouse.click(MARKER_X, y + HEADER + ROW * to + 12);
+  await page.keyboard.up("Shift");
+};
+const setSql = async (sql) => {
+  await page.click(".cm-content");
+  await page.keyboard.down("Meta");
+  await page.keyboard.press("a");
+  await page.keyboard.up("Meta");
+  await page.keyboard.press("Backspace");
+  // insertText avoids autocomplete/auto-close brackets mangling the statement.
+  await page.evaluate((s) => document.execCommand("insertText", false, s), sql);
+  await page.keyboard.press("Escape");
+};
+const runAll = async () => clickText("Run all");
+const filterBarOpen = () => page.evaluate(() => document.querySelector('button[title="Toggle filters"]')?.getAttribute("aria-pressed") === "true");
+const ensureFilterBar = async () => {
+  if (!(await filterBarOpen())) await page.click('button[title="Toggle filters"]');
+};
+
+try {
+  await page.goto(URL, { waitUntil: "networkidle0" });
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: "networkidle0" });
+  let connId = null;
+
+  await check("E2E-01 add connection by URL", async () => {
+    await page.click('[aria-label="New connection"]');
+    await page.waitForSelector("#cd-url");
+    await page.type("#cd-url", `postgres://${process.env.USER}:${PASSWORD}@localhost:5432/pgview_fixture?sslmode=disable`);
+    await clickText("Fill");
+    await until(() => document.querySelector("#cd-db")?.value === "pgview_fixture");
+    await page.$eval("#cd-name", (el) => el.select());
+    await page.type("#cd-name", "E2E Fixture");
+    await clickText("Test");
+    await until(() => /PostgreSQL/.test(document.querySelector('[aria-live="polite"]')?.innerText ?? ""));
+    await page.screenshot({ path: `${SHOTS}/01-dialog-test-ok.png` });
+    await clickText("Save");
+    await until(() => document.body.innerText.includes("E2E Fixture"));
+    const profiles = await bridge("list_profiles");
+    connId = profiles.find((p) => p.name === "E2E Fixture").id;
+    const toml = readFileSync(`${process.env.PGVIEW_E2E_DIR ?? "/tmp/pgview-e2e-data"}/connections.toml`, "utf8");
+    assert(!toml.includes(PASSWORD), "password found in connections.toml");
+    const kc = await bridge("e2e_keychain_get", { id: connId });
+    eq(kc, PASSWORD, "keychain password");
+    return `profile ${connId}; Keychain has password; TOML has none`;
+  });
+
+  await check("E2E-02 wrong password / host down", async () => {
+    const out = [];
+    for (const [url, kind] of [
+      [`postgres://nosuchrole@localhost:5432/pgview_fixture?sslmode=disable`, /role "nosuchrole" does not exist/],
+      [`postgres://${process.env.USER}@localhost:5999/pgview_fixture?sslmode=disable`, /Connection refused/],
+      [`postgres://${process.env.USER}@no-such-host.invalid:5432/pgview_fixture`, /lookup address/],
+    ]) {
+      await page.click('[aria-label="New connection"]');
+      await page.waitForSelector("#cd-url");
+      await page.type("#cd-url", url);
+      await clickText("Fill");
+      await sleep(200);
+      await clickText("Test");
+      await until(() => {
+        const t = document.querySelector('[aria-live="polite"]')?.innerText.trim() ?? "";
+        return t && !t.startsWith("Connecting");
+      }, 30000);
+      const msg = await page.$eval('[aria-live="polite"]', (e) => e.innerText);
+      assert(kind.test(msg), `unexpected message ${msg}`);
+      const t0 = Date.now();
+      await page.evaluate(() => 1);
+      assert(Date.now() - t0 < 200, "UI not responsive");
+      out.push(msg.slice(0, 50));
+      await clickText("Cancel");
+    }
+    await page.screenshot({ path: `${SHOTS}/02-errors.png` });
+    const auth = await bridge("test_connection", {
+      profile: { ...(await bridge("list_profiles"))[0], user: "nosuchrole" },
+      password: null,
+    });
+    eq(auth.kind, "auth", "typed auth error");
+    return out.join(" | ") + " | kinds: auth/connect";
+  });
+
+  await check("A connect to fixture", async () => {
+    await page.evaluate(() => {
+      const li = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.includes("E2E Fixture"));
+      li.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    await until(() => document.querySelectorAll('[role="group"] button[role="treeitem"]').length > 5);
+    return "schema tree loaded";
+  });
+
+  await check("E2E-03 scroll orders to 200k", async () => {
+    await openRel("orders");
+    await page.evaluate(() => {
+      window.__frames = [];
+      let last = performance.now();
+      const loop = (t) => {
+        window.__frames.push(t - last);
+        last = t;
+        if (!window.__stop) requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    });
+    let rows = 0;
+    const t0 = Date.now();
+    while (rows < 200000) {
+      assert(Date.now() - t0 < 300000, "did not reach 200k rows in 5 min");
+      rows = await page.evaluate(() => {
+        const s = document.querySelector(".dvn-scroller");
+        s.scrollTop = s.scrollHeight;
+        const m = document.querySelector("footer span")?.innerText.match(/([\d,]+)/);
+        return m ? Number(m[1].replace(/,/g, "")) : 0;
+      });
+      await sleep(50);
+    }
+    const s = await page.evaluate(() => {
+      window.__stop = true;
+      const f = window.__frames.slice(5).sort((a, b) => a - b);
+      return { p99: f[Math.floor(f.length * 0.99)], max: f[f.length - 1], heap: Math.round(performance.memory.usedJSHeapSize / 1048576) };
+    });
+    const t1 = Date.now();
+    await page.evaluate(() => 1);
+    assert(Date.now() - t1 < 200, "UI not responsive after scroll");
+    assert(s.max < 250, `long frame ${s.max} ms`);
+    assert(s.heap < 600, `heap ${s.heap} MB`);
+    await page.screenshot({ path: `${SHOTS}/03-orders-200k.png` });
+    return `${rows.toLocaleString()} rows in ${((Date.now() - t0) / 1000).toFixed(1)} s; frame p99 ${s.p99.toFixed(1)} ms, max ${s.max.toFixed(1)} ms; JS heap ${s.heap} MB`;
+  });
+
+  await check("E2E-04 all_types: types render, NULL vs 'NULL'", async () => {
+    await openRel("all_types");
+    const y = await gridTop();
+    // Row 2 c_text is SQL NULL; row 3 is the text 'NULL'. c_text is column index 3.
+    // Each inspection starts with the inspector closed so the grid width (and so the click
+    // target) is the same, clicks the first data column, then moves right by keyboard.
+    const inspect = async (row) => {
+      if (await page.$('[aria-label="Close inspector"]')) await page.click('[aria-label="Close inspector"]');
+      await until(() => !document.querySelector('[aria-label="Cell inspector"]'));
+      await page.evaluate(() => (document.querySelector(".dvn-scroller").scrollLeft = 0));
+      await sleep(150);
+      await page.mouse.click(330, y + HEADER + ROW * row + 12);
+      await sleep(100);
+      for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("Enter");
+      await until(() => document.querySelector('[aria-label="Cell inspector"]')?.innerText.startsWith("c_text"));
+      await sleep(300);
+      return page.$eval('[aria-label="Cell inspector"]', (e) => e.innerText);
+    };
+    const sqlNull = await inspect(1);
+    const textNull = await inspect(2);
+    assert(/c_text[\s\S]*NULL/.test(sqlNull) && !/chars/.test(sqlNull), `SQL NULL inspector: ${sqlNull}`);
+    assert(/4 chars[\s\S]*NULL/.test(textNull), `'NULL' inspector: ${textNull}`);
+    const long = await inspect(3);
+    assert(/10,000 chars/.test(long), "huge cell not fetched in full");
+    await page.screenshot({ path: `${SHOTS}/04-all-types-inspector.png` });
+    await page.click('[aria-label="Close inspector"]');
+    const page1 = await bridge("fetch_page", {
+      requestId: "t",
+      req: { connId, schema: "public", table: "all_types", filters: [], rawWhere: null, sort: [], cursor: null, limit: 500 },
+    });
+    const psqlRows = psql("select count(*) from all_types");
+    eq(String(page1.rows.length), psqlRows, "row count");
+    return "SQL NULL shows italic NULL without length; text 'NULL' shows '4 chars'; 10,000-char cell fetched in full";
+  });
+
+  await check("E2E-05 quoted schema/table names", async () => {
+    await openRel('Weird "Name" Table', "Sales Data");
+    for (let i = 0; i < 4; i++) {
+      await page.evaluate(() => {
+        const s = document.querySelector(".dvn-scroller");
+        s.scrollTop = s.scrollHeight;
+      });
+      await sleep(250);
+    }
+    eq(await loadedLabel(), "250 rows loaded", "all pages");
+    const y = await gridTop();
+    await page.mouse.click(540, y + 17);
+    await sleep(500);
+    await page.mouse.click(540, y + 17);
+    await until(() => /"Column With Space" DESC/.test(document.querySelector('footer span[title^="SELECT"]')?.title ?? ""));
+    await page.screenshot({ path: `${SHOTS}/05-weird-sorted.png` });
+    return (await footerSql()).replace(/^SELECT .* FROM/, "FROM");
+  });
+
+  await check("E2E-06 filter status='paid' + sort created_at desc matches psql", async () => {
+    await openRel("orders");
+    await ensureFilterBar();
+    await clickText("Filter");
+    const fid = (await page.$eval('select[id^="fc-"]', (e) => e.id)).slice(3);
+    await page.select(`#fc-${fid}`, "status");
+    await page.type('input[aria-label="Value"]', "paid");
+    await page.keyboard.press("Enter");
+    await until(() => /WHERE "status" = 'paid'/.test(document.querySelector('footer span[title^="SELECT"]')?.title ?? ""));
+    const y = await gridTop();
+    await page.mouse.click(1300, y + 17);
+    await sleep(500);
+    await page.mouse.click(1300, y + 17);
+    await until(() => /"created_at" DESC/.test(document.querySelector('footer span[title^="SELECT"]')?.title ?? ""));
+    await sleep(300);
+    await selectRows(0, 19);
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("c");
+    await page.keyboard.up("Meta");
+    await sleep(200);
+    const clip = await page.evaluate(() => window.__clipboard);
+    const expected = psql(
+      "select string_agg(concat_ws(E'\\t', id, customer_id, status, amount, coalesce(note,'NULL'), created_at), E'\\n') from (select * from orders where status='paid' order by created_at desc, id limit 20) s",
+    );
+    eq(clip.split("\n").slice(1).join("\n"), expected, "first 20 rows");
+    await clickText("Count rows");
+    await until(() => /[\d,]+ rows$/.test(document.querySelector('main [aria-live="polite"]')?.innerText.trim() ?? ""));
+    const n = await page.$eval('main [aria-live="polite"]', (e) => e.innerText.trim());
+    eq(n, `${Number(psql("select count(*) from orders where status='paid'")).toLocaleString("en-US")} rows`, "count");
+    await page.screenshot({ path: `${SHOTS}/06-filter-sort.png` });
+    return `first 20 rows identical to psql; count ${n}`;
+  });
+
+  await check("E2E-09 copy 10 rows as INSERT, run in scratch DB", async () => {
+    await selectRows(0, 9);
+    const y = await gridTop();
+    await page.mouse.click(800, y + HEADER + ROW * 3 + 12, { button: "right" });
+    await sleep(200);
+    await clickText("Copy as INSERT", '[role="menuitem"], button');
+    await sleep(200);
+    const sql = await page.evaluate(() => window.__clipboard);
+    eq(sql.split("\n").length, 10, "10 INSERT lines");
+    writeFileSync(`${SHOTS}/09-insert.sql`, sql);
+    execFileSync("dropdb", ["-h", "/tmp", "--if-exists", "pgview_e2e_scratch"]);
+    execFileSync("createdb", ["-h", "/tmp", "pgview_e2e_scratch"]);
+    const labels = psql("select string_agg(quote_literal(enumlabel), ',' order by enumsortorder) from pg_enum where enumtypid = 'order_status'::regtype");
+    psql(`CREATE TYPE order_status AS ENUM (${labels})`, "pgview_e2e_scratch");
+    psql(
+      "CREATE TABLE public.orders (id bigint primary key, customer_id bigint not null, status order_status not null, amount numeric(12,2) not null, note text, created_at timestamptz not null)",
+      "pgview_e2e_scratch",
+    );
+    execFileSync("psql", ["-h", "/tmp", "-d", "pgview_e2e_scratch", "-v", "ON_ERROR_STOP=1", "-q", "-f", `${SHOTS}/09-insert.sql`]);
+    const copied = psql("select string_agg(t::text, '|' order by id) from orders t", "pgview_e2e_scratch");
+    const source = psql(
+      "select string_agg(t::text, '|' order by id) from orders t where id in (select id from orders where status='paid' order by created_at desc, id limit 10)",
+    );
+    eq(copied, source, "inserted rows");
+    // Filters off again for the next checks.
+    await page.click('[aria-label="Remove filter"]');
+    await sleep(500);
+    return "10 INSERTs succeeded in pgview_e2e_scratch; rows identical to source";
+  });
+
+  await check("A filter values with quotes/injection; NULL vs 'NULL' filters", async () => {
+    await openRel("all_types");
+    await ensureFilterBar();
+    await clickText("Filter");
+    const fid = (await page.$eval('select[id^="fc-"]', (e) => e.id)).slice(3);
+    await page.select(`#fc-${fid}`, "c_text");
+    const cases = [
+      ["=", "O'Brien; DROP TABLE orders; --", "1 row loaded"],
+      ["ILIKE", "%'); select 1; --%", "0 rows loaded"],
+      ["=", "NULL", "1 row loaded"],
+      ["IS NULL", null, "1 row loaded"],
+      ["=", "back\\slash", "0 rows loaded"],
+      ["IN", "hello, NULL", "2 rows loaded"],
+    ];
+    const out = [];
+    for (const [op, v, expectLabel] of cases) {
+      await page.select(`#fo-${fid}`, op);
+      if (v !== null) {
+        await page.$eval('input[aria-label="Value"]', (e) => e.select());
+        await page.type('input[aria-label="Value"]', v);
+      }
+      await clickText("Apply");
+      await sleep(700);
+      eq(await loadedLabel(), expectLabel, `${op} ${v}`);
+      out.push(`${op} ${JSON.stringify(v)} -> ${expectLabel}`);
+    }
+    eq(psql("select count(*) from orders"), "1000000", "orders intact");
+    await page.click('[aria-label="Remove filter"]');
+    await sleep(500);
+    return out.join("; ");
+  });
+
+  await check("A raw WHERE syntax error shows Postgres error at user-text position", async () => {
+    await page.type('input[aria-label="Raw WHERE expression"]', "c_int >> AND");
+    await page.keyboard.press("Enter");
+    await until(() => !!document.querySelector('main [role="alert"]'));
+    const msg = await page.$eval('main [role="alert"]', (e) => e.innerText);
+    assert(/SQLSTATE 42601/.test(msg) && /at position 10/.test(msg) && /syntax error at or near "AND"/.test(msg), msg);
+    await page.screenshot({ path: `${SHOTS}/A-raw-where-error.png` });
+    await page.$eval('input[aria-label="Raw WHERE expression"]', (e) => e.select());
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Enter");
+    await sleep(500);
+    return msg.replace(/\n/g, " ");
+  });
+
+  await check("A cancel during count and during load", async () => {
+    await openRel("orders");
+    await ensureFilterBar();
+    await page.type('input[aria-label="Raw WHERE expression"]', "pg_sleep(0.00001) IS NOT NULL");
+    await page.keyboard.press("Enter");
+    await until(() => !document.querySelector("footer .animate-spin"), 30000);
+    await clickText("Count rows");
+    await until(() => document.body.innerText.includes("counting…"));
+    const t0 = Date.now();
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("r");
+    await page.keyboard.up("Meta");
+    await until(() => !document.body.innerText.includes("counting…"), 5000);
+    const countStop = Date.now() - t0;
+    await page.$eval('input[aria-label="Raw WHERE expression"]', (e) => e.select());
+    await page.type('input[aria-label="Raw WHERE expression"]', "pg_sleep(0.001) IS NOT NULL");
+    await page.keyboard.press("Enter");
+    await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Cancel"));
+    await clickText("Cancel");
+    await until(() => document.body.innerText.includes("Load cancelled."), 3000);
+    await sleep(800);
+    const active = psql("select count(*) from pg_stat_activity where datname='pgview_fixture' and state='active' and pid <> pg_backend_pid()");
+    eq(active, "0", "server-side queries still active");
+    await page.$eval('input[aria-label="Raw WHERE expression"]', (e) => e.select());
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Enter");
+    await sleep(800);
+    return `count cancelled in ${countStop} ms; page load cancelled; 0 active backends`;
+  });
+
+  await check("E2E-10 rapidly click 5 tables", async () => {
+    const names = ["customers", "events", "no_pk", "composite_pk", "order_totals"];
+    await page.evaluate((names) => {
+      const btns = [...document.querySelectorAll('[role="group"] button[role="treeitem"]')];
+      for (const nm of names) btns.find((b) => b.querySelector("span")?.textContent === nm).click();
+    }, names);
+    await sleep(1500);
+    const active = await page.evaluate(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim());
+    eq(active, "order_totals", "active tab");
+    assert((await footerSql()).includes('"public"."order_totals"'), "grid shows another table");
+    const cols = await bridge("describe_table", { connId, schema: "public", table: "order_totals" });
+    await page.screenshot({ path: `${SHOTS}/10-rapid.png` });
+    return `active order_totals; grid SQL targets order_totals (${cols.columns.length} cols)`;
+  });
+
+  await check("A Cmd+T / Cmd+W shortcuts", async () => {
+    const n0 = await page.$$eval('[role="tab"]', (t) => t.length);
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("t");
+    await page.keyboard.up("Meta");
+    await sleep(300);
+    const n1 = await page.$$eval('[role="tab"]', (t) => t.length);
+    eq(n1, n0 + 1, "Cmd+T");
+    eq(await page.evaluate(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim()), "Query 1", "new SQL tab active");
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("w");
+    await page.keyboard.up("Meta");
+    await sleep(300);
+    eq(await page.$$eval('[role="tab"]', (t) => t.length), n0, "Cmd+W");
+    return `${n0} -> ${n1} -> ${n0} tabs`;
+  });
+
+  await check("E2E-07 DELETE FROM orders with read-only on", async () => {
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("t");
+    await page.keyboard.up("Meta");
+    await page.waitForSelector(".cm-content");
+    await setSql("DELETE FROM orders");
+    await runAll();
+    await until(() => !!document.querySelector('[role="alert"]'));
+    const msg = await page.$eval('[role="alert"]', (e) => e.innerText);
+    assert(/read-only transaction/.test(msg) && /25006/.test(msg), msg);
+    eq(psql("select count(*) from orders"), "1000000", "orders intact");
+    await page.screenshot({ path: `${SHOTS}/07-readonly.png` });
+    return msg.replace(/\n+/g, " ");
+  });
+
+  await check("E2E-08 SELECT pg_sleep(60) then Esc", async () => {
+    await setSql("SELECT pg_sleep(60)");
+    await runAll();
+    await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Cancel"));
+    await sleep(1000);
+    await page.focus(".cm-content");
+    const t0 = Date.now();
+    await page.keyboard.press("Escape");
+    await until(() => document.body.innerText.includes("Query cancelled"), 5000);
+    const ms = Date.now() - t0;
+    assert(ms < 1000, `cancel took ${ms} ms`);
+    await sleep(300);
+    eq(psql("select count(*) from pg_stat_activity where query ilike '%pg_sleep(60)%' and state='active' and pid<>pg_backend_pid()"), "0", "backend still sleeping");
+    await page.screenshot({ path: `${SHOTS}/08-cancel.png` });
+    return `cancelled in ${ms} ms; no backend left running`;
+  });
+
+  await check("E2E-11 export orders to CSV", async () => {
+    const out = [];
+    await openRel("orders");
+    await page.evaluate(() => (window.__nextSavePath = "/tmp/pgview-e2e/11-orders-table.csv"));
+    await page.click('button[title^="Export every row"]');
+    await until(() => /Exported [\d,]+ rows to|Export failed/.test(document.body.innerText), 120000);
+    const lines = execFileSync("wc", ["-l", "/tmp/pgview-e2e/11-orders-table.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
+    eq(lines, "1000001", "table export lines");
+    out.push(`table export: ${lines} lines`);
+    await page.click('[aria-label="Dismiss"]');
+    await activateTab("Query 1");
+    await setSql("SELECT * FROM orders");
+    await runAll();
+    await until(() => document.body.innerText.includes("Truncated at") && !!document.querySelector(".dvn-scroller"), 30000);
+    const h = await page.evaluate(() => document.querySelector(".dvn-scroller").getBoundingClientRect().height);
+    assert(h > 100, `SQL result grid collapsed (${h}px)`);
+    await page.evaluate(() => (window.__nextSavePath = "/tmp/pgview-e2e/11-orders-sql.csv"));
+    await clickText("Export CSV");
+    // The results panel's own status ("Exported N rows", no " to <path>" — that is the table toast).
+    await until(() => /Exported [\d,]+ rows(?! to)|Export failed/.test(document.body.innerText), 120000);
+    const lines2 = execFileSync("wc", ["-l", "/tmp/pgview-e2e/11-orders-sql.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
+    eq(lines2, "1000001", "SQL export lines");
+    out.push(`SQL result export: ${lines2} lines; result grid ${Math.round(h)}px tall`);
+    await page.screenshot({ path: `${SHOTS}/11-export.png` });
+    return out.join("; ");
+  });
+
+  await check("A reload restores tabs and SQL editor text", async () => {
+    const before = await page.evaluate(() => ({
+      tabs: [...document.querySelectorAll('[role="tab"]')].map((t) => t.innerText.trim()),
+      active: document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim(),
+    }));
+    await sleep(500); // editor save debounce
+    await page.reload({ waitUntil: "networkidle0" });
+    await until(() => document.querySelectorAll('[role="tab"]').length > 0, 15000);
+    const after = await page.evaluate(() => ({
+      tabs: [...document.querySelectorAll('[role="tab"]')].map((t) => t.innerText.trim()),
+      active: document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim(),
+    }));
+    eq(JSON.stringify(after), JSON.stringify(before), "tabs");
+    await activateTab("Query 1");
+    eq(await page.$eval(".cm-content", (e) => e.innerText.trim()), "SELECT * FROM orders", "editor text");
+    return `${after.tabs.length} tabs restored, active ${after.active}; editor text restored`;
+  });
+
+  await check("A history drawer lists runs", async () => {
+    await clickText("History");
+    await page.waitForSelector('input[aria-label="Search history"]');
+    await sleep(500);
+    const all = await page.evaluate(() => document.querySelector('input[aria-label="Search history"]').closest("div").parentElement.innerText);
+    for (const s of ["SELECT * FROM orders", "SELECT pg_sleep(60)", "DELETE FROM orders"]) assert(all.includes(s), `history lacks ${s}`);
+    await page.type('input[aria-label="Search history"]', "pg_sleep");
+    await sleep(500);
+    const found = await page.evaluate(() => document.querySelector('input[aria-label="Search history"]').closest("div").parentElement.innerText);
+    assert(found.includes("pg_sleep") && !found.includes("DELETE FROM orders"), "search did not filter");
+    await page.screenshot({ path: `${SHOTS}/A-history.png` });
+    await page.click('[aria-label="Close history"]');
+    return "3 runs listed (with error flags); search filters";
+  });
+
+  await check("A allow writes, then UPDATE scratch_insert_target", async () => {
+    await page.click('[aria-label="Disconnect"]');
+    await until(() => document.body.innerText.includes("E2E Fixture"));
+    await page.evaluate(() => {
+      const li = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.includes("E2E Fixture"));
+      li.querySelector('[aria-label="Edit E2E Fixture"]').click();
+    });
+    await page.waitForSelector("#cd-name");
+    eq(await page.$eval("#cd-pw", (e) => e.value), "", "password field untouched");
+    await page.evaluate(() => document.querySelector('form input[type="checkbox"]').click());
+    await clickText("Save");
+    await until(() => document.body.innerText.includes("WRITE"));
+    const kc = await bridge("e2e_keychain_get", { id: connId });
+    eq(kc, PASSWORD, "keychain password kept on edit");
+    await page.evaluate(() => {
+      const li = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.includes("E2E Fixture"));
+      li.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    await until(() => document.querySelectorAll('[role="tab"]').length > 0, 15000);
+    await activateTab("Query 1");
+    await setSql(
+      "INSERT INTO scratch_insert_target (id, customer_id, status, amount, note, created_at) VALUES (900000001, 1, 'paid', 1.00, 'e2e', now()); UPDATE scratch_insert_target SET note = 'e2e-upd' WHERE id = 900000001;",
+    );
+    await runAll();
+    await until(() => [...document.querySelectorAll('button[role="tab"]')].map((b) => b.innerText).join() === "INSERT 1,UPDATE 1", 8000);
+    eq(psql("select note from scratch_insert_target where id = 900000001"), "e2e-upd", "row updated");
+    await setSql("DELETE FROM scratch_insert_target WHERE id = 900000001");
+    await runAll();
+    await until(() => document.body.innerText.includes("1 row affected"), 8000);
+    eq(psql("select count(*) from scratch_insert_target"), "0", "scratch cleaned");
+    return "Keychain password kept on edit; INSERT 1, UPDATE 1 verified in psql; row removed";
+  });
+
+  await check("A UI layout: dark + light at 1100x700", async () => {
+    const out = [];
+    for (const scheme of ["dark", "light"]) {
+      await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: scheme }]);
+      await page.setViewport({ width: 1100, height: 700 });
+      await sleep(400);
+      await openRel("all_types");
+      await page.screenshot({ path: `${SHOTS}/UI-1100-${scheme}-table.png` });
+      await activateTab("Query 1");
+      await setSql("SELECT 1 AS a; SELECT * FROM paid_orders LIMIT 50;");
+      await runAll();
+      await until(() => document.body.innerText.includes("50 rows"), 8000);
+      await page.screenshot({ path: `${SHOTS}/UI-1100-${scheme}-sql.png` });
+      const overflow = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }));
+      eq(JSON.stringify(overflow), JSON.stringify({ w: 1100, h: 700 }), `${scheme} page overflow`);
+      out.push(`${scheme}: no page overflow`);
+    }
+    await page.setViewport({ width: 1400, height: 900 });
+    return out.join("; ");
+  });
+
+  await check("A zero console errors", async () => {
+    eq(consoleErrors.length, 0, `console errors: ${consoleErrors.join(" | ")}`);
+    return "0 console/page errors";
+  });
+
+  // Cleanup: profile + Keychain entry.
+  await page.click('[aria-label="Disconnect"]').catch(() => {});
+  if (connId) await bridge("delete_profile", { id: connId });
+} finally {
+  await browser.close();
+  writeFileSync(`${SHOTS}/ui-results.json`, JSON.stringify(results, null, 2));
+}
+
+const failed = results.filter((r) => r.status === "FAIL").length;
+console.log(`\n${results.length - failed}/${results.length} passed`);
+process.exit(failed ? 1 : 0);

@@ -1,8 +1,9 @@
 //! SQL editor execution and cancellation.
-use pgview_core::model::{ConnId, QueryResult, RequestId, DEFAULT_SQL_MAX_ROWS};
+use pgview_core::model::{ConnId, QueryResult, RequestId};
 use pgview_core::AppResult;
 use tauri::State;
 
+use crate::ops;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -13,10 +14,10 @@ pub async fn run_sql(
     sql: String,
     max_rows: Option<u32>,
 ) -> AppResult<Vec<QueryResult>> {
-    engine.run_sql(&request_id, conn_id, &sql, max_rows.unwrap_or(DEFAULT_SQL_MAX_ROWS)).await
+    ops::run_sql(&engine, &request_id, conn_id, &sql, max_rows).await
 }
 
 #[tauri::command]
 pub async fn cancel_query(engine: State<'_, AppState>, request_id: RequestId) -> AppResult<()> {
-    engine.cancel_query(&request_id).await
+    ops::cancel_query(&engine, &request_id).await
 }

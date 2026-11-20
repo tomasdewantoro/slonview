@@ -1,10 +1,9 @@
 //! CSV export, streamed to disk in Rust.
-use std::path::Path;
-
 use pgview_core::model::{ExportSource, RequestId};
-use pgview_core::{AppError, AppResult};
+use pgview_core::AppResult;
 use tauri::State;
 
+use crate::ops;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -14,8 +13,5 @@ pub async fn export_csv(
     source: ExportSource,
     path: String,
 ) -> AppResult<u64> {
-    if path.trim().is_empty() {
-        return Err(AppError::invalid("export path is required"));
-    }
-    engine.export_csv(&request_id, &source, Path::new(&path)).await
+    ops::export_csv(&engine, &request_id, &source, &path).await
 }

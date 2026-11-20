@@ -1,4 +1,5 @@
 mod commands;
+pub mod ops;
 mod state;
 
 use tracing_subscriber::EnvFilter;

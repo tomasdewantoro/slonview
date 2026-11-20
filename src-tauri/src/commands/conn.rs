@@ -1,33 +1,13 @@
 //! Profiles, URL/pgpass parsing, and connection lifecycle.
 use pgview_core::model::{ConnId, ConnProfile, ParsedConn, ServerInfo};
-use pgview_core::{connurl, AppError, AppResult};
-use serde_json::Value;
+use pgview_core::AppResult;
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
 use tauri::{Runtime, State};
 
+use crate::ops::{self, PasswordUpdate};
 use crate::state::AppState;
 
-/// `save_profile`'s `password` argument. Tauri's `Option<T>` cannot tell a missing key
-/// from `null`, so this reads the raw invoke payload:
-/// key absent (JS `undefined`) = keep, `null` = delete, string = set.
-#[derive(Debug, PartialEq)]
-pub enum PasswordUpdate {
-    Keep,
-    Clear,
-    Set(String),
-}
-
-impl PasswordUpdate {
-    fn from_json(value: Option<&Value>) -> Result<Self, String> {
-        match value {
-            None => Ok(Self::Keep),
-            Some(Value::Null) => Ok(Self::Clear),
-            Some(Value::String(s)) => Ok(Self::Set(s.clone())),
-            Some(other) => Err(format!("password must be a string or null, got {other}")),
-        }
-    }
-}
-
+/// Tauri's `Option<T>` cannot tell a missing key from `null`, so this reads the raw payload.
 impl<'de, R: Runtime> CommandArg<'de, R> for PasswordUpdate {
     fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
         match command.message.payload() {
@@ -42,7 +22,7 @@ impl<'de, R: Runtime> CommandArg<'de, R> for PasswordUpdate {
 
 #[tauri::command]
 pub async fn list_profiles(engine: State<'_, AppState>) -> AppResult<Vec<ConnProfile>> {
-    engine.profiles.load()
+    ops::list_profiles(&engine).await
 }
 
 #[tauri::command]
@@ -51,37 +31,22 @@ pub async fn save_profile(
     profile: ConnProfile,
     password: PasswordUpdate,
 ) -> AppResult<Vec<ConnProfile>> {
-    if profile.name.trim().is_empty() {
-        return Err(AppError::invalid("connection name is required"));
-    }
-    let id = profile.id;
-    let profiles = engine.profiles.upsert(profile)?;
-    match password {
-        PasswordUpdate::Keep => {}
-        PasswordUpdate::Clear => engine.secrets.delete(id)?,
-        PasswordUpdate::Set(p) => engine.secrets.set(id, &p)?,
-    }
-    Ok(profiles)
+    ops::save_profile(&engine, profile, password).await
 }
 
 #[tauri::command]
 pub async fn delete_profile(engine: State<'_, AppState>, id: ConnId) -> AppResult<Vec<ConnProfile>> {
-    match engine.disconnect(id).await {
-        Ok(()) | Err(AppError::NotConnected) => {}
-        Err(e) => return Err(e),
-    }
-    engine.secrets.delete(id)?;
-    engine.profiles.delete(id)
+    ops::delete_profile(&engine, id).await
 }
 
 #[tauri::command]
 pub async fn parse_conn_url(url: String) -> AppResult<ParsedConn> {
-    connurl::parse_conn_url(&url)
+    ops::parse_conn_url(&url).await
 }
 
 #[tauri::command]
 pub async fn import_pgpass() -> AppResult<Vec<ParsedConn>> {
-    connurl::read_pgpass()
+    ops::import_pgpass().await
 }
 
 #[tauri::command]
@@ -90,30 +55,15 @@ pub async fn test_connection(
     profile: ConnProfile,
     password: Option<String>,
 ) -> AppResult<ServerInfo> {
-    engine.test_connection(&profile, password.as_deref()).await
+    ops::test_connection(&engine, &profile, password.as_deref()).await
 }
 
 #[tauri::command]
 pub async fn connect(engine: State<'_, AppState>, conn_id: ConnId) -> AppResult<ServerInfo> {
-    engine.connect(conn_id).await
+    ops::connect(&engine, conn_id).await
 }
 
 #[tauri::command]
 pub async fn disconnect(engine: State<'_, AppState>, conn_id: ConnId) -> AppResult<()> {
-    engine.disconnect(conn_id).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn password_update_tristate() {
-        let args = json!({ "a": null, "b": "s3cret", "c": 5 });
-        assert_eq!(PasswordUpdate::from_json(args.get("missing")), Ok(PasswordUpdate::Keep));
-        assert_eq!(PasswordUpdate::from_json(args.get("a")), Ok(PasswordUpdate::Clear));
-        assert_eq!(PasswordUpdate::from_json(args.get("b")), Ok(PasswordUpdate::Set("s3cret".into())));
-        assert!(PasswordUpdate::from_json(args.get("c")).is_err());
-    }
+    ops::disconnect(&engine, conn_id).await
 }
