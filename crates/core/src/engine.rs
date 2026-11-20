@@ -95,7 +95,10 @@ impl Engine {
         let limit = if req.limit == 0 { DEFAULT_PAGE_LIMIT } else { req.limit };
         let q = paging::page_query(req, &meta, limit)?;
         let guard = self.cancels.register(request_id, client.cancel_token());
-        let messages = client.simple_query(&q.sql).await.map_err(|e| guard.map_err(e))?;
+        let messages = client
+            .simple_query(&q.sql)
+            .await
+            .map_err(|e| paging::RawSpan::relocate(q.raw_span, guard.map_err(e)))?;
         drop(guard);
 
         let mut rows = Vec::with_capacity(limit as usize + 1);
@@ -151,9 +154,12 @@ impl Engine {
     ) -> AppResult<i64> {
         let (_, client) = self.client(conn_id).await?;
         let meta = introspect::table_meta(&client, schema, table).await?;
-        let sql = paging::count_query(schema, table, &meta, filters, raw_where)?;
+        let (sql, raw_span) = paging::count_query(schema, table, &meta, filters, raw_where)?;
         let guard = self.cancels.register(request_id, client.cancel_token());
-        let messages = client.simple_query(&sql).await.map_err(|e| guard.map_err(e))?;
+        let messages = client
+            .simple_query(&sql)
+            .await
+            .map_err(|e| paging::RawSpan::relocate(raw_span, guard.map_err(e)))?;
         first_value(&messages)
             .flatten()
             .and_then(|v| v.parse().ok())
@@ -229,7 +235,8 @@ impl Engine {
             ExportSource::Table { conn_id, .. } | ExportSource::Sql { conn_id, .. } => *conn_id,
         };
         let (session, client) = self.client(conn_id).await?;
-        let select = match source {
+        // `span` locates the user's own text (raw WHERE, or the whole SQL statement) in `select`.
+        let (select, span) = match source {
             ExportSource::Table { schema, table, filters, raw_where, sort, .. } => {
                 let meta = introspect::table_meta(&client, schema, table).await?;
                 paging::export_query(schema, table, &meta, filters, raw_where.as_deref(), sort)?
@@ -239,7 +246,9 @@ impl Engine {
                 if statements.len() != 1 {
                     return Err(AppError::invalid("export needs exactly one SQL statement"));
                 }
-                statements.remove(0).text
+                let text = statements.remove(0).text;
+                let span = paging::RawSpan { start: 0, chars: text.chars().count() };
+                (text, Some(span))
             }
         };
         // A long export must not hit the interactive statement_timeout.
@@ -248,7 +257,9 @@ impl Engine {
             .await
             .map_err(|e| conn::map_query_error(e, false))?;
         let guard = self.cancels.register(request_id, client.cancel_token());
-        let result = export::copy_to_file(&client, &select, path, &guard).await;
+        let result = export::copy_to_file(&client, &select, path, &guard)
+            .await
+            .map_err(|e| paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e));
         drop(guard);
         restore_session(client, &session.profile).await;
         result

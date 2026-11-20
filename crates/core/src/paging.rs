@@ -8,13 +8,55 @@ use crate::introspect::TableMeta;
 use crate::model::{CELL_TRUNCATE_CHARS, Cursor, Filter, FilterOp, PageRequest, RelationKind, Sort};
 use crate::{AppError, AppResult};
 
-/// The `WHERE ...` clause (with leading space) or an empty string.
-pub(crate) fn where_clause(meta: &TableMeta, filters: &[Filter], raw_where: Option<&str>) -> AppResult<String> {
+/// The `WHERE ...` clause (with leading space) or an empty string, plus the character
+/// offset of the verbatim `raw_where` text inside that clause (it is always the last part).
+pub(crate) fn where_clause(meta: &TableMeta, filters: &[Filter], raw_where: Option<&str>) -> AppResult<(String, Option<usize>)> {
     let mut parts = filters.iter().map(|f| filter_sql(meta, f)).collect::<AppResult<Vec<_>>>()?;
-    if let Some(raw) = raw_where.map(str::trim).filter(|r| !r.is_empty()) {
+    let raw = raw_where.map(str::trim).filter(|r| !r.is_empty());
+    if let Some(raw) = raw {
         parts.push(format!("({raw})"));
     }
-    Ok(if parts.is_empty() { String::new() } else { format!(" WHERE {}", parts.join(" AND ")) })
+    if parts.is_empty() {
+        return Ok((String::new(), None));
+    }
+    let clause = format!(" WHERE {}", parts.join(" AND "));
+    // `({raw})` closes the clause: raw starts raw + ")" characters before the end.
+    let raw_at = raw.map(|r| clause.chars().count() - r.chars().count() - 1);
+    Ok((clause, raw_at))
+}
+
+/// Where the verbatim raw WHERE text sits in a generated statement, so a Postgres error
+/// position (1-based characters in the whole statement) can be reported relative to the
+/// expression the user typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RawSpan {
+    /// 0-based character offset of the raw text in the statement.
+    pub start: usize,
+    pub chars: usize,
+}
+
+impl RawSpan {
+    fn new(prefix: &str, clause_offset: Option<usize>, raw_where: Option<&str>) -> Option<Self> {
+        let raw = raw_where.map(str::trim).filter(|r| !r.is_empty())?;
+        Some(Self { start: prefix.chars().count() + clause_offset?, chars: raw.chars().count() })
+    }
+
+    /// The same span after `prefix` is prepended to the statement.
+    pub(crate) fn shifted(self, prefix: &str) -> Self {
+        Self { start: self.start + prefix.chars().count(), ..self }
+    }
+
+    /// Rewrites a SQL error position into the raw expression; positions in generated
+    /// SQL mean nothing to the user and are dropped.
+    pub(crate) fn relocate(span: Option<Self>, mut e: AppError) -> AppError {
+        if let AppError::Sql { position, .. } = &mut e
+            && let Some(p) = *position
+        {
+            let p0 = p as usize - 1;
+            *position = span.filter(|s| p0 >= s.start && p0 <= s.start + s.chars).map(|s| (p0 - s.start + 1) as u32);
+        }
+        e
+    }
 }
 
 fn filter_sql(meta: &TableMeta, f: &Filter) -> AppResult<String> {
@@ -68,6 +110,7 @@ pub(crate) struct PageQuery {
     pub mode: PageMode,
     /// Index of each PK column in the select list (keyset mode only).
     pub pk_indexes: Vec<usize>,
+    pub raw_span: Option<RawSpan>,
 }
 
 /// Selects every column as text: PK columns in full (they feed the keyset cursor),
@@ -89,9 +132,10 @@ pub(crate) fn page_query(req: &PageRequest, meta: &TableMeta, limit: u32) -> App
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let mut where_sql = where_clause(meta, filters, raw_where)?;
+    let (mut where_sql, raw_at) = where_clause(meta, filters, raw_where)?;
     let keyset = sort.is_empty() && !meta.pk.is_empty();
     let mut sql = format!("SELECT {select} FROM {}", qualified(schema, table));
+    let raw_span = RawSpan::new(&sql, raw_at, raw_where);
 
     let mode = if keyset {
         if let Some(cursor) = cursor {
@@ -135,7 +179,7 @@ pub(crate) fn page_query(req: &PageRequest, meta: &TableMeta, limit: u32) -> App
     } else {
         Vec::new()
     };
-    Ok(PageQuery { sql, mode, pk_indexes })
+    Ok(PageQuery { sql, mode, pk_indexes, raw_span })
 }
 
 /// User sort first, then a deterministic tie-breaker so OFFSET paging is stable:
@@ -176,8 +220,12 @@ pub(crate) fn count_query(
     meta: &TableMeta,
     filters: &[Filter],
     raw_where: Option<&str>,
-) -> AppResult<String> {
-    Ok(format!("SELECT count(*) FROM {}{}", qualified(schema, table), where_clause(meta, filters, raw_where)?))
+) -> AppResult<(String, Option<RawSpan>)> {
+    let mut sql = format!("SELECT count(*) FROM {}", qualified(schema, table));
+    let (where_sql, raw_at) = where_clause(meta, filters, raw_where)?;
+    let span = RawSpan::new(&sql, raw_at, raw_where);
+    sql.push_str(&where_sql);
+    Ok((sql, span))
 }
 
 /// Full-value export of a table: all columns, same filters, user sort (or PK order).
@@ -188,8 +236,11 @@ pub(crate) fn export_query(
     filters: &[Filter],
     raw_where: Option<&str>,
     sort: &[Sort],
-) -> AppResult<String> {
-    let mut sql = format!("SELECT * FROM {}{}", qualified(schema, table), where_clause(meta, filters, raw_where)?);
+) -> AppResult<(String, Option<RawSpan>)> {
+    let mut sql = format!("SELECT * FROM {}", qualified(schema, table));
+    let (where_sql, raw_at) = where_clause(meta, filters, raw_where)?;
+    let span = RawSpan::new(&sql, raw_at, raw_where);
+    sql.push_str(&where_sql);
     let mut keys = Vec::new();
     for s in sort {
         let col = quote_ident(&meta.column(&s.column)?.name);
@@ -201,7 +252,7 @@ pub(crate) fn export_query(
     if !keys.is_empty() {
         let _ = write!(sql, " ORDER BY {}", keys.join(", "));
     }
-    Ok(sql)
+    Ok((sql, span))
 }
 
 pub(crate) fn cell_query(
@@ -328,10 +379,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            w,
+            w.0,
             " WHERE \"status\" IN ('paid', 'shipped', 'x''y') AND \"Note \"\"x\"\"\"::text ILIKE E'%a\\\\b%' \
              AND \"id\" IS NULL AND \"id\" <> '1'"
         );
+    }
+
+    /// Postgres positions point into the generated statement; errors must report them
+    /// relative to the raw WHERE text, and drop positions outside it.
+    #[test]
+    fn raw_where_error_position_is_relative_to_user_text() {
+        let m = orders();
+        let raw = "  ünï >> AND ";
+        let filters = [f("status", FilterOp::Eq, Some("paid"))];
+        let sql_err = |position| AppError::Sql { code: "42601".into(), message: "m".into(), detail: None, hint: None, position };
+        let at = |sql: &str, needle: &str| sql[..sql.find(needle).unwrap()].chars().count() as u32 + 1;
+        let pos = |e: AppError| match e {
+            AppError::Sql { position, .. } => position,
+            _ => unreachable!(),
+        };
+
+        let q = page_query(&req("orders", &filters, Some(raw), &[], None), &m, 5).unwrap();
+        assert_eq!(pos(RawSpan::relocate(q.raw_span, sql_err(Some(at(&q.sql, "AND)"))))), Some(8));
+        assert_eq!(pos(RawSpan::relocate(q.raw_span, sql_err(Some(1)))), None);
+        assert_eq!(pos(RawSpan::relocate(None, sql_err(Some(3)))), None);
+
+        let (sql, span) = count_query("public", "orders", &m, &filters, Some(raw)).unwrap();
+        assert_eq!(pos(RawSpan::relocate(span, sql_err(Some(at(&sql, "ünï"))))), Some(1));
+
+        let (sql, span) = export_query("public", "orders", &m, &[], Some(raw), &[]).unwrap();
+        let copy = format!("COPY ({sql})");
+        let span = span.map(|s| s.shifted("COPY ("));
+        assert_eq!(pos(RawSpan::relocate(span, sql_err(Some(at(&copy, ">>"))))), Some(5));
     }
 
     #[test]
@@ -355,11 +434,11 @@ mod tests {
         );
         assert_eq!(
             count_query("public", "orders", &m, &[f("status", FilterOp::Eq, Some("paid"))], None).unwrap(),
-            "SELECT count(*) FROM \"public\".\"orders\" WHERE \"status\" = 'paid'"
+            ("SELECT count(*) FROM \"public\".\"orders\" WHERE \"status\" = 'paid'".to_owned(), None)
         );
         assert_eq!(
             export_query("public", "orders", &m, &[], None, &[]).unwrap(),
-            "SELECT * FROM \"public\".\"orders\" ORDER BY \"id\""
+            ("SELECT * FROM \"public\".\"orders\" ORDER BY \"id\"".to_owned(), None)
         );
     }
 }
