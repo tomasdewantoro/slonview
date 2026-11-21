@@ -22,6 +22,8 @@ import type { ColumnCopySummary } from "./bindings/ColumnCopySummary";
 import type { EditInfo } from "./bindings/EditInfo";
 import type { EditRequest } from "./bindings/EditRequest";
 import type { EditValue } from "./bindings/EditValue";
+import type { ColumnRef } from "./bindings/ColumnRef";
+import type { ExplainResult } from "./bindings/ExplainResult";
 
 export function isAppError(e: unknown): e is AppError {
   return typeof e === "object" && e !== null && "kind" in e;
@@ -98,6 +100,11 @@ export const api = {
   getEditRow: (req: CellRequest) => invoke<EditValue[]>("get_edit_row", { req }),
   reviewEdits: (req: EditRequest) => invoke<string[]>("review_edits", { req }),
   applyEdits: (requestId: string, req: EditRequest) => invoke<number>("apply_edits", { requestId, req }),
+  // SQL assist. listColumns: every column of every relation (autocomplete), one catalog query.
+  listColumns: (connId: string) => invoke<ColumnRef[]>("list_columns", { connId }),
+  /** EXPLAIN (FORMAT JSON) of one statement; `analyze` runs it. Always rolled back. */
+  explain: (requestId: string, connId: string, sql: string, analyze: boolean) =>
+    invoke<ExplainResult>("explain", { requestId, connId, sql, analyze }),
 };
 
 async function streamColumnValues(requestId: string, req: ColumnCopyRequest, onChunk: (chunk: ColumnCopyChunk) => void): Promise<ColumnCopySummary> {

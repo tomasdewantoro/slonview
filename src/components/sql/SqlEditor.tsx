@@ -4,10 +4,13 @@ import { basicSetup } from "codemirror";
 import { Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
 import { PostgreSQL, sql } from "@codemirror/lang-sql";
+import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import type { SchemaNode } from "../../bindings/SchemaNode";
 import { completionNamespace } from "../../lib/sqlResult";
+import { columnCompletion, type ColumnIndex } from "../../lib/sqlColumns";
+import { statementAt } from "../../lib/sqlSplit";
 
 export type RunMode = "cursor" | "all";
 
@@ -100,21 +103,52 @@ function subscribeDark(onChange: () => void) {
 const languageFor = (schema: SchemaNode[]) =>
   sql({ dialect: PostgreSQL, schema: completionNamespace(schema), defaultSchema: "public", upperCaseKeywords: true });
 
+const PLAIN_IDENT = /^[a-z_][a-z_\d$]*$/;
+
+/**
+ * Column names for the tables the statement at the cursor references. Runs alongside lang-sql's
+ * schema/table/keyword sources; `columns` is read at completion time so a reload needs no reconfigure.
+ */
+function columnSource(columns: RefObject<ColumnIndex>) {
+  return (context: CompletionContext): CompletionResult | null => {
+    const doc = context.state.doc.toString();
+    const stmt = statementAt(doc, context.pos);
+    if (!stmt || context.pos < stmt.start || context.pos > stmt.end) return null;
+    const found = columnCompletion(columns.current, stmt.text, context.pos - stmt.start);
+    if (!found) return null;
+    const options: Completion[] = found.columns.map((c) => ({
+      label: c.name,
+      type: "property",
+      detail: found.qualified ? c.typeName : `${c.table} · ${c.typeName}`,
+      apply: PLAIN_IDENT.test(c.name) ? undefined : `"${c.name.replace(/"/g, '""')}"`,
+      // Columns of the tables in the statement rank above keywords and table names.
+      boost: 2,
+    }));
+    return { from: stmt.start + found.from, options, validFor: /^[\p{L}\p{N}_$]*$/u };
+  };
+}
+
 interface SqlEditorProps {
   viewRef: RefObject<EditorView | null>;
   /** localStorage key; the document is restored from it and saved to it on change. */
   storageKey: string;
   initialSql: string;
   schema: SchemaNode[];
+  /** Catalog columns for column autocomplete. */
+  columns: ColumnIndex;
   onRun: (mode: RunMode) => void;
+  /** ⌘E: explain the selection or the statement at the cursor. */
+  onExplain: () => void;
   /** Return true when a running query was cancelled (consumes Esc). */
   onCancel: () => boolean;
 }
 
-export function SqlEditor({ viewRef, storageKey, initialSql, schema, onRun, onCancel }: SqlEditorProps) {
+export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, onRun, onExplain, onCancel }: SqlEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const handlers = useRef({ onRun, onCancel });
-  handlers.current = { onRun, onCancel };
+  const handlers = useRef({ onRun, onExplain, onCancel });
+  handlers.current = { onRun, onExplain, onCancel };
+  const columnsRef = useRef(columns);
+  columnsRef.current = columns;
   const language = useRef(new Compartment());
   // Tells CodeMirror's own base styles (tooltips, panels) which scheme is active; colours come from tokens.
   const scheme = useRef(new Compartment());
@@ -138,10 +172,12 @@ export function SqlEditor({ viewRef, storageKey, initialSql, schema, onRun, onCa
               { key: "Mod-Enter", run: () => (handlers.current.onRun("cursor"), true) },
               { key: "Shift-Mod-Enter", run: () => (handlers.current.onRun("all"), true) },
               { key: "Escape", run: () => handlers.current.onCancel() },
+              { key: "Mod-e", run: () => (handlers.current.onExplain(), true) },
             ]),
           ),
           basicSetup,
           language.current.of(languageFor(initial.current.schema)),
+          PostgreSQL.language.data.of({ autocomplete: columnSource(columnsRef) }),
           scheme.current.of(EditorView.darkTheme.of(initial.current.dark)),
           brandTheme,
           syntaxHighlighting(brandHighlight),

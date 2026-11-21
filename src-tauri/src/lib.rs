@@ -45,6 +45,8 @@ pub fn run() {
             commands::grid::get_edit_row,
             commands::grid::review_edits,
             commands::grid::apply_edits,
+            commands::sql_assist::list_columns,
+            commands::sql_assist::explain,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

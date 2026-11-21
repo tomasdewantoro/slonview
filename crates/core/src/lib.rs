@@ -1,6 +1,8 @@
 //! slonview-core: all PostgreSQL, config, and secret logic. No Tauri dependency.
 pub mod config;
 pub mod engine;
+pub mod completion;
+pub mod explain;
 pub mod connurl;
 pub mod error;
 pub mod history;
