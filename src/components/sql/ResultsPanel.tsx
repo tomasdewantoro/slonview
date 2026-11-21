@@ -1,16 +1,19 @@
-// Bottom half of SqlTab: per-statement result sub-tabs, error panel, CSV export.
+// Bottom half of SqlTab: per-statement result sub-tabs, EXPLAIN plans, error panel, CSV export.
 import { useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { CircleAlert, FileDown, TriangleAlert } from "lucide-react";
 import { api, errorMessage, newRequestId } from "../../api";
 import type { AppError } from "../../bindings/AppError";
+import type { ExplainResult } from "../../bindings/ExplainResult";
 import type { QueryResult } from "../../bindings/QueryResult";
 import { ResultGrid } from "../ResultGrid";
 import { affectedMessage, formatElapsed, isExportable, resultLabel } from "../../lib/sqlResult";
+import { PlanView } from "./PlanView";
 
 /** `runId` identifies the run; result views remount per run so sub-tab and export state reset. */
 export type RunOutcome =
   | { kind: "results"; runId: number; results: QueryResult[]; maxRows: number }
+  | { kind: "plan"; runId: number; result: ExplainResult }
   | { kind: "error"; runId: number; error: AppError | Error };
 
 type ExportState =
@@ -29,11 +32,12 @@ export function ResultsPanel({ connId, outcome, running }: ResultsPanelProps) {
   if (!outcome) {
     return (
       <div className="flex h-full items-center justify-center text-pretty text-muted">
-        {running ? "Running…" : "Run a query with ⌘↵ (statement at cursor) or ⇧⌘↵ (whole editor)."}
+        {running ? "Running…" : "Run a query with ⌘↵ (statement at cursor) or ⇧⌘↵ (whole editor). ⌘E shows its plan."}
       </div>
     );
   }
   if (outcome.kind === "error") return <ErrorPanel error={outcome.error} />;
+  if (outcome.kind === "plan") return <PlanView key={outcome.runId} result={outcome.result} />;
   if (outcome.results.length === 0) {
     return <div className="flex h-full items-center justify-center text-muted">The query contained no statements.</div>;
   }

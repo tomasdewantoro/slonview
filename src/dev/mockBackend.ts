@@ -16,6 +16,10 @@ import type { QueryResult } from "../bindings/QueryResult";
 import type { RelationKind } from "../bindings/RelationKind";
 import type { SchemaNode } from "../bindings/SchemaNode";
 import type { TableDescription } from "../bindings/TableDescription";
+import type { ColumnRef } from "../bindings/ColumnRef";
+import type { ExplainResult } from "../bindings/ExplainResult";
+import type { PlanNode } from "../bindings/PlanNode";
+import { splitStatements } from "../lib/sqlSplit";
 
 const TRUNCATE = 2048;
 
@@ -558,6 +562,63 @@ function errorText(e: AppError): string {
   return "message" in e ? e.message : e.kind;
 }
 
+function mockColumns(): ColumnRef[] {
+  return tables.flatMap((t) => t.columns.map((c) => ({ schema: t.schema, table: t.name, name: c.name, typeName: c.typeName })));
+}
+
+function planNode(p: Partial<PlanNode> & Pick<PlanNode, "nodeType">): PlanNode {
+  return {
+    relation: null, indexName: null, qualifier: null, startupCost: 0, totalCost: 0, planRows: 1, planWidth: 8,
+    actualRows: null, actualTotalTime: null, actualLoops: null, sharedHitBlocks: null, sharedReadBlocks: null,
+    sharedDirtiedBlocks: null, sharedWrittenBlocks: null, tempReadBlocks: null, tempWrittenBlocks: null,
+    details: [], children: [], ...p,
+  };
+}
+
+/** Deterministic plan: Limit > Sort > Hash Join of the FROM table (seq scan) and customers (index scan). */
+async function mockExplain(requestId: string, connId: string, sql: string, analyze: boolean): Promise<ExplainResult> {
+  requireConn(connId);
+  await delay(requestId, /pg_sleep/i.test(sql) ? 60_000 : analyze ? 400 : 120);
+  if (splitStatements(sql).length !== 1) throw err({ kind: "invalid", message: "Explain needs exactly one SQL statement; select or place the cursor in one.", position: null });
+  const m = /from\s+("?)([\w ]+?)\1(\s|;|$)/i.exec(sql);
+  const t = tables.find((x) => x.name === m?.[2]) ?? tables[0];
+  const a = (rows: number, ms: number, loops = 1) => (analyze ? { actualRows: rows, actualTotalTime: ms, actualLoops: loops } : {});
+  const b = (hit: number, read: number) => ({ sharedHitBlocks: hit, sharedReadBlocks: read });
+  const plan = planNode({
+    nodeType: "Limit", totalCost: 48211.4, planRows: 100, ...a(100, 412.8), ...b(9120, 3104),
+    details: [{ key: "Output", value: `${t.name}.id, ${t.name}.status` }],
+    children: [
+      planNode({
+        nodeType: "Sort", totalCost: 48190.2, planRows: 8500, ...a(100, 412.7), ...b(9120, 3104),
+        details: [{ key: "Sort Key", value: `${t.name}.id DESC` }, { key: "Sort Method", value: "top-N heapsort" }],
+        children: [
+          planNode({
+            nodeType: "Hash Join", qualifier: "Inner", totalCost: 47012.9, planRows: 8500, ...a(162_337, 371.5), ...b(9120, 3104),
+            details: [{ key: "Hash Cond", value: `(${t.name}.customer_id = c.id)` }],
+            children: [
+              planNode({
+                nodeType: "Seq Scan", relation: `${t.schema}.${t.name}`, totalCost: 21370, planRows: 8500, ...a(162_337, 288.4), ...b(8840, 3104),
+                details: [{ key: "Filter", value: "(status = 'paid'::order_status)" }, { key: "Rows Removed by Filter", value: "837663" }],
+              }),
+              planNode({
+                nodeType: "Hash", totalCost: 155, planRows: 5000, ...a(5000, 2.1), ...b(280, 0),
+                children: [planNode({ nodeType: "Index Scan", relation: "public.customers c", indexName: "customers_pkey", totalCost: 155, planRows: 5000, ...a(5000, 1.2), ...b(280, 0) })],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+  return {
+    plan,
+    analyzed: analyze,
+    planningTimeMs: analyze ? 0.42 : null,
+    executionTimeMs: analyze ? 413.1 : null,
+    rawJson: JSON.stringify([{ Plan: { "Node Type": plan.nodeType, "Total Cost": plan.totalCost, "Plan Rows": plan.planRows } }], null, 2),
+  };
+}
+
 export function installMockBackend(): void {
   mockIPC(async (cmd, payload) => {
     const a = (payload ?? {}) as Record<string, any>;
@@ -659,6 +720,12 @@ export function installMockBackend(): void {
       case "clear_history":
         history.length = 0;
         return null;
+      case "list_columns":
+        requireConn(a.connId);
+        await delay(null, 100);
+        return mockColumns();
+      case "explain":
+        return mockExplain(a.requestId, a.connId, a.sql, a.analyze);
       case "plugin:clipboard-manager|write_text":
         await navigator.clipboard?.writeText(a.text).catch(() => {});
         console.info("[mock clipboard]\n" + a.text);

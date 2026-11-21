@@ -714,6 +714,64 @@ try {
     return `${names.length} functions in public; definition tab "customer_label(p_id bigint)" shows CREATE OR REPLACE FUNCTION`;
   });
 
+  await check("SQL assist: column types, alias autocomplete, Explain shows a scan node", async () => {
+    // SQL tabs stay mounted (hidden), so every probe targets the visible editor / panel.
+    const visibleEditor = () => [...document.querySelectorAll(".cm-content")].find((el) => el.offsetParent !== null);
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("t");
+    await page.keyboard.up("Meta");
+    await until(() => [...document.querySelectorAll(".cm-content")].some((el) => el.offsetParent !== null && el.textContent === ""), 5000);
+    const editor = await page.evaluateHandle(visibleEditor);
+    await editor.click();
+
+    // Result columns carry type names (from the statement's row description), which ResultGrid aligns by.
+    await page.evaluate((s) => document.execCommand("insertText", false, s), "SELECT 1::int AS i, 1.5::numeric(5,2) AS n, 'x'::text AS t");
+    await page.keyboard.press("Escape");
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("Enter");
+    await page.keyboard.up("Meta");
+    const typed = await bridge("run_sql", { requestId: "e2e-types", connId, sql: "SELECT 1::int AS i, 1.5::numeric(5,2) AS n, 'x'::text AS t, ARRAY[1,2] AS a", maxRows: 10 });
+    eq(typed[0].columns.map((c) => c.typeName).join("|"), "integer|numeric(5,2)|text|integer[]", "result column types");
+    await until(() => document.body.innerText.includes("1 row"), 8000);
+
+    // Alias completion: `o.` lists orders' columns.
+    await editor.click();
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("a");
+    await page.keyboard.up("Meta");
+    await page.keyboard.press("Backspace");
+    await page.evaluate((s) => document.execCommand("insertText", false, s), "SELECT  FROM orders o WHERE true");
+    await page.keyboard.press("Home");
+    for (let i = 0; i < 7; i++) await page.keyboard.press("ArrowRight");
+    await page.keyboard.type("o.");
+    await until(() => document.querySelectorAll(".cm-tooltip-autocomplete li").length > 0, 5000);
+    const options = await page.evaluate(() => [...document.querySelectorAll(".cm-tooltip-autocomplete li .cm-completionLabel")].map((l) => l.textContent));
+    for (const name of ["id", "customer_id", "status", "amount", "created_at"]) assert(options.includes(name), `o. completion missing ${name}: ${options}`);
+    await page.keyboard.press("Escape");
+
+    // Explain (plan only, ⌘E) on a SELECT shows a scan node of orders.
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("a");
+    await page.keyboard.up("Meta");
+    await page.keyboard.press("Backspace");
+    await page.evaluate((s) => document.execCommand("insertText", false, s), "SELECT * FROM orders WHERE id = 42");
+    await page.keyboard.press("Escape");
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("e");
+    await page.keyboard.up("Meta");
+    await until(() => [...document.querySelectorAll('[data-testid="plan-view"]')].some((el) => el.offsetParent !== null), 8000);
+    const nodes = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid="plan-view"] tr[data-node-type]')].filter((r) => r.offsetParent !== null).map((r) => r.innerText.split("\n")[0]),
+    );
+    assert(nodes.some((n) => /(Seq|Index|Index Only|Bitmap Heap) Scan/.test(n) && n.includes("public.orders")), `no scan node on orders: ${nodes}`);
+    assert(await page.evaluate(() => document.body.innerText.includes("Plan only, not executed")), "plan-only banner");
+    await page.screenshot({ path: `${SHOTS}/sql-assist-explain.png` });
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("w");
+    await page.keyboard.up("Meta");
+    return `types integer|numeric(5,2)|text|integer[]; o. offers ${options.length} columns; plan: ${nodes.join(" > ")}`;
+  });
+
   await check("A zero console errors", async () => {
     eq(consoleErrors.length, 0, `console errors: ${consoleErrors.join(" | ")}`);
     return "0 console/page errors";

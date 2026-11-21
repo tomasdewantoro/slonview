@@ -166,6 +166,22 @@ pub async fn clear_history(engine: &Engine) -> AppResult<()> {
     engine.history.clear()
 }
 
+// SQL assist
+
+pub async fn list_columns(engine: &Engine, conn_id: ConnId) -> AppResult<Vec<slonview_core::completion::ColumnRef>> {
+    engine.list_columns(conn_id).await
+}
+
+pub async fn explain(
+    engine: &Engine,
+    request_id: &RequestId,
+    conn_id: ConnId,
+    sql: &str,
+    analyze: bool,
+) -> AppResult<slonview_core::explain::ExplainResult> {
+    engine.explain(request_id, conn_id, sql, analyze).await
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

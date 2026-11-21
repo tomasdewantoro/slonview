@@ -1,14 +1,18 @@
 // SQL editor tab. Owned by WP-FE-SQL. Rendered by App for tabs with kind "sql".
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EditorView } from "@codemirror/view";
-import { History, ListVideo, LoaderCircle, Play, Square } from "lucide-react";
+import { History, ListTree, ListVideo, LoaderCircle, Play, Square } from "lucide-react";
 import { api, isAppError, newRequestId } from "../../api";
 import type { SchemaNode } from "../../bindings/SchemaNode";
+import { isDataModifying } from "../../lib/plan";
 import { formatElapsed } from "../../lib/sqlResult";
 import { pgPositionToOffset, statementAt } from "../../lib/sqlSplit";
+import { useApp } from "../../store/app";
+import { ConfirmDialog } from "../Dialog";
 import { HistoryPanel } from "./HistoryPanel";
 import { ResultsPanel, type RunOutcome } from "./ResultsPanel";
 import { clearSqlError, markSqlError, SqlEditor, type RunMode } from "./SqlEditor";
+import { useColumnIndex } from "./useColumnIndex";
 
 export interface SqlTabProps {
   tabId: string;
@@ -22,6 +26,10 @@ export interface SqlTabProps {
 const MAX_ROWS_OPTIONS = [1000, 10000, 100000];
 const MAX_ROWS_KEY = "slonview.sql.maxRows";
 const SPLIT_KEY = "slonview.sql.split";
+const ANALYZE_KEY = "slonview.sql.explainAnalyze";
+
+/** What a request does with the text: run it, or EXPLAIN it (ANALYZE executes and rolls back). */
+type Action = { kind: "run" } | { kind: "explain"; analyze: boolean };
 
 interface Running {
   requestId: string;
@@ -52,6 +60,11 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyVersion, setHistoryVersion] = useState(0);
   const [split, setSplit] = useState(() => storedNumber(SPLIT_KEY, 0.45, (n) => n >= 0.1 && n <= 0.9));
+  const [analyze, setAnalyze] = useState(() => localStorage.getItem(ANALYZE_KEY) === "1");
+  /** ANALYZE of a data-modifying statement waiting for confirmation (allow-writes profiles). */
+  const [confirmAnalyze, setConfirmAnalyze] = useState<Executed | null>(null);
+  const readOnly = useApp((s) => s.profiles.find((p) => p.id === connId)?.readOnly ?? true);
+  const columns = useColumnIndex(connId, schema);
   const splitRef = useRef<HTMLDivElement>(null);
   const runCounter = useRef(0);
 
@@ -70,7 +83,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
   );
 
   const execute = useCallback(
-    async (executed: Executed) => {
+    async (executed: Executed, action: Action = { kind: "run" }) => {
       if (runningRef.current || executed.text.trim() === "") return;
       const run: Running = { requestId: newRequestId(), startedAt: Date.now() };
       const runId = ++runCounter.current;
@@ -79,8 +92,13 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
       setNow(run.startedAt);
       if (viewRef.current) clearSqlError(viewRef.current);
       try {
-        const results = await api.runSql(run.requestId, connId, executed.text, maxRows);
-        setOutcome({ kind: "results", runId, results, maxRows });
+        if (action.kind === "explain") {
+          const result = await api.explain(run.requestId, connId, executed.text, action.analyze);
+          setOutcome({ kind: "plan", runId, result });
+        } else {
+          const results = await api.runSql(run.requestId, connId, executed.text, maxRows);
+          setOutcome({ kind: "results", runId, results, maxRows });
+        }
       } catch (e) {
         const error = isAppError(e) ? e : e instanceof Error ? e : new Error(String(e));
         setOutcome({ kind: "error", runId, error });
@@ -100,29 +118,45 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
       } finally {
         runningRef.current = null;
         setRunning(null);
-        setHistoryVersion((v) => v + 1);
+        if (action.kind === "run") setHistoryVersion((v) => v + 1);
       }
     },
     [connId, maxRows],
   );
 
+  /** Selection, else the statement at the cursor, else nothing. */
+  const editorText = useCallback((): Executed | null => {
+    const view = viewRef.current;
+    if (!view) return null;
+    const doc = view.state.doc.toString();
+    const sel = view.state.selection.main;
+    if (!sel.empty) return { text: doc.slice(sel.from, sel.to), docOffset: sel.from, doc };
+    const stmt = statementAt(doc, sel.head);
+    return stmt ? { text: stmt.text, docOffset: stmt.start, doc } : null;
+  }, []);
+
   const runFromEditor = useCallback(
     (mode: RunMode) => {
       const view = viewRef.current;
       if (!view) return;
-      const doc = view.state.doc.toString();
-      const sel = view.state.selection.main;
       if (mode === "all") {
+        const doc = view.state.doc.toString();
         execute({ text: doc, docOffset: 0, doc });
-      } else if (!sel.empty) {
-        execute({ text: doc.slice(sel.from, sel.to), docOffset: sel.from, doc });
       } else {
-        const stmt = statementAt(doc, sel.head);
-        if (stmt) execute({ text: stmt.text, docOffset: stmt.start, doc });
+        const target = editorText();
+        if (target) execute(target);
       }
     },
-    [execute],
+    [execute, editorText],
   );
+
+  const explainFromEditor = useCallback(() => {
+    const target = editorText();
+    if (!target || runningRef.current) return;
+    // Read-only profiles run ANALYZE in a READ ONLY transaction, so a write just fails there.
+    if (analyze && !readOnly && isDataModifying(target.text)) setConfirmAnalyze(target);
+    else execute(target, { kind: "explain", analyze });
+  }, [analyze, readOnly, editorText, execute]);
 
   const cancel = useCallback(() => {
     if (!runningRef.current) return false;
@@ -199,6 +233,33 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
             <ListVideo className="size-3.5" />
             Run all
           </button>
+          <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+          <button
+            type="button"
+            className={toolbarButton}
+            disabled={!!running}
+            onClick={explainFromEditor}
+            title={
+              analyze
+                ? "Explain analyze: run the selection or statement at cursor, show the plan with actual times, then roll back (⌘E)"
+                : "Explain: show the plan for the selection or statement at cursor without running it (⌘E)"
+            }
+          >
+            <ListTree className="size-3.5" />
+            Explain
+          </button>
+          <label className="flex h-6 items-center gap-1 rounded px-1 text-muted hover:text-ink" title="ANALYZE executes the statement inside a transaction that is always rolled back">
+            <input
+              type="checkbox"
+              checked={analyze}
+              onChange={(e) => {
+                setAnalyze(e.target.checked);
+                localStorage.setItem(ANALYZE_KEY, e.target.checked ? "1" : "0");
+              }}
+              className="size-3.5 accent-accent focus-visible:outline-2 focus-visible:outline-focus-ring"
+            />
+            Analyze
+          </label>
           {running && (
             <>
               <button type="button" className={`${toolbarButton} text-error`} onClick={cancel} title="Cancel query (Esc)">
@@ -247,7 +308,9 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
               storageKey={`slonview.sql.${tabId}`}
               initialSql={initialSql ?? ""}
               schema={schema}
+              columns={columns}
               onRun={runFromEditor}
+              onExplain={explainFromEditor}
               onCancel={cancel}
             />
           </div>
@@ -270,6 +333,24 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
           onInsert={insertSql}
           onRun={(sql) => execute({ text: sql, docOffset: null, doc: "" })}
           onClose={() => setHistoryOpen(false)}
+        />
+      )}
+      {confirmAnalyze && (
+        <ConfirmDialog
+          title="Run this statement for EXPLAIN ANALYZE?"
+          message={
+            <>
+              ANALYZE runs the statement, then rolls back. Triggers with side effects outside the transaction (for example{" "}
+              <code className="font-mono">dblink</code> calls) still fire, and sequence values it uses are not returned.
+            </>
+          }
+          confirmLabel="Run and roll back"
+          onCancel={() => setConfirmAnalyze(null)}
+          onConfirm={() => {
+            const target = confirmAnalyze;
+            setConfirmAnalyze(null);
+            execute(target, { kind: "explain", analyze: true });
+          }}
         />
       )}
     </div>

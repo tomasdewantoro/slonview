@@ -14,6 +14,8 @@ import type { SchemaNode } from "./bindings/SchemaNode";
 import type { ServerInfo } from "./bindings/ServerInfo";
 import type { TableDescription } from "./bindings/TableDescription";
 import type { Filter } from "./bindings/Filter";
+import type { ColumnRef } from "./bindings/ColumnRef";
+import type { ExplainResult } from "./bindings/ExplainResult";
 
 export function isAppError(e: unknown): e is AppError {
   return typeof e === "object" && e !== null && "kind" in e;
@@ -81,4 +83,10 @@ export const api = {
   listHistory: (connId: string | null, search: string | null, limit?: number) =>
     invoke<HistoryEntry[]>("list_history", { connId, search, limit: limit ?? null }),
   clearHistory: () => invoke<void>("clear_history"),
+
+  // SQL assist. listColumns: every column of every relation (autocomplete), one catalog query.
+  listColumns: (connId: string) => invoke<ColumnRef[]>("list_columns", { connId }),
+  /** EXPLAIN (FORMAT JSON) of one statement; `analyze` runs it. Always rolled back. */
+  explain: (requestId: string, connId: string, sql: string, analyze: boolean) =>
+    invoke<ExplainResult>("explain", { requestId, connId, sql, analyze }),
 };

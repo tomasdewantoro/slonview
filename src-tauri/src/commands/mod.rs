@@ -7,3 +7,4 @@ pub mod export;
 pub mod history;
 pub mod schema;
 pub mod sql;
+pub mod sql_assist;

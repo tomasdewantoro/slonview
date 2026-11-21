@@ -18,9 +18,11 @@ use crate::split::split_statements;
 use crate::{AppError, AppResult, export, query};
 
 /// One connected profile.
-struct Session {
-    profile: ConnProfile,
+pub(crate) struct Session {
+    pub(crate) profile: ConnProfile,
     pool: Pool,
+    /// Result column type names seen on this connection (OIDs are per database).
+    pub(crate) types: query::TypeNames,
 }
 
 pub struct Engine {
@@ -28,7 +30,7 @@ pub struct Engine {
     pub secrets: Arc<dyn SecretStore>,
     pub history: HistoryStore,
     sessions: RwLock<HashMap<ConnId, Arc<Session>>>,
-    cancels: CancelRegistry,
+    pub(crate) cancels: CancelRegistry,
 }
 
 impl Engine {
@@ -63,7 +65,7 @@ impl Engine {
             let client = pool.get().await.map_err(conn::map_pool_error)?;
             server_info(&client).await?
         };
-        let session = Arc::new(Session { profile, pool });
+        let session = Arc::new(Session { profile, pool, types: query::TypeNames::default() });
         let previous = self.sessions_write().insert(session.profile.id, session);
         if let Some(old) = previous {
             old.pool.close();
@@ -228,10 +230,13 @@ impl Engine {
             let mut results = Vec::with_capacity(statements.len());
             for st in &statements {
                 let result = async {
-                    if transaction.is_some() {
-                        query::require_single_statement(&client, &st.text, &guard).await?;
-                    }
-                    let r = query::run_statement(&client, &st.text, max_rows, &guard).await?;
+                    let types = if transaction.is_some() {
+                        let prepared = query::require_single_statement(&client, &st.text, &guard).await?;
+                        session.types.for_statement(&client, &prepared).await.map_err(|e| guard.map_err(e))?
+                    } else {
+                        query::describe_writable(&client, &session.types, &st.text, &guard).await?
+                    };
+                    let r = query::run_statement(&client, &st.text, max_rows, &types, &guard).await?;
                     if let Some(start) = &transaction {
                         if r.len() > 1 { return Err(AppError::internal(query::READ_ONLY_GUARD_ERROR)); }
                         query::verify_read_only(&client, start, &guard).await?;
@@ -322,7 +327,7 @@ impl Engine {
         self.sessions.write().unwrap_or_else(|e| e.into_inner())
     }
 
-    async fn client(&self, conn_id: ConnId) -> AppResult<(Arc<Session>, Object)> {
+    pub(crate) async fn client(&self, conn_id: ConnId) -> AppResult<(Arc<Session>, Object)> {
         let session = self
             .sessions
             .read()
@@ -341,7 +346,7 @@ impl Engine {
     }
 }
 
-fn reject_read_only(statement: &crate::split::Statement) -> AppResult<()> {
+pub(crate) fn reject_read_only(statement: &crate::split::Statement) -> AppResult<()> {
     if let Some(keyword) = crate::split::read_only_rejection(&statement.text) {
         return Err(AppError::invalid_at(
             format!("Read-only mode: command ({keyword}) is not allowed. Turn on “Allow writes” for this connection to run it."),
@@ -398,7 +403,7 @@ async fn server_info(client: &Client) -> AppResult<ServerInfo> {
 
 /// Ends any transaction the user left open and undoes their SETs, re-applying the
 /// profile's session settings. A session that cannot be reset is dropped from the pool.
-async fn restore_session(client: Object, profile: &ConnProfile) {
+pub(crate) async fn restore_session(client: Object, profile: &ConnProfile) {
     let reset = format!("ROLLBACK; RESET ALL; {}", conn::session_setup_sql(profile));
     if let Err(e) = client.batch_execute(&reset).await {
         tracing::warn!("discarding session that failed to reset: {e}");
