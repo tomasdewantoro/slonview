@@ -95,31 +95,7 @@ impl Tunnel {
                     .await?
                     .success()
             }
-            SshAuth::Agent => {
-                let mut agent = AgentClient::connect_env().await.map_err(|e| {
-                    ssh_error(format!("Cannot connect to SSH agent (SSH_AUTH_SOCK): {e}"))
-                })?;
-                let identities = agent.request_identities().await.map_err(ssh_error)?;
-                let hash = handle.best_supported_rsa_hash().await?.flatten();
-                let mut success = false;
-                for identity in identities {
-                    if handle
-                        .authenticate_publickey_with(
-                            &config.user,
-                            identity.public_key().into_owned(),
-                            hash,
-                            &mut agent,
-                        )
-                        .await
-                        .map_err(ssh_error)?
-                        .success()
-                    {
-                        success = true;
-                        break;
-                    }
-                }
-                success
-            }
+            SshAuth::Agent => authenticate_with_agent(&mut handle, &config.user).await?,
         };
         if !authenticated {
             return Err(ssh_error(format!(
@@ -147,6 +123,39 @@ impl Tunnel {
             .await?
             .into_stream())
     }
+}
+
+/// Offers each ssh-agent identity in turn. The agent is reached via `SSH_AUTH_SOCK` on
+/// Unix and via the OpenSSH for Windows named pipe on Windows.
+async fn authenticate_with_agent(
+    handle: &mut client::Handle<HostVerifier>,
+    user: &str,
+) -> AppResult<bool> {
+    #[cfg(unix)]
+    let mut agent = AgentClient::connect_env()
+        .await
+        .map_err(|e| ssh_error(format!("Cannot connect to SSH agent (SSH_AUTH_SOCK): {e}")))?;
+    #[cfg(windows)]
+    let mut agent = AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
+        .await
+        .map_err(|e| {
+            ssh_error(format!(
+                "Cannot connect to the OpenSSH agent (is the ssh-agent service running?): {e}"
+            ))
+        })?;
+    let identities = agent.request_identities().await.map_err(ssh_error)?;
+    let hash = handle.best_supported_rsa_hash().await?.flatten();
+    for identity in identities {
+        if handle
+            .authenticate_publickey_with(user, identity.public_key().into_owned(), hash, &mut agent)
+            .await
+            .map_err(ssh_error)?
+            .success()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn expand_home(path: &str) -> AppResult<PathBuf> {

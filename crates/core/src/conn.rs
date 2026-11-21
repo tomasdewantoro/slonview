@@ -302,11 +302,15 @@ impl deadpool::managed::Manager for ConnectionManager {
 
 fn pg_config(profile: &ConnProfile, password: Option<&str>, ssl: PgSslMode) -> Config {
     let mut cfg = Config::new();
+    #[cfg(unix)]
     if profile.host.starts_with('/') {
         cfg.host_path(&profile.host);
     } else {
         cfg.host(&profile.host);
     }
+    // Unix-socket hosts don't exist on Windows; the host is always a TCP host name there.
+    #[cfg(not(unix))]
+    cfg.host(&profile.host);
     cfg.port(profile.port)
         .user(&profile.user)
         .dbname(&profile.database)
