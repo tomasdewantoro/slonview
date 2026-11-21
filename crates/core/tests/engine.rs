@@ -58,6 +58,7 @@ fn page_req(conn: ConnId, schema: &str, table: &str) -> PageRequest {
         table: table.into(),
         filters: vec![],
         raw_where: None,
+        search: None,
         sort: vec![],
         cursor: None,
         limit: 500,
@@ -943,6 +944,7 @@ async fn filter_and_sort_match_direct_sql() {
             "public",
             "orders",
             &req.filters,
+            None,
             Some("amount > 500"),
         )
         .await
@@ -1365,6 +1367,7 @@ async fn raw_where_rejects_multiple_server_commands_in_all_modes() {
             table: "scratch_insert_target".into(),
             filters: vec![],
             raw_where: Some(raw.into()),
+            search: None,
             sort: vec![],
         };
         let errors = [
@@ -1376,6 +1379,7 @@ async fn raw_where_rejects_multiple_server_commands_in_all_modes() {
                     "public",
                     "scratch_insert_target",
                     &[],
+                    None,
                     Some(raw),
                 )
                 .await
@@ -1427,6 +1431,7 @@ async fn read_only_raw_where_cannot_change_session_or_write() {
                 "public",
                 "no_pk",
                 &[],
+                None,
                 Some("current_setting('default_transaction_read_only') = 'on'"),
             )
             .await
@@ -1450,6 +1455,7 @@ async fn read_only_raw_where_cannot_change_session_or_write() {
             "public",
             "no_pk",
             &[],
+            None,
             Some("nextval('orders_id_seq') > 0"),
         )
         .await
@@ -1604,6 +1610,7 @@ async fn cancel_before_the_request_registers() {
             "public",
             "orders",
             &[],
+            None,
             Some("pg_sleep(5) IS NOT NULL"),
         )
         .await
@@ -1612,7 +1619,15 @@ async fn cancel_before_the_request_registers() {
     // The early cancel is used up: the same id runs normally afterwards.
     assert_eq!(
         f.engine
-            .count_exact("early-count", f.conn, "public", "customers", &[], None)
+            .count_exact(
+                "early-count",
+                f.conn,
+                "public",
+                "customers",
+                &[],
+                None,
+                None
+            )
             .await
             .unwrap(),
         1000
@@ -1681,6 +1696,7 @@ async fn export_csv_table_and_sql() {
         table: "orders".into(),
         filters: vec![],
         raw_where: None,
+        search: None,
         sort: vec![],
     };
     let n = f.engine.export_csv("e", &source, &path).await.unwrap();
@@ -1799,4 +1815,142 @@ async fn invalid_time_zone_is_a_typed_connect_error() {
     );
     f.engine.profiles.upsert(profile.clone()).unwrap();
     assert_eq!(f.engine.connect(profile.id).await.unwrap_err(), want);
+}
+
+#[tokio::test]
+async fn list_referencing_reports_keys_pointing_at_a_table() {
+    let f = fixture().await;
+    let keys = |schema: &'static str, table: &'static str| {
+        let engine = f.engine.clone();
+        let conn = f.conn;
+        async move { engine.list_referencing(conn, schema, table).await.unwrap() }
+    };
+    let customers = keys("public", "customers").await;
+    assert_eq!(customers.len(), 1, "{customers:?}");
+    assert_eq!(
+        (
+            customers[0].schema.as_str(),
+            customers[0].table.as_str(),
+            customers[0].columns.clone(),
+            customers[0].referenced_columns.clone()
+        ),
+        (
+            "public",
+            "orders",
+            vec!["customer_id".to_owned()],
+            vec!["id".to_owned()]
+        )
+    );
+    assert_eq!(customers[0].constraint_name, "orders_customer_id_fkey");
+
+    let composite = keys("public", "composite_pk").await;
+    assert_eq!(composite.len(), 1, "{composite:?}");
+    assert_eq!(composite[0].table, "fk_links");
+    assert_eq!(composite[0].columns, ["tenant", "item"]);
+    assert_eq!(composite[0].referenced_columns, ["tenant", "item"]);
+
+    let weird = keys("Sales Data", "Weird \"Name\" Table").await;
+    assert_eq!(weird.len(), 1, "{weird:?}");
+    assert_eq!(
+        (weird[0].schema.as_str(), weird[0].table.as_str()),
+        ("public", "fk_links")
+    );
+    assert_eq!(weird[0].columns, ["weird_id"]);
+    assert_eq!(weird[0].referenced_columns, ["Id"]);
+
+    assert!(keys("public", "no_pk").await.is_empty());
+    assert!(matches!(
+        f.engine
+            .list_referencing(f.conn, "public", "nope")
+            .await
+            .unwrap_err(),
+        AppError::Invalid { .. }
+    ));
+}
+
+#[tokio::test]
+async fn search_matches_text_columns_with_literal_wildcards() {
+    let f = fixture().await;
+    let search = |term: &str| {
+        let mut req = page_req(f.conn, "public", "all_types");
+        req.search = Some(term.into());
+        req
+    };
+    // A quote in the term is a literal, not SQL.
+    let page = f.engine.fetch_page("s1", &search("o'brien")).await.unwrap();
+    assert_eq!(page.rows.len(), 1, "{}", page.sql);
+    let text = page
+        .columns
+        .iter()
+        .position(|c| c.name == "c_text")
+        .unwrap();
+    assert!(
+        page.rows[0][text]
+            .as_deref()
+            .unwrap()
+            .starts_with("O'Brien")
+    );
+    assert!(page.sql.contains("ESCAPE"), "{}", page.sql);
+    assert_eq!(page.est_rows, None);
+
+    // `%` and `_` match only themselves: the fixture has no such characters in these columns.
+    let literal = |ch: &str| {
+        format!(
+            "SELECT count(*)::text FROM all_types WHERE strpos(concat_ws(chr(1), c_text, c_varchar, \
+             c_uuid::text, c_jsonb::text, c_enum::text), '{ch}') > 0"
+        )
+    };
+    for ch in ["%", "_"] {
+        let want: usize = psql_values(&f, &literal(ch)).await[0][0]
+            .as_deref()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let rows = fetch_all(&f, search(ch)).await;
+        assert_eq!(rows.len(), want, "search {ch:?}");
+    }
+    // Unescaped, '%' would match every row with any non-NULL text column.
+    let all = fetch_all(&f, page_req(f.conn, "public", "all_types"))
+        .await
+        .len();
+    assert!(fetch_all(&f, search("%")).await.len() < all);
+
+    // Numeric terms also look in numeric columns; count and export honour the search.
+    let rows = fetch_all(&f, search("42")).await;
+    let int = page.columns.iter().position(|c| c.name == "c_int").unwrap();
+    assert!(rows.iter().any(|r| r[int].as_deref() == Some("42")));
+    let n = f
+        .engine
+        .count_exact("s2", f.conn, "public", "all_types", &[], Some("42"), None)
+        .await
+        .unwrap();
+    assert_eq!(n as usize, rows.len());
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("search.csv");
+    let source = ExportSource::Table {
+        conn_id: f.conn,
+        schema: "public".into(),
+        table: "orders".into(),
+        filters: vec![],
+        raw_where: None,
+        search: Some("note 12345".into()),
+        sort: vec![],
+    };
+    let exported = f.engine.export_csv("s3", &source, &path).await.unwrap();
+    let want = f
+        .engine
+        .count_exact(
+            "s4",
+            f.conn,
+            "public",
+            "orders",
+            &[],
+            Some("note 12345"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(exported as i64, want);
+    assert!(want >= 1);
 }

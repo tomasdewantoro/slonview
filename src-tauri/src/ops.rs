@@ -127,6 +127,15 @@ pub async fn get_function_definition(
     engine.get_function_definition(conn_id, oid).await
 }
 
+pub async fn list_referencing(
+    engine: &Engine,
+    conn_id: ConnId,
+    schema: &str,
+    table: &str,
+) -> AppResult<Vec<slonview_core::model::ReferencingKey>> {
+    engine.list_referencing(conn_id, schema, table).await
+}
+
 // Data
 
 pub async fn fetch_page(
@@ -137,6 +146,7 @@ pub async fn fetch_page(
     engine.fetch_page(request_id, req).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn count_exact(
     engine: &Engine,
     request_id: &RequestId,
@@ -144,10 +154,13 @@ pub async fn count_exact(
     schema: &str,
     table: &str,
     filters: &[Filter],
+    search: Option<&str>,
     raw_where: Option<&str>,
 ) -> AppResult<i64> {
     engine
-        .count_exact(request_id, conn_id, schema, table, filters, raw_where)
+        .count_exact(
+            request_id, conn_id, schema, table, filters, search, raw_where,
+        )
         .await
 }
 
@@ -475,6 +488,7 @@ mod tests {
                 value: Some("paid".into()),
             }],
             raw_where: None,
+            search: None,
             sort: vec![Sort {
                 column: "id".into(),
                 desc: false,
@@ -492,6 +506,7 @@ mod tests {
             "public",
             "orders",
             &req.filters,
+            None,
             None,
         )
         .await

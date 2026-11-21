@@ -30,6 +30,7 @@ fn page(id: ConnId) -> PageRequest {
         table: "orders".into(),
         filters: vec![],
         raw_where: None,
+        search: None,
         sort: vec![],
         cursor: None,
         limit: 500,

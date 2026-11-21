@@ -164,6 +164,17 @@ impl Engine {
         introspect::function_definition(&client, oid).await
     }
 
+    /// Foreign keys (in any table) that point at `schema.table`, multi-column ones included.
+    pub async fn list_referencing(
+        &self,
+        conn_id: ConnId,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<Vec<ReferencingKey>> {
+        let (_, client) = self.client(conn_id).await?;
+        introspect::referencing_keys(&client, schema, table).await
+    }
+
     pub async fn fetch_page(&self, request_id: &str, req: &PageRequest) -> AppResult<Page> {
         let started = Instant::now();
         let (session, client) = self.client(req.conn_id).await?;
@@ -196,7 +207,11 @@ impl Engine {
                 .filter(|m| matches!(m, SimpleQueryMessage::Row(_)))
                 .count();
             // Only the first page needs a total, and only when it doesn't already hold every row.
-            let est_rows = if req.cursor.is_none() && row_count > limit as usize {
+            // A search has no useful planner estimate (ILIKE over many columns), so none is shown.
+            let est_rows = if req.cursor.is_none()
+                && row_count > limit as usize
+                && paging::search_term(req.search.as_deref()).is_none()
+            {
                 estimate_rows(&client, req, &meta).await
             } else {
                 None
@@ -258,6 +273,7 @@ impl Engine {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn count_exact(
         &self,
         request_id: &str,
@@ -265,11 +281,13 @@ impl Engine {
         schema: &str,
         table: &str,
         filters: &[Filter],
+        search: Option<&str>,
         raw_where: Option<&str>,
     ) -> AppResult<i64> {
         let (session, client) = self.client(conn_id).await?;
         let meta = introspect::table_meta(&client, schema, table).await?;
-        let (sql, raw_span) = paging::count_query(schema, table, &meta, filters, raw_where)?;
+        let (sql, raw_span) =
+            paging::count_query(schema, table, &meta, filters, search, raw_where)?;
         let guard =
             self.cancels
                 .register(request_id, client.cancel_token(), session.transport.clone())?;
@@ -437,11 +455,20 @@ impl Engine {
                 table,
                 filters,
                 raw_where,
+                search,
                 sort,
                 ..
             } => {
                 let meta = introspect::table_meta(&client, schema, table).await?;
-                paging::export_query(schema, table, &meta, filters, raw_where.as_deref(), sort)?
+                paging::export_query(
+                    schema,
+                    table,
+                    &meta,
+                    filters,
+                    search.as_deref(),
+                    raw_where.as_deref(),
+                    sort,
+                )?
             }
             ExportSource::Sql { sql, .. } => {
                 let mut statements = split_statements(sql);

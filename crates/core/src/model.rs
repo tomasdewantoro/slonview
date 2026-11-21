@@ -340,6 +340,21 @@ pub struct ForeignKeyInfo {
     pub definition: String,
 }
 
+/// A foreign key in another (or the same) table that points at a table; `list_referencing` result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReferencingKey {
+    pub constraint_name: String,
+    /// Schema and table holding the foreign key.
+    pub schema: String,
+    pub table: String,
+    /// Referencing columns in key order.
+    pub columns: Vec<String>,
+    /// Columns of the referenced table, in the same order as `columns`.
+    pub referenced_columns: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -428,6 +443,10 @@ pub struct PageRequest {
     pub filters: Vec<Filter>,
     /// Verbatim SQL boolean expression appended with AND; None/empty = unused.
     pub raw_where: Option<String>,
+    /// Search term matched with ILIKE against every text-like column (numeric columns too when
+    /// the term is a number); None/blank = unused. Built server-side, never verbatim SQL.
+    #[serde(default)]
+    pub search: Option<String>,
     /// Empty = PK order (keyset paging when a PK exists).
     pub sort: Vec<Sort>,
     /// None = first page.
@@ -522,6 +541,8 @@ pub enum ExportSource {
         table: String,
         filters: Vec<Filter>,
         raw_where: Option<String>,
+        #[serde(default)]
+        search: Option<String>,
         sort: Vec<Sort>,
     },
     #[serde(rename_all = "camelCase")]
