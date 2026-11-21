@@ -79,7 +79,7 @@ async fn connect_reports_server_info() {
     let profile = f.engine.profiles.get(f.conn).unwrap();
     let info = f.engine.test_connection(&profile, None).await.unwrap();
     assert!(info.version.starts_with("PostgreSQL"));
-    assert_eq!(info.database, "slonview_fixture");
+    assert_eq!(info.database, profile.database);
     assert!(info.read_only);
     let again = f.engine.connect(f.conn).await.unwrap();
     assert!(again.read_only);
@@ -282,7 +282,7 @@ async fn filter_and_sort_match_direct_sql() {
     let got: Vec<_> = p1.rows.iter().map(|r| r[0].clone()).collect();
     let want: Vec<_> = expected.iter().map(|r| r[0].clone()).collect();
     assert_eq!(got, want[..500]);
-    assert_eq!(p1.next_cursor, Some(Cursor::Offset { offset: 500 }));
+    assert!(matches!(p1.next_cursor, Some(Cursor::Keyset { .. })));
     req.cursor = p1.next_cursor;
     let p2 = f.engine.fetch_page("f2", &req).await.unwrap();
     let got2: Vec<_> = p2.rows.iter().map(|r| r[0].clone()).collect();

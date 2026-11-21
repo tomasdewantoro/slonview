@@ -5,6 +5,9 @@ use std::fmt::Write;
 
 use crate::ident::{qualified, quote_ident, quote_literal};
 use crate::introspect::TableMeta;
+use futures_util::{TryStreamExt, pin_mut};
+use tokio_postgres::SimpleQueryMessage;
+use crate::{Engine, engine::restore_session, model::{ColumnCopyRequest, ColumnCopyChunk, ColumnCopySummary}, query};
 use crate::model::{CELL_TRUNCATE_CHARS, Cursor, Filter, FilterOp, PageRequest, RelationKind, Sort};
 use crate::{AppError, AppResult};
 
@@ -108,14 +111,13 @@ pub(crate) enum PageMode {
 pub(crate) struct PageQuery {
     pub sql: String,
     pub mode: PageMode,
-    /// Index of each PK column in the select list (keyset mode only).
+    /// Index of each sort key followed by unique PK tie-breakers in the select list.
     pub pk_indexes: Vec<usize>,
     pub raw_span: Option<RawSpan>,
 }
 
-/// Selects every column as text: PK columns in full (they feed the keyset cursor),
-/// others cut to `CELL_TRUNCATE_CHARS + 1` chars so the caller can detect and flag
-/// truncation without a second expression per column. Fetches `limit + 1` rows.
+/// Selects cursor columns in full; other columns are cut to
+/// `CELL_TRUNCATE_CHARS + 1` chars to detect truncation. Fetches `limit + 1` rows.
 /// `limit` is the effective page size (the request's 0 already replaced by the default).
 pub(crate) fn page_query(req: &PageRequest, meta: &TableMeta, limit: u32) -> AppResult<PageQuery> {
     let PageRequest { schema, table, filters, raw_where, sort, cursor, .. } = req;
@@ -123,17 +125,18 @@ pub(crate) fn page_query(req: &PageRequest, meta: &TableMeta, limit: u32) -> App
     if meta.columns.is_empty() {
         return Err(AppError::invalid(format!("{schema}.{table} has no columns")));
     }
+    let keys = paging_keys(meta, sort)?;
     let select = meta
         .columns
         .iter()
         .map(|c| {
             let q = quote_ident(&c.name);
-            if c.is_pk { format!("{q}::text") } else { format!("left({q}::text, {})", CELL_TRUNCATE_CHARS + 1) }
+            if keys.iter().any(|s| s.column == c.name) { format!("{q}::text") } else { format!("left({q}::text, {})", CELL_TRUNCATE_CHARS + 1) }
         })
         .collect::<Vec<_>>()
         .join(", ");
     let (mut where_sql, raw_at) = where_clause(meta, filters, raw_where)?;
-    let keyset = sort.is_empty() && !meta.pk.is_empty();
+    let keyset = !meta.pk.is_empty();
     let mut sql = format!("SELECT {select} FROM {}", qualified(schema, table));
     let raw_span = RawSpan::new(&sql, raw_at, raw_where);
 
@@ -142,17 +145,7 @@ pub(crate) fn page_query(req: &PageRequest, meta: &TableMeta, limit: u32) -> App
             let Cursor::Keyset { values } = cursor else {
                 return Err(AppError::invalid("cursor does not match keyset paging"));
             };
-            if values.len() != meta.pk.len() {
-                return Err(AppError::invalid("cursor has the wrong number of key values"));
-            }
-            let mut cols = Vec::with_capacity(values.len());
-            let mut lits = Vec::with_capacity(values.len());
-            for (name, value) in meta.pk.iter().zip(values) {
-                let value = value.as_deref().ok_or_else(|| AppError::invalid("cursor contains NULL key"))?;
-                cols.push(quote_ident(name));
-                lits.push(typed_literal(value, &meta.column(name)?.type_name));
-            }
-            let cond = format!("({}) > ({})", cols.join(", "), lits.join(", "));
+            let cond = seek_condition(meta, &keys, values)?;
             where_sql = if where_sql.is_empty() { format!(" WHERE {cond}") } else { format!("{where_sql} AND {cond}") };
         }
         PageMode::Keyset
@@ -172,14 +165,129 @@ pub(crate) fn page_query(req: &PageRequest, meta: &TableMeta, limit: u32) -> App
         let _ = write!(sql, " OFFSET {offset}");
     }
     let pk_indexes = if keyset {
-        meta.pk
+        keys
             .iter()
-            .map(|n| meta.columns.iter().position(|c| &c.name == n).expect("pk column is a column"))
+            .map(|s| meta.columns.iter().position(|c| c.name == s.column).expect("validated sort column"))
             .collect()
     } else {
         Vec::new()
     };
     Ok(PageQuery { sql, mode, pk_indexes, raw_span })
+}
+
+/// Use PostgreSQL's default NULL ordering: ASC NULLS LAST / DESC NULLS FIRST.
+fn paging_keys(meta: &TableMeta, sort: &[Sort]) -> AppResult<Vec<Sort>> {
+    let mut keys = Vec::with_capacity(sort.len() + meta.pk.len());
+    for s in sort {
+        meta.column(&s.column)?;
+        if keys.iter().any(|k: &Sort| k.column == s.column) {
+            return Err(AppError::invalid("duplicate sort column"));
+        }
+        keys.push(s.clone());
+    }
+    for pk in &meta.pk {
+        if !keys.iter().any(|s| &s.column == pk) {
+            keys.push(Sort { column: pk.clone(), desc: false });
+        }
+    }
+    Ok(keys)
+}
+
+fn seek_condition(meta: &TableMeta, keys: &[Sort], values: &[Option<String>]) -> AppResult<String> {
+    if values.len() != keys.len() {
+        return Err(AppError::invalid("cursor has the wrong number of key values"));
+    }
+    let mut cols = Vec::with_capacity(keys.len());
+    let mut lits = Vec::with_capacity(keys.len());
+    let mut nullable = false;
+    for (s, value) in keys.iter().zip(values) {
+        let c = meta.column(&s.column)?;
+        if value.is_none() && !c.nullable {
+            return Err(AppError::invalid("cursor contains NULL in a non-nullable key"));
+        }
+        nullable |= c.nullable;
+        cols.push(quote_ident(&s.column));
+        lits.push(value.as_deref().map(|v| typed_literal(v, &c.type_name)));
+    }
+    if !nullable && keys.iter().all(|s| s.desc == keys[0].desc) {
+        return Ok(format!("({}) {} ({})", cols.join(", "), if keys[0].desc { "<" } else { ">" },
+            lits.iter().map(|v| v.as_deref().expect("non-nullable key")).collect::<Vec<_>>().join(", ")));
+    }
+    // Lexicographic OR-chain: earlier keys equal (including NULL), current key follows.
+    // Row comparisons alone are wrong for mixed directions and NULL cursor values.
+    let mut branches = Vec::with_capacity(keys.len());
+    let mut prefix = Vec::with_capacity(keys.len());
+    for (i, s) in keys.iter().enumerate() {
+        let c = &cols[i];
+        let after = match (&lits[i], s.desc) {
+            (None, true) => Some(format!("{c} IS NOT NULL")),
+            (None, false) => None,
+            (Some(v), true) => Some(format!("{c} < {v}")),
+            (Some(v), false) if meta.column(&s.column)?.nullable => Some(format!("({c} > {v} OR {c} IS NULL)")),
+            (Some(v), false) => Some(format!("{c} > {v}")),
+        };
+        if let Some(after) = after {
+            let mut branch = prefix.clone();
+            branch.push(after);
+            branches.push(format!("({})", branch.join(" AND ")));
+        }
+        prefix.push(match &lits[i] {
+            Some(v) => format!("{c} = {v}"),
+            None => format!("{c} IS NULL"),
+        });
+    }
+    Ok(if branches.is_empty() { "FALSE".into() } else { format!("({})", branches.join(" OR ")) })
+}
+
+impl Engine {
+    /// Streams only the requested columns, in the same deterministic order as browsing.
+    /// Always read-only, even for writable profiles: a Raw WHERE must not perform writes.
+    pub async fn stream_columns(
+        &self,
+        request_id: &str,
+        req: &ColumnCopyRequest,
+        mut emit: impl FnMut(ColumnCopyChunk) -> AppResult<()> + Send,
+    ) -> AppResult<ColumnCopySummary> {
+        const CAP: u32 = 1_000_000;
+        let (session, client) = self.client(req.page.conn_id).await?;
+        let p = &req.page;
+        let meta = crate::introspect::table_meta(&client, &p.schema, &p.table).await?;
+        if req.columns.is_empty() { return Err(AppError::invalid("Select at least one column")); }
+        let select = req.columns.iter().map(|n| meta.column(n).map(|c| format!("{}::text", quote_ident(&c.name)))).collect::<AppResult<Vec<_>>>()?.join(", ");
+        let rel = qualified(&p.schema, &p.table);
+        let mut sql = format!("SELECT {select} FROM {rel}");
+        let (clause, raw_at) = where_clause(&meta, &p.filters, p.raw_where.as_deref())?;
+        let span = RawSpan::new(&sql, raw_at, p.raw_where.as_deref());
+        sql.push_str(&clause);
+        sql.push_str(&order_by(&rel, &meta, &p.sort)?);
+        let _ = write!(sql, " LIMIT {}", CAP + 1);
+        let guard = self.cancels.register(request_id, client.cancel_token());
+        let result = async {
+            query::require_single_statement(&client, &sql, &guard).await?;
+            let start = query::begin_read_only(&client, &guard).await?;
+            let stream = client.simple_query_raw(&sql).await.map_err(|e| guard.map_err(e))?;
+            pin_mut!(stream);
+            let mut count = 0;
+            let mut capped = false;
+            let mut rows = Vec::with_capacity(2000);
+            while let Some(message) = stream.try_next().await.map_err(|e| guard.map_err(e))? {
+                if let SimpleQueryMessage::Row(row) = message {
+                    if count == CAP { capped = true; continue; }
+                    rows.push((0..req.columns.len()).map(|i| row.get(i).map(str::to_owned)).collect());
+                    count += 1;
+                    if rows.len() == 2000 {
+                        emit(ColumnCopyChunk { rows: std::mem::replace(&mut rows, Vec::with_capacity(2000)) })?;
+                    }
+                }
+            }
+            query::verify_read_only(&client, &start, &guard).await?;
+            if !rows.is_empty() { emit(ColumnCopyChunk { rows })?; }
+            Ok(ColumnCopySummary { count, capped })
+        }.await.map_err(|e| RawSpan::relocate(span, e));
+        drop(guard);
+        restore_session(client, &session.profile).await;
+        result
+    }
 }
 
 /// User sort first, then a deterministic tie-breaker so OFFSET paging is stable:
@@ -344,14 +452,14 @@ mod tests {
     }
 
     #[test]
-    fn sorted_uses_offset_and_pk_tiebreak() {
+    fn sorted_uses_keyset_and_pk_tiebreak() {
         let sort = [Sort { column: "status".into(), desc: true }];
-        let q = page_query(&req("orders", &[], None, &sort, Some(Cursor::Offset { offset: 1000 })), &orders(), 500)
-            .unwrap();
-        assert!(q.sql.ends_with(
-            "ORDER BY \"public\".\"orders\".\"status\" DESC, \"public\".\"orders\".\"id\" LIMIT 501 OFFSET 1000"
-        ));
-        assert_eq!(q.mode, PageMode::Offset(1000));
+        let q = page_query(&req("orders", &[], None, &sort, Some(Cursor::Keyset { values: vec![None, Some("1000".into())] })), &orders(), 500).unwrap();
+        assert!(q.sql.ends_with("ORDER BY \"public\".\"orders\".\"status\" DESC, \"public\".\"orders\".\"id\" LIMIT 501"));
+        assert!(q.sql.contains("\"status\" IS NOT NULL"));
+        assert!(q.sql.contains("\"status\" IS NULL AND \"id\" > '1000'::bigint"));
+        assert_eq!(q.pk_indexes, vec![1, 0]);
+        assert_eq!(q.mode, PageMode::Keyset);
     }
 
     #[test]

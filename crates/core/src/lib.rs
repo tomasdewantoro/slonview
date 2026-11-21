@@ -14,6 +14,7 @@ mod introspect;
 mod paging;
 mod query;
 mod split;
+mod edit;
 
 pub use error::{AppError, AppResult};
 pub use engine::Engine;

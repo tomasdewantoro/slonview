@@ -351,3 +351,62 @@ pub enum ExportSource {
     #[serde(rename_all = "camelCase")]
     Sql { conn_id: ConnId, sql: String },
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ColumnCopyRequest {
+    pub page: PageRequest,
+    pub columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ColumnCopyChunk {
+    pub rows: Vec<Vec<Option<String>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ColumnCopySummary {
+    pub count: u32,
+    pub capped: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EditInfo {
+    pub disabled_reason: Option<String>,
+    /// Column name and reason; absent columns are editable.
+    pub blocked_columns: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EditValue {
+    pub column: String,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum RowEdit {
+    Update { original: Vec<EditValue>, values: Vec<EditValue> },
+    Insert { values: Vec<EditValue> },
+    Delete { original: Vec<EditValue> },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EditRequest {
+    pub conn_id: ConnId,
+    pub schema: String,
+    pub table: String,
+    pub changes: Vec<RowEdit>,
+}

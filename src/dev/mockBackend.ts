@@ -625,6 +625,13 @@ export function installMockBackend(): void {
         if (!f) throw err({ kind: "invalid", message: `function with oid ${a.oid} not found (it may have been dropped)`, position: null });
         return f.definition;
       }
+      case "edit_info":
+        return { disabledReason: "Row editing requires a live database connection.", blockedColumns: [] };
+      case "get_edit_row":
+      case "review_edits":
+      case "apply_edits":
+      case "stream_columns":
+        throw err({ kind: "invalid", message: "This operation requires a live database connection.", position: null });
       case "fetch_page":
         return fetchPage(a.requestId, a.req);
       case "count_exact": {

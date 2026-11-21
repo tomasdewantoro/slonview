@@ -3,11 +3,13 @@ import { Ban, FileDown, Filter, LoaderCircle, PanelRight, RefreshCw, Sigma, Tabl
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, newRequestId } from "../api";
 import { appStore, emptyTableData, useApp, type TableTab as TableTabInfo } from "../store/app";
-import { filtersToRequest, nextSort, normalizeRawWhere } from "../store/queries";
+import { buildPageRequest, filtersToRequest, nextSort, normalizeRawWhere } from "../store/queries";
 import { CellInspector } from "./CellInspector";
 import { ErrorPanel } from "./ErrorPanel";
 import { FilterBar } from "./FilterBar";
 import { ResultGrid, type CellRef } from "./ResultGrid";
+import { useRowEdits } from "./edit/useRowEdits";
+import { AddRowDialog, CellEditDialog, ReviewChanges } from "./edit/EditDialogs";
 
 const EMPTY = emptyTableData();
 
@@ -19,6 +21,9 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
   const [inspecting, setInspecting] = useState<CellRef | null>(null);
   const shiftDown = useRef(false);
   const [exporting, setExporting] = useState(false);
+  const readOnly = useApp(s => s.conn?.server?.readOnly !== false);
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  const edits = useRowEdits(connId, tab.query.schema, tab.query.table, data.columns, data.rows, data.truncated, readOnly, () => refreshTab(tab.id));
 
   // Streams the whole relation (current filters and sort) to disk in Rust; the grid's loaded rows don't matter.
   const exportCsv = async () => {
@@ -58,10 +63,10 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
   const truncatedSet = useMemo(() => new Set(data.truncated.map(([r, c]) => `${r}:${c}`)), [data.truncated]);
 
   const onSortColumn = useCallback(
-    (column: string) => setTableQuery(tab.id, { sort: nextSort(tab.query.sort, column, shiftDown.current) }),
-    [setTableQuery, tab.id, tab.query.sort],
+    (column: string) => { if (!edits.count) setTableQuery(tab.id, { sort: nextSort(tab.query.sort, column, shiftDown.current) }); },
+    [setTableQuery, tab.id, tab.query.sort, edits.count],
   );
-  const onNearEnd = useCallback(() => void loadMore(tab.id), [loadMore, tab.id]);
+  const onNearEnd = useCallback(() => { if (!edits.count) void loadMore(tab.id); }, [loadMore, tab.id, edits.count]);
 
   const loaded = data.rows.length;
   const hasMore = data.nextCursor !== null;
@@ -75,6 +80,10 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
       }}
     >
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
+        {!readOnly && <>
+          <button className="btn h-6 px-2 text-xs" disabled={!!edits.reason || edits.busy || data.loading} title={edits.reason ?? "Add a row; database defaults are preserved"} onClick={edits.openAdd}>Add row</button>
+          <button className="btn h-6 px-2 text-xs" disabled={!!edits.reason || edits.busy || data.loading || !selectedRows.length} title={edits.reason ?? "Stage deletion of selected rows"} onClick={() => void edits.remove(selectedRows)}>Delete rows</button>
+        </>}
         <button
           className={`btn h-6 px-2 text-xs ${showFilters ? "bg-surface-2" : ""}`}
           onClick={() => setShowFilters((v) => !v)}
@@ -137,12 +146,17 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
           <PanelRight size={14} />
         </button>
       </div>
+      {edits.count > 0 && <div className="flex shrink-0 items-center gap-3 border-b border-border bg-surface px-3 py-2 text-xs">
+        <span>{edits.count} pending changes</span><span className="text-accent">Modified</span><span className="text-warn">New</span><span className="text-error line-through">Deleted</span>
+        <span className="flex-1" /><button className="btn" disabled={edits.busy} onClick={edits.discard}>Discard</button><button className="btn btn-primary" disabled={edits.busy} onClick={() => void edits.reviewChanges()}>Review changes</button>
+      </div>}
+      {edits.error && !edits.review && <p role="alert" className="shrink-0 border-b border-border bg-error-soft px-3 py-2 text-xs text-error">{edits.error}</p>}
       {showFilters && (
         <FilterBar
           columns={data.columns}
           filters={tab.query.filters}
           rawWhere={tab.query.rawWhere}
-          onApply={(filters, rawWhere) => setTableQuery(tab.id, { filters, rawWhere })}
+          onApply={(filters, rawWhere) => { if (!edits.count) setTableQuery(tab.id, { filters, rawWhere }); else appStore.getState().pushToast("info", "Apply or discard pending changes before changing filters."); }}
         />
       )}
       {data.error != null && <ErrorPanel error={data.error} onRetry={() => refreshTab(tab.id)} />}
@@ -151,9 +165,9 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
           {data.columns.length > 0 ? (
             <ResultGrid
               columns={data.columns}
-              rows={data.rows}
+              rows={edits.rows}
               truncated={data.truncated}
-              loading={data.loading || !hasMore}
+              loading={data.loading || !hasMore || edits.count > 0 || edits.busy}
               onNearEnd={onNearEnd}
               onSortColumn={onSortColumn}
               sort={tab.query.sort}
@@ -163,6 +177,10 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
               }}
               onOpenCell={setInspecting}
               insertTarget={{ schema: tab.query.schema, table: tab.query.table }}
+              copyPage={buildPageRequest(connId, tab.query, null)}
+              rowChanges={edits.rowChanges}
+              onSelectedRows={setSelectedRows}
+              onEditCell={!readOnly && !edits.reason && !data.loading ? c => void edits.start(c) : undefined}
             />
           ) : (
             data.loading && (
@@ -198,6 +216,9 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
           />
         )}
       </div>
+      {edits.editor && <CellEditDialog key={`${edits.editor.cell.row}:${edits.editor.cell.col}`} column={data.columns[edits.editor.cell.col]} value={edits.editor.value} onSave={edits.saveCell} onClose={edits.closeEditor} />}
+      {edits.adding && <AddRowDialog connId={connId} schema={tab.query.schema} table={tab.query.table} blocked={edits.info?.blockedColumns ?? []} onSave={edits.add} onClose={edits.closeAdd} />}
+      {edits.review && <ReviewChanges sql={edits.review} busy={edits.busy} error={edits.error} onApply={() => void edits.apply()} onClose={edits.closeReview} />}
     </div>
   );
 }
