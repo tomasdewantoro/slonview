@@ -112,7 +112,10 @@ export const api = {
 
 async function streamColumnValues(requestId: string, req: ColumnCopyRequest, onChunk: (chunk: ColumnCopyChunk) => void): Promise<ColumnCopySummary> {
   if (import.meta.env.VITE_BRIDGE === "1") {
-    const response = await fetch("http://127.0.0.1:1499/invoke/stream_columns", {
+    // Dynamic on purpose (as in main.tsx): VITE_BRIDGE is a build-time constant, so production
+    // bundles drop the dev-only bridge module entirely.
+    const { BRIDGE } = await import("./dev/bridgeBackend");
+    const response = await fetch(`${BRIDGE}stream_columns`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId, req }),
     });
     if (!response.ok) throw await response.json();

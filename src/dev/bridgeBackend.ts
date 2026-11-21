@@ -1,5 +1,5 @@
 // Dev-only E2E bridge (VITE_BRIDGE=1): forwards every invoke to the real Rust engine served by
-// `cargo run -p slonview --example e2e_bridge` on 127.0.0.1:1499, so the real frontend runs in a
+// `cargo run -p slonview --example e2e_bridge` (VITE_BRIDGE_URL, default 127.0.0.1:1499), so the real frontend runs in a
 // headless browser. Plugin calls are faked and observable from the test:
 //   window.__clipboard     last text written to the clipboard
 //   window.__nextSavePath  path returned by the save dialog (default /tmp/slonview-e2e-export.csv)
@@ -7,7 +7,7 @@
 // Never loaded in production (main.tsx gates the import on a build-time constant).
 import { mockIPC } from "@tauri-apps/api/mocks";
 
-const BRIDGE = "http://127.0.0.1:1499/invoke/";
+export const BRIDGE = import.meta.env.VITE_BRIDGE_URL ?? "http://127.0.0.1:1499/invoke/";
 
 declare global {
   interface Window {

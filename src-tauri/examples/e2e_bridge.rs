@@ -1,7 +1,8 @@
 //! Dev-only HTTP bridge for headless E2E runs (never shipped; examples are not bundled).
-//! Serves `POST /invoke/<command>` on 127.0.0.1:1499 with the same JSON args object the
-//! frontend passes to `invoke`, and dispatches to the same `slonview_lib::ops` functions the
-//! Tauri commands call. Errors are HTTP 400 with the serialized `AppError`.
+//! Serves `POST /invoke/<command>` on `SLONVIEW_BRIDGE_ADDR` (default 127.0.0.1:1499) with the
+//! same JSON args object the frontend passes to `invoke`, and dispatches to the same
+//! `slonview_lib::ops` functions the Tauri commands call. Errors are HTTP 400 with the
+//! serialized `AppError`.
 //!
 //! Profiles and history live in a temp dir (`SLONVIEW_E2E_DIR` or a fresh one), never in the
 //! real app data directory; passwords go to the real OS credential store.
@@ -21,7 +22,7 @@ use slonview_lib::ops::{self, PasswordUpdate};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-const ADDR: &str = "127.0.0.1:1499";
+const DEFAULT_ADDR: &str = "127.0.0.1:1499";
 
 type Args = Map<String, Value>;
 
@@ -291,8 +292,9 @@ async fn main() -> std::io::Result<()> {
         Arc::new(OsSecretStore),
         HistoryStore::new(dir.join("history.jsonl")),
     ));
-    let listener = TcpListener::bind(ADDR).await?;
-    tracing::info!(addr = ADDR, dir = %dir.display(), "e2e bridge listening");
+    let addr = std::env::var("SLONVIEW_BRIDGE_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_owned());
+    let listener = TcpListener::bind(&addr).await?;
+    tracing::info!(addr = %addr, dir = %dir.display(), "e2e bridge listening");
     loop {
         let (stream, _) = listener.accept().await?;
         let engine = engine.clone();

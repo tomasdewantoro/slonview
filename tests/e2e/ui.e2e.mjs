@@ -2,7 +2,9 @@
 // through the dev-only bridge. Run `tests/e2e/run.sh` (starts both servers) or, with them
 // already up, `node tests/e2e/ui.e2e.mjs`.
 //
-// Env: SLONVIEW_UI_URL (default http://localhost:1450/), CHROME (headless shell binary),
+// Env: SLONVIEW_UI_URL (default http://localhost:1450/), SLONVIEW_BRIDGE (default
+//      http://127.0.0.1:1499/invoke), SLONVIEW_FIXTURE_DB (default slonview_fixture),
+//      SLONVIEW_SCRATCH_DB (default slonview_e2e_scratch), CHROME (headless shell binary),
 //      SLONVIEW_E2E_SHOTS (screenshot dir, default /tmp/slonview-e2e).
 // Needs the seeded fixture DB and an empty profile dir in the bridge. Creates a profile +
 // credential-store entry and deletes both at the end; writes only to scratch_insert_target.
@@ -12,7 +14,9 @@ import { homedir } from "node:os";
 import puppeteer from "puppeteer-core";
 
 const URL = process.env.SLONVIEW_UI_URL ?? "http://localhost:1450/";
-const BRIDGE = "http://127.0.0.1:1499/invoke/";
+const BRIDGE = `${process.env.SLONVIEW_BRIDGE ?? "http://127.0.0.1:1499/invoke"}/`;
+const FIXTURE_DB = process.env.SLONVIEW_FIXTURE_DB ?? "slonview_fixture";
+const SCRATCH_DB = process.env.SLONVIEW_SCRATCH_DB ?? SCRATCH_DB;
 const SHOTS = process.env.SLONVIEW_E2E_SHOTS ?? "/tmp/slonview-e2e";
 const PREVIEW_SHOTS = process.env.SLONVIEW_PREVIEW_SHOTS ?? "/tmp/slonview-preview";
 const CHROME =
@@ -23,7 +27,7 @@ mkdirSync(SHOTS, { recursive: true });
 
 const results = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const psql = (sql, db = "slonview_fixture") =>
+const psql = (sql, db = FIXTURE_DB) =>
   execFileSync("psql", ["-h", process.env.PGHOST ?? "/tmp", "-d", db, "-Atq", "-c", sql], { encoding: "utf8" }).trim();
 const bridge = async (cmd, args = {}) => {
   const res = await fetch(BRIDGE + cmd, { method: "POST", body: JSON.stringify(args) });
@@ -181,9 +185,9 @@ try {
   await check("E2E-01 add connection by URL", async () => {
     await page.click('[aria-label="New connection"]');
     await page.waitForSelector("#cd-url");
-    await page.type("#cd-url", `postgres://${process.env.USER}:${PASSWORD}@localhost:5432/slonview_fixture?sslmode=disable`);
+    await page.type("#cd-url", `postgres://${process.env.USER}:${PASSWORD}@localhost:5432/${FIXTURE_DB}?sslmode=disable`);
     await clickText("Fill");
-    await until(() => document.querySelector("#cd-db")?.value === "slonview_fixture");
+    await until((db) => document.querySelector("#cd-db")?.value === db, 15000, FIXTURE_DB);
     await page.$eval("#cd-name", (el) => el.select());
     await page.type("#cd-name", "E2E Fixture");
     await clickText("Test");
@@ -203,9 +207,9 @@ try {
   await check("E2E-02 wrong password / host down", async () => {
     const out = [];
     for (const [url, kind] of [
-      [`postgres://nosuchrole@localhost:5432/slonview_fixture?sslmode=disable`, /role "nosuchrole" does not exist/],
-      [`postgres://${process.env.USER}@localhost:5999/slonview_fixture?sslmode=disable`, /Connection refused/],
-      [`postgres://${process.env.USER}@no-such-host.invalid:5432/slonview_fixture`, /lookup address/],
+      [`postgres://nosuchrole@localhost:5432/${FIXTURE_DB}?sslmode=disable`, /role "nosuchrole" does not exist/],
+      [`postgres://${process.env.USER}@localhost:5999/${FIXTURE_DB}?sslmode=disable`, /Connection refused/],
+      [`postgres://${process.env.USER}@no-such-host.invalid:5432/${FIXTURE_DB}`, /lookup address/],
     ]) {
       await page.click('[aria-label="New connection"]');
       await page.waitForSelector("#cd-url");
@@ -462,16 +466,16 @@ try {
     const sql = await page.evaluate(() => window.__clipboard);
     eq(sql.split("\n").length, 10, "10 INSERT lines");
     writeFileSync(`${SHOTS}/09-insert.sql`, sql);
-    execFileSync("dropdb", ["-h", "/tmp", "--if-exists", "slonview_e2e_scratch"]);
-    execFileSync("createdb", ["-h", "/tmp", "slonview_e2e_scratch"]);
+    execFileSync("dropdb", ["-h", "/tmp", "--if-exists", SCRATCH_DB]);
+    execFileSync("createdb", ["-h", "/tmp", SCRATCH_DB]);
     const labels = psql("select string_agg(quote_literal(enumlabel), ',' order by enumsortorder) from pg_enum where enumtypid = 'order_status'::regtype");
-    psql(`CREATE TYPE order_status AS ENUM (${labels})`, "slonview_e2e_scratch");
+    psql(`CREATE TYPE order_status AS ENUM (${labels})`, SCRATCH_DB);
     psql(
       "CREATE TABLE public.orders (id bigint primary key, customer_id bigint not null, status order_status not null, amount numeric(12,2) not null, note text, created_at timestamptz not null)",
-      "slonview_e2e_scratch",
+      SCRATCH_DB,
     );
-    execFileSync("psql", ["-h", "/tmp", "-d", "slonview_e2e_scratch", "-v", "ON_ERROR_STOP=1", "-q", "-f", `${SHOTS}/09-insert.sql`]);
-    const copied = psql("select string_agg(t::text, '|' order by id) from orders t", "slonview_e2e_scratch");
+    execFileSync("psql", ["-h", "/tmp", "-d", SCRATCH_DB, "-v", "ON_ERROR_STOP=1", "-q", "-f", `${SHOTS}/09-insert.sql`]);
+    const copied = psql("select string_agg(t::text, '|' order by id) from orders t", SCRATCH_DB);
     const source = psql(
       "select string_agg(t::text, '|' order by id) from orders t where id in (select id from orders where status='paid' order by created_at desc, id limit 10)",
     );
@@ -479,7 +483,7 @@ try {
     // Filters off again for the next checks.
     await page.click('[aria-label="Remove filter"]');
     await sleep(500);
-    return "10 INSERTs succeeded in slonview_e2e_scratch; rows identical to source";
+    return `10 INSERTs succeeded in ${SCRATCH_DB}; rows identical to source`;
   });
 
   await check("A filter values with quotes/injection; NULL vs 'NULL' filters", async () => {
@@ -552,7 +556,7 @@ try {
     // Poll briefly: a cancelled backend can take a moment to report idle.
     let active = "";
     for (let i = 0; i < 20; i++) {
-      active = psql("select count(*) from pg_stat_activity where datname='slonview_fixture' and application_name='slonview' and state='active'");
+      active = psql(`select count(*) from pg_stat_activity where datname='${FIXTURE_DB}' and application_name='slonview' and state='active'`);
       if (active === "0") break;
       await sleep(150);
     }

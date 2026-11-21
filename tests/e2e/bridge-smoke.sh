@@ -10,7 +10,8 @@
 set -euo pipefail
 
 B=${SLONVIEW_BRIDGE:-http://127.0.0.1:1499/invoke}
-PSQL=(psql -h "${PGHOST:-/tmp}" -d slonview_fixture -Atq)
+DB=${SLONVIEW_FIXTURE_DB:-slonview_fixture}
+PSQL=(psql -h "${PGHOST:-/tmp}" -d "$DB" -Atq)
 OUT=$(mktemp -d)
 pass=0
 fail=0
@@ -23,7 +24,7 @@ expect() { # name, expected, actual
 }
 
 ID=$(uuidgen | tr 'A-Z' 'a-z')
-PROFILE=$(jq -nc --arg id "$ID" '{id:$id,name:"e2e smoke",host:"localhost",port:5432,database:"slonview_fixture",user:(env.USER),ssl:"disable",readOnly:true,color:null,statementTimeoutMs:30000}')
+PROFILE=$(jq -nc --arg id "$ID" --arg db "$DB" '{id:$id,name:"e2e smoke",host:"localhost",port:5432,database:$db,user:(env.USER),ssl:"disable",readOnly:true,color:null,statementTimeoutMs:30000}')
 cleanup() {
   call delete_profile "{\"id\":\"$ID\"}" >/dev/null || true
   rm -rf "$OUT"
