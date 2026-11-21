@@ -44,7 +44,7 @@ import { ErrorPanel } from "./ErrorPanel";
 import { filterExtensions, sequenceValue, triggerSummary } from "./sidebar/objects";
 import { clickMode, ObjectRow, TreeGroup } from "./sidebar/TreeGroup";
 
-const KIND: Record<RelationKind, { icon: LucideIcon; label: string }> = {
+export const KIND: Record<RelationKind, { icon: LucideIcon; label: string }> = {
   table: { icon: Table2, label: "table" },
   view: { icon: Eye, label: "view" },
   "materialized-view": { icon: Layers, label: "materialized view" },
@@ -52,14 +52,14 @@ const KIND: Record<RelationKind, { icon: LucideIcon; label: string }> = {
   "foreign-table": { icon: Globe, label: "foreign table" },
 };
 
-const FUNCTION_KIND: Record<FunctionKind, { icon: LucideIcon; label: string }> = {
+export const FUNCTION_KIND: Record<FunctionKind, { icon: LucideIcon; label: string }> = {
   function: { icon: SquareFunction, label: "function" },
   procedure: { icon: Workflow, label: "procedure" },
   aggregate: { icon: Sigma, label: "aggregate function" },
   window: { icon: AppWindow, label: "window function" },
 };
 
-const TYPE_KIND: Record<TypeKind, { icon: LucideIcon; label: string }> = {
+export const TYPE_KIND: Record<TypeKind, { icon: LucideIcon; label: string }> = {
   enum: { icon: List, label: "enum" },
   domain: { icon: ShieldCheck, label: "domain" },
   composite: { icon: Braces, label: "composite type" },

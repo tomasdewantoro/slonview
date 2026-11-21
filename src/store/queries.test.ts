@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPageRequest, filtersToRequest, formatCount, nextSort, selectSql, type FilterRow } from "./queries";
+import { activeFilterCount, buildPageRequest, filtersToRequest, formatCount, nextSort, selectSql, type FilterRow } from "./queries";
 
 const row = (column: string, op: FilterRow["op"], value = ""): FilterRow => ({ id: column + op, column, op, value });
 
@@ -36,11 +36,29 @@ describe("buildPageRequest", () => {
       table: "t",
       filters: [{ column: "a", op: ">", value: "1" }],
       rawWhere: null,
+      search: null,
       sort: [{ column: "a", desc: true }],
       cursor: { kind: "offset", offset: 500 },
       limit: 500,
     });
     expect(buildPageRequest("c", { schema: "s", table: "t", filters: [], rawWhere: " x > 1 ", sort: [] }, null).rawWhere).toBe("x > 1");
+  });
+
+  it("passes a trimmed search term; blank or missing means none", () => {
+    const q = { schema: "s", table: "t", filters: [], rawWhere: "", sort: [] };
+    expect(buildPageRequest("c", { ...q, search: "  o'brien " }, null).search).toBe("o'brien");
+    expect(buildPageRequest("c", { ...q, search: "   " }, null).search).toBeNull();
+    expect(buildPageRequest("c", q, null).search).toBeNull();
+  });
+});
+
+describe("activeFilterCount", () => {
+  it("counts filter rows plus a raw WHERE and a search", () => {
+    const q = { schema: "s", table: "t", filters: [row("a", "=", "1")], rawWhere: "", sort: [] };
+    expect(activeFilterCount(q)).toBe(1);
+    expect(activeFilterCount({ ...q, rawWhere: " x " })).toBe(2);
+    expect(activeFilterCount({ ...q, rawWhere: " x ", search: "y" })).toBe(3);
+    expect(activeFilterCount({ ...q, filters: [], search: "  " })).toBe(0);
   });
 });
 

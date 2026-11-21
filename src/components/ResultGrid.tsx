@@ -4,6 +4,7 @@ import {
   CompactSelection,
   DataEditor,
   GridCellKind,
+  type DataEditorRef,
   type DrawCellCallback,
   type DrawHeaderCallback,
   type GridCell,
@@ -55,6 +56,10 @@ export interface ResultGridProps {
   rowChanges?: ReadonlyMap<number, "modified" | "new" | "deleted">;
   /** Opens the row a foreign-key cell points at; enables the menu item, ⌘-click and the header mark. */
   onFollowReference?: (target: ForeignKeyTarget, value: string) => void;
+  /** Extra right-click items for a row (after the built-in ones). */
+  rowMenuItems?: (row: number) => MenuItem[];
+  /** Moves the selection to this cell and scrolls it into view whenever the object changes. */
+  focusCell?: CellRef | null;
 }
 
 const NEAR_END_ROWS = 100;
@@ -184,12 +189,21 @@ export function ResultGrid({
   onSelectedRows,
   rowChanges,
   onFollowReference,
+  rowMenuItems,
+  focusCell,
 }: ResultGridProps) {
   const scheme = useColorScheme();
   // Re-read on appearance change; the token values themselves switch in CSS.
   const palette = useMemo(readPalette, [scheme]);
   const theme = useMemo(() => gridTheme(palette), [palette]);
   const [selection, setSelection] = useState<GridSelection>(emptySelection);
+  const editorRef = useRef<DataEditorRef>(null);
+  useEffect(() => {
+    if (!focusCell) return;
+    const { col, row } = focusCell;
+    setSelection({ current: { cell: [col, row], range: { x: col, y: row, width: 1, height: 1 }, rangeStack: [] }, columns: CompactSelection.empty(), rows: CompactSelection.empty() });
+    editorRef.current?.scrollTo(col, row);
+  }, [focusCell]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>({});
   const columnCopy = useColumnCopy(copyPage);
@@ -495,12 +509,17 @@ export function ResultGrid({
       menuItems.push({ separator: true }, { label: `Open referenced row → ${where}`, shortcut: "⌘-click", onSelect: () => onFollowReference(target, value) });
     }
   }
+  if (rowMenuItems && selection.current) {
+    const extra = rowMenuItems(selection.current.cell[1]);
+    if (extra.length) menuItems.push({ separator: true }, ...extra);
+  }
 
   const containerStyle = { "--gdg-font-family": "var(--sv-font-mono)" } as CSSProperties;
 
   return (
     <div className="relative min-h-0 flex-1" style={containerStyle}>
       <DataEditor
+        ref={editorRef}
         width="100%"
         height="100%"
         columns={gridColumns}

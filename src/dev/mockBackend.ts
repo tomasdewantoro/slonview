@@ -350,7 +350,8 @@ function matches(v: string | null, f: Filter, numeric: boolean): boolean {
 function viewIndexes(t: MockTable, req: PageRequest): number[] | null {
   if (req.rawWhere?.toLowerCase().includes("syntax"))
     throw err({ kind: "sql", code: "42601", message: 'syntax error at or near "syntax"', detail: null, hint: "Check the raw WHERE expression.", position: 31 });
-  if (req.filters.length === 0 && req.sort.length === 0) return null;
+  const term = req.search?.trim().toLowerCase() ?? "";
+  if (req.filters.length === 0 && req.sort.length === 0 && !term) return null;
   if (t.rowCount > 200_000) throw err({ kind: "timeout" });
   const colIdx = (name: string) => {
     const i = t.columns.findIndex((c) => c.name === name);
@@ -361,7 +362,7 @@ function viewIndexes(t: MockTable, req: PageRequest): number[] | null {
   const idx: number[] = [];
   for (let r = 0; r < t.rowCount; r++) {
     const row = t.row(r);
-    if (fs.every(({ f, i, num }) => matches(row[i], f, num))) idx.push(r);
+    if (fs.every(({ f, i, num }) => matches(row[i], f, num)) && (!term || row.some((v) => v?.toLowerCase().includes(term)))) idx.push(r);
   }
   const ss = req.sort.map((s) => ({ s, i: colIdx(s.column), num: NUMERIC.test(t.columns[colIdx(s.column)].typeName) }));
   if (ss.length) {
@@ -434,7 +435,7 @@ async function fetchPage(requestId: string, req: PageRequest): Promise<Page> {
     nextCursor: end < total ? (keyset ? { kind: "keyset", values: [String(end)] } : { kind: "offset", offset: end }) : null,
     sql,
     elapsedMs: Math.round(3 + Math.random() * 40),
-    estRows: offset === 0 && end < total && !req.rawWhere ? total : null,
+    estRows: offset === 0 && end < total && !req.rawWhere && !req.search?.trim() ? total : null,
   };
 }
 
@@ -799,7 +800,7 @@ export function installMockBackend(): void {
         requireConn(a.connId);
         const t = findTable(a.schema, a.table);
         await delay(a.requestId, t.rowCount > 500_000 ? 2500 : 400);
-        const ids = viewIndexes(t, { connId: a.connId, schema: a.schema, table: a.table, filters: a.filters, rawWhere: a.rawWhere, sort: [], cursor: null, limit: 0 });
+        const ids = viewIndexes(t, { connId: a.connId, schema: a.schema, table: a.table, filters: a.filters, rawWhere: a.rawWhere, search: a.search ?? null, sort: [], cursor: null, limit: 0 });
         return ids ? ids.length : t.rowCount;
       }
       case "get_cell": {
@@ -831,6 +832,18 @@ export function installMockBackend(): void {
         requireConn(a.connId);
         await delay(null, 100);
         return mockColumns();
+      // v0.3.0 navigation
+      case "list_referencing": {
+        requireConn(a.connId);
+        await delay(null, 60);
+        findTable(a.schema, a.table);
+        // Derived from the single-column foreign keys the mock tables declare.
+        return tables.flatMap((t) =>
+          Object.entries(t.references ?? {})
+            .filter(([, r]) => r.schema === a.schema && r.table === a.table)
+            .map(([column, r]) => ({ constraintName: `${t.name}_${column}_fkey`, schema: t.schema, table: t.name, columns: [column], referencedColumns: [r.column] })),
+        );
+      }
       case "explain":
         return mockExplain(a.requestId, a.connId, a.sql, a.analyze);
       case "plugin:clipboard-manager|write_text":

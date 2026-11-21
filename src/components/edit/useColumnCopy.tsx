@@ -23,7 +23,7 @@ export function useColumnCopy(page?: PageRequest) {
     cancelled.current = false;
     setProgress("Counting values…");
     try {
-      const count = await api.countExact(id, page.connId, page.schema, page.table, page.filters, page.rawWhere);
+      const count = await api.countExact(id, page.connId, page.schema, page.table, page.filters, page.search, page.rawWhere);
       if (cancelled.current) return;
       if (count > 100_000 && !await ask(`This copies ${Math.min(count, 1_000_000).toLocaleString()} values per column and may use a large amount of memory. The limit is 1,000,000 rows. Continue?`, { title: "Copy large column", kind: "warning" })) return;
       if (cancelled.current) return;

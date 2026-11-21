@@ -1,8 +1,8 @@
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { api } from "../api";
+import { api, errorMessage } from "../api";
 import type { TableDescription } from "../bindings/TableDescription";
-import { useApp, type StructureTab as StructureTabInfo } from "../store/app";
+import { appStore, referencingCacheKey, relationTitle, useApp, type StructureTab as StructureTabInfo } from "../store/app";
 import { formatBytes } from "../store/queries";
 import { ErrorPanel } from "./ErrorPanel";
 
@@ -34,6 +34,12 @@ const td = "border-b border-border px-2.5 py-1 align-top";
 export function StructureTab({ tab, connId }: { tab: StructureTabInfo; connId: string }) {
   const nonce = useApp((s) => s.structureNonce[tab.id] ?? 0);
   const [st, setSt] = useState<State>({ state: "loading" });
+  const referencing = useApp((s) => s.referencing[referencingCacheKey(connId, tab.schema, tab.table)]);
+  const isView = st.state === "ok" && st.desc.kind === "view";
+  useEffect(() => {
+    // Views can't be referenced by a foreign key; everything else loads its referencing keys once.
+    if (st.state === "ok" && !isView) appStore.getState().loadReferencing(connId, tab.schema, tab.table);
+  }, [st.state, isView, connId, tab.schema, tab.table]);
 
   useEffect(() => {
     let live = true;
@@ -147,6 +153,54 @@ export function StructureTab({ tab, connId }: { tab: StructureTabInfo; connId: s
           )}
         </Section>
       )}
+
+      {!isView && (
+        <Section title="Referenced by" count={referencing?.status === "ok" ? referencing.keys.length : undefined}>
+          {!referencing || referencing.status === "loading" ? (
+            <p className="flex items-center gap-1.5 text-xs text-muted">
+              <LoaderCircle size={12} className="animate-spin" aria-hidden /> Loading…
+            </p>
+          ) : referencing.status === "error" ? (
+            <p className="text-xs text-error">Couldn't load foreign keys that point here: {errorMessage(referencing.error)}</p>
+          ) : referencing.keys.length === 0 ? (
+            <p className="text-xs text-muted">No foreign keys point at this table.</p>
+          ) : (
+            <table className="w-full border-collapse border-t border-border text-xs">
+              <tbody>
+                {referencing.keys.map((k) => {
+                  const label = (
+                    <>
+                      {relationTitle(k.schema, k.table)} ({k.columns.join(", ")}) <span className="text-faint">→</span> ({k.referencedColumns.join(", ")})
+                    </>
+                  );
+                  return (
+                    <tr key={`${k.schema}.${k.table}.${k.constraintName}`} className="hover:bg-surface-2">
+                      <td className={`${td} font-mono`}>
+                        {k.columns.length === 1 ? (
+                          <button className="text-left text-accent hover:underline" title={`Open ${relationTitle(k.schema, k.table)}`} onClick={() => openReferencingTable(connId, k.schema, k.table)}>
+                            {label}
+                          </button>
+                        ) : (
+                          label
+                        )}
+                      </td>
+                      <td className={`${td} w-72 font-mono break-all text-muted`}>{k.constraintName}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Section>
+      )}
     </div>
   );
+}
+
+/** Opens the referencing table (no filter) on the structure tab's own connection. */
+function openReferencingTable(connId: string, schema: string, table: string) {
+  const s = appStore.getState();
+  // openTable targets the sidebar's connection; switch to this tab's first (it normally is already).
+  if (s.activeConnId !== connId) s.setActiveConn(connId);
+  s.openTable(schema, table, "pinned");
 }

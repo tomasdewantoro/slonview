@@ -4,7 +4,7 @@ import type { Page } from "../bindings/Page";
 import type { PageRequest } from "../bindings/PageRequest";
 import type { StoreApi } from "zustand/vanilla";
 import { api } from "../api";
-import { createAppStore, readPersistedConns, readPersistedTabs, sqlEditorKey, statusConnId, tabReadOnly, wasTabDisposed, type AppState } from "./app";
+import { createAppStore, readPersistedConns, readPersistedTabs, referencingCacheKey, sqlEditorKey, statusConnId, tabReadOnly, wasTabDisposed, type AppState } from "./app";
 
 const CONN = "c1";
 /** Second profile on the same database with writes allowed. */
@@ -42,6 +42,8 @@ interface Ipc {
   disconnected: string[];
   /** Pending get_function_definition / get_object_definition calls. */
   definitions: { cmd: string; oid: number; resolve: (sql: string) => void }[];
+  /** list_referencing calls as `schema.table`. */
+  referencing: string[];
 }
 
 /** IPC mock where fetch_page and definition calls stay pending until the test resolves them, in any order. */
@@ -51,6 +53,7 @@ function installIpc(): Ipc {
   const definitions: Ipc["definitions"] = [];
   const sessions = new Map<string, boolean>();
   const disconnected: string[] = [];
+  const referencing: string[] = [];
   mockIPC((cmd, args) => {
     const a = args as Record<string, any>;
     switch (cmd) {
@@ -83,11 +86,14 @@ function installIpc(): Ipc {
       case "get_function_definition":
       case "get_object_definition":
         return new Promise((resolve) => definitions.push({ cmd, oid: a.oid, resolve }));
+      case "list_referencing":
+        referencing.push(`${a.schema}.${a.table}`);
+        return [{ constraintName: "orders_customer_id_fkey", schema: "public", table: "orders", columns: ["customer_id"], referencedColumns: ["id"] }];
       default:
         throw new Error(`unexpected ${cmd}`);
     }
   });
-  return { pending, cancelled, definitions, sessions, disconnected };
+  return { pending, cancelled, definitions, sessions, disconnected, referencing };
 }
 
 /** Flush pending promise callbacks (mockIPC + store awaits settle within a few microtask hops). */
@@ -188,6 +194,53 @@ describe("table tab requests", () => {
     ipc.pending[0].reject(err);
     await tick();
     expect(store.getState().tableData[tabId].error).toEqual(err);
+  });
+
+  it("sends the search with pages and counts and keeps it with the tab", async () => {
+    const store = await connectedStore();
+    store.getState().openTable("public", "orders");
+    const tabId = store.getState().activeTabId!;
+    store.getState().setTableQuery(tabId, { search: " o'brien " });
+    await tick();
+    expect(ipc.pending[ipc.pending.length - 1].req.search).toBe("o'brien");
+    const saved = JSON.parse(window.localStorage.getItem(`slonview.tabs.${CONN}`)!);
+    expect(saved.tabs[0].query.search).toBe(" o'brien ");
+    store.getState().setTableQuery(tabId, { search: "" });
+    await tick();
+    expect(ipc.pending[ipc.pending.length - 1].req.search).toBeNull();
+  });
+
+  it("opens rows filtered to a value as a pinned tab and reuses it", async () => {
+    const store = await connectedStore();
+    const target = { schema: "public", table: "orders", column: "customer_id" };
+    store.getState().openRowsWhere(CONN, target, "7");
+    const tabs = () => store.getState().tabs;
+    expect(tabs()).toHaveLength(1);
+    const t = tabs()[0];
+    expect(t.kind === "table" && t.query.filters.map((f) => [f.column, f.op, f.value])).toEqual([["customer_id", "=", "7"]]);
+    expect(t.preview).toBe(false);
+    store.getState().openRowsWhere(CONN, target, "7");
+    expect(tabs()).toHaveLength(1);
+    store.getState().openRowsWhere(CONN, target, "8");
+    expect(tabs()).toHaveLength(2);
+  });
+
+  it("loads referencing keys once per relation and forgets them on a sidebar refresh", async () => {
+    const store = await connectedStore();
+    store.getState().loadReferencing(CONN, "public", "customers");
+    store.getState().loadReferencing(CONN, "public", "customers");
+    await tick();
+    store.getState().loadReferencing(CONN, "public", "customers");
+    expect(ipc.referencing).toEqual(["public.customers"]);
+    const st = store.getState().referencing[referencingCacheKey(CONN, "public", "customers")];
+    expect(st.status === "ok" && st.keys.map((k) => k.table)).toEqual(["orders"]);
+    store.getState().loadReferencing(CONN, "public", "customers", true);
+    await tick();
+    expect(ipc.referencing).toHaveLength(2);
+    await store.getState().loadTree(CONN);
+    expect(store.getState().referencing).toEqual({});
+    store.getState().loadReferencing("not-connected", "public", "customers");
+    expect(ipc.referencing).toHaveLength(2);
   });
 });
 

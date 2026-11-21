@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { QuickOpen } from "./components/QuickOpen";
 import { Sidebar } from "./components/Sidebar";
 import { SqlTab } from "./components/sql/SqlTab";
 import { StatusBar } from "./components/StatusBar";
@@ -11,7 +12,7 @@ import type { SchemaNode } from "./bindings/SchemaNode";
 import { appStore, useApp } from "./store/app";
 
 /** App-wide shortcuts. Capture phase so they also work while the grid or an editor has focus. */
-function useShortcuts(focusSearch: () => void) {
+function useShortcuts(focusSearch: () => void, quickOpen: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey || e.altKey || e.ctrlKey) return;
@@ -25,6 +26,8 @@ function useShortcuts(focusSearch: () => void) {
         if (s.activeTabId) s.closeTab(s.activeTabId);
       } else if (key === "t") {
         s.openSql();
+      } else if (key === "p") {
+        quickOpen();
       } else if (key === "r") {
         if (s.activeTabId) s.refreshTab(s.activeTabId);
       } else if (/^[1-9]$/.test(e.key)) {
@@ -39,7 +42,7 @@ function useShortcuts(focusSearch: () => void) {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [focusSearch]);
+  }, [focusSearch, quickOpen]);
 }
 
 function MainArea() {
@@ -102,7 +105,15 @@ export default function App() {
     searchRef.current?.focus();
     searchRef.current?.select();
   }, []);
-  useShortcuts(focusSearch);
+  /** Connection the open quick-open palette searches; null = closed. */
+  const [quickOpenConn, setQuickOpenConn] = useState<string | null>(null);
+  const openQuickOpen = useCallback(() => {
+    // The sidebar's connection follows the active tab; no-op unless it is connected.
+    const s = appStore.getState();
+    const id = s.activeConnId;
+    if (id && s.conns[id]?.status === "connected") setQuickOpenConn(id);
+  }, []);
+  useShortcuts(focusSearch, openQuickOpen);
 
   useEffect(() => {
     void appStore.getState().init();
@@ -120,6 +131,7 @@ export default function App() {
       </div>
       <StatusBar />
       <Toasts />
+      {quickOpenConn && <QuickOpen connId={quickOpenConn} onClose={() => setQuickOpenConn(null)} />}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import type { ObjectKind } from "../bindings/ObjectKind";
 import type { SchemaNode } from "../bindings/SchemaNode";
 import type { ServerInfo } from "../bindings/ServerInfo";
 import { buildPageRequest, filtersToRequest, normalizeRawWhere, type TableQuery } from "./queries";
+import type { ReferencingKey } from "../bindings/ReferencingKey";
 
 export type ConnStatus = "connecting" | "connected" | "failed";
 
@@ -129,11 +130,11 @@ export interface AppState {
   /** Sidebar opens (on the sidebar's connection) take a mode; explicit commands default to pinned. */
   openTable(schema: string, table: string, mode?: OpenMode): void;
   /**
-   * Follows a foreign key from a cell: a pinned table tab of the referenced relation filtered to
-   * `column = value`, on `connId`. A tab already showing exactly that filter is reused; other
-   * tabs of the relation are left untouched.
+   * Opens rows of a relation filtered to `column = value`, as a pinned table tab on `connId`
+   * (following a foreign key from a cell, or listing the rows that reference one). A tab already
+   * showing exactly that filter is reused; other tabs of the relation are left untouched.
    */
-  openReferenced(connId: string, target: ForeignKeyTarget, value: string): void;
+  openRowsWhere(connId: string, target: ForeignKeyTarget, value: string): void;
   openStructure(schema: string, table: string, mode?: OpenMode): void;
   /** New pinned SQL tab on the sidebar's connection; `title` defaults to "Query N". */
   openSql(initialSql?: string, title?: string): void;
@@ -149,7 +150,7 @@ export interface AppState {
   activateTabIndex(index: number): void;
   refreshTab(id: string): void;
 
-  setTableQuery(tabId: string, patch: Partial<Pick<TableQuery, "filters" | "rawWhere" | "sort">>): void;
+  setTableQuery(tabId: string, patch: Partial<Pick<TableQuery, "filters" | "rawWhere" | "search" | "sort">>): void;
   ensureLoaded(tabId: string): void;
   loadFirst(tabId: string): Promise<void>;
   loadMore(tabId: string): Promise<void>;
@@ -158,7 +159,17 @@ export interface AppState {
 
   pushToast(kind: Toast["kind"], message: string): void;
   dismissToast(id: number): void;
+
+  // v0.3.0 navigation
+  /** Foreign keys pointing at a relation, by `referencingCacheKey`; loaded once per relation. */
+  referencing: Record<string, ReferencingState>;
+  /** Loads the keys pointing at `schema.table` unless they are cached or loading. */
+  loadReferencing(connId: string, schema: string, table: string, force?: boolean): void;
 }
+
+export type ReferencingState = { status: "loading" } | { status: "ok"; keys: ReferencingKey[] } | { status: "error"; error: unknown };
+
+export const referencingCacheKey = (connId: string, schema: string, table: string) => `${connId}\u0000${schema}\u0000${table}`;
 
 /** Connections to reopen on start: `{ ids, active }`. */
 const OPEN_CONNS_KEY = "slonview.openConns";
@@ -508,6 +519,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       tableData: {},
       structureNonce: {},
       toasts: [],
+      referencing: {},
 
       async init() {
         await get().loadProfiles();
@@ -582,6 +594,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
           activeTabId: nextTab,
           tableData: Object.fromEntries(Object.entries(tableData).filter(([k]) => !closing.has(k))),
           structureNonce: Object.fromEntries(Object.entries(structureNonce).filter(([k]) => !closing.has(k))),
+          referencing: Object.fromEntries(Object.entries(get().referencing).filter(([k]) => !k.startsWith(`${connId}\u0000`))),
         });
         if (nextTab) focusTab(nextTab);
         persistConns();
@@ -612,6 +625,8 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         const connId = id ?? get().activeConnId;
         if (!isConnected(connId)) return;
         patchConn(connId, { treeLoading: true, treeError: null });
+        // A sidebar refresh also forgets cached foreign keys: the schema may have changed.
+        set((s) => ({ referencing: Object.fromEntries(Object.entries(s.referencing).filter(([k]) => !k.startsWith(`${connId}\u0000`))) }));
         try {
           const { schemas, extensions } = await api.listSchemaTree(connId);
           if (isConnected(connId)) patchConn(connId, { tree: schemas, extensions, treeLoading: false });
@@ -631,7 +646,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         );
       },
 
-      openReferenced(connId, target, value) {
+      openRowsWhere(connId, target, value) {
         if (!isConnected(connId)) return;
         const { schema, table, column } = target;
         // A tab already showing exactly this row is reused. Any other tab of the relation is left
@@ -727,7 +742,10 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       refreshTab(id) {
         const tab = get().tabs.find((t) => t.id === id);
         if (tab?.kind === "table") void get().loadFirst(id);
-        if (tab?.kind === "structure") set((s) => ({ structureNonce: { ...s.structureNonce, [id]: (s.structureNonce[id] ?? 0) + 1 } }));
+        if (tab?.kind === "structure") {
+          set((s) => ({ structureNonce: { ...s.structureNonce, [id]: (s.structureNonce[id] ?? 0) + 1 } }));
+          get().loadReferencing(tab.connId, tab.schema, tab.table, true);
+        }
       },
 
       setTableQuery(tabId, patch) {
@@ -821,7 +839,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         patchData(tabId, { countRequestId: rid, counting: true, countError: null });
         const q = tab.query;
         try {
-          const n = await api.countExact(rid, tab.connId, q.schema, q.table, filtersToRequest(q.filters), normalizeRawWhere(q.rawWhere));
+          const n = await api.countExact(rid, tab.connId, q.schema, q.table, filtersToRequest(q.filters), normalizeRawWhere(q.search ?? ""), normalizeRawWhere(q.rawWhere));
           if (get().tableData[tabId]?.countRequestId !== rid) return;
           patchData(tabId, { exactCount: n, counting: false });
         } catch (e) {
@@ -837,6 +855,23 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
 
       dismissToast(id) {
         set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+      },
+
+      // v0.3.0 navigation
+      loadReferencing(connId, schema, table, force = false) {
+        if (!isConnected(connId)) return;
+        const key = referencingCacheKey(connId, schema, table);
+        const cur = get().referencing[key];
+        if (cur?.status === "loading" || (cur && !force)) return;
+        set((s) => ({ referencing: { ...s.referencing, [key]: { status: "loading" } } }));
+        const settle = (state: ReferencingState) => {
+          // Dropped when the connection closed or the sidebar was refreshed meanwhile.
+          if (get().referencing[key]?.status === "loading" && isConnected(connId)) set((s) => ({ referencing: { ...s.referencing, [key]: state } }));
+        };
+        api.listReferencing(connId, schema, table).then(
+          (keys) => settle({ status: "ok", keys }),
+          (error) => settle({ status: "error", error }),
+        );
       },
     };
   });

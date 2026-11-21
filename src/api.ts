@@ -24,6 +24,7 @@ import type { EditRequest } from "./bindings/EditRequest";
 import type { EditValue } from "./bindings/EditValue";
 import type { ColumnRef } from "./bindings/ColumnRef";
 import type { ExplainResult } from "./bindings/ExplainResult";
+import type { ReferencingKey } from "./bindings/ReferencingKey";
 
 export function isAppError(e: unknown): e is AppError {
   return typeof e === "object" && e !== null && "kind" in e;
@@ -75,8 +76,8 @@ export const api = {
 
   // Data
   fetchPage: (requestId: string, req: PageRequest) => invoke<Page>("fetch_page", { requestId, req }),
-  countExact: (requestId: string, connId: string, schema: string, table: string, filters: Filter[], rawWhere: string | null) =>
-    invoke<number>("count_exact", { requestId, connId, schema, table, filters, rawWhere }),
+  countExact: (requestId: string, connId: string, schema: string, table: string, filters: Filter[], search: string | null, rawWhere: string | null) =>
+    invoke<number>("count_exact", { requestId, connId, schema, table, filters, search, rawWhere }),
   getCell: (req: CellRequest) => invoke<string | null>("get_cell", { req }),
 
   // SQL editor. Runs every statement in `sql`; one QueryResult per statement.
@@ -108,6 +109,9 @@ export const api = {
   setTimeZone: (connId: string, timeZone: string | null) => invoke<ConnProfile[]>("set_time_zone", { connId, timeZone }),
   saveSshSecret: (id: string, passphrase: boolean, value: string | null) => invoke<void>("save_ssh_secret", { id, passphrase, value }),
   testTunnelConnection: (profile: ConnProfile, password: string | null, sshSecret: string | null) => invoke<ServerInfo>("test_tunnel_connection", { profile, password, sshSecret }),
+  // v0.3.0 navigation
+  /** Foreign keys in any table that point at `schema.table`, multi-column keys included. */
+  listReferencing: (connId: string, schema: string, table: string) => invoke<ReferencingKey[]>("list_referencing", { connId, schema, table }),
 };
 
 async function streamColumnValues(requestId: string, req: ColumnCopyRequest, onChunk: (chunk: ColumnCopyChunk) => void): Promise<ColumnCopySummary> {

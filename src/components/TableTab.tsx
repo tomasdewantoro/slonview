@@ -1,12 +1,16 @@
 import { save } from "@tauri-apps/plugin-dialog";
-import { Ban, FileDown, Filter, LoaderCircle, PanelRight, RefreshCw, Sigma, TableProperties } from "lucide-react";
+import { Ban, FileDown, Filter, LoaderCircle, PanelRight, RefreshCw, Rows3, Search, Sigma, TableProperties, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, newRequestId } from "../api";
-import { appStore, emptyTableData, tabReadOnly, useApp, type TableTab as TableTabInfo } from "../store/app";
-import { buildPageRequest, filtersToRequest, nextSort, normalizeRawWhere } from "../store/queries";
+import type { ForeignKeyTarget } from "../bindings/ForeignKeyTarget";
+import { referencingLinks } from "../lib/referencing";
+import { appStore, emptyTableData, referencingCacheKey, tabReadOnly, useApp, type TableTab as TableTabInfo } from "../store/app";
+import { activeFilterCount, buildPageRequest, filtersToRequest, nextSort, normalizeRawWhere } from "../store/queries";
 import { CellInspector } from "./CellInspector";
 import { ErrorPanel } from "./ErrorPanel";
 import { FilterBar } from "./FilterBar";
+import type { MenuItem } from "./ContextMenu";
+import { RecordView } from "./RecordView";
 import { ResultGrid, type CellRef } from "./ResultGrid";
 import { useRowEdits } from "./edit/useRowEdits";
 import { AddRowDialog, CellEditDialog, ReviewChanges } from "./edit/EditDialogs";
@@ -15,15 +19,27 @@ const EMPTY = emptyTableData();
 
 export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string }) {
   const data = useApp((s) => s.tableData[tab.id]) ?? EMPTY;
-  const { ensureLoaded, loadMore, setTableQuery, cancelTable, countRows, refreshTab, openStructure, pinTab } = appStore.getState();
+  const { ensureLoaded, loadMore, setTableQuery, cancelTable, countRows, refreshTab, openStructure, pinTab, loadReferencing, openRowsWhere } = appStore.getState();
   const [showFilters, setShowFilters] = useState(tab.query.filters.length > 0 || tab.query.rawWhere !== "");
   const [selected, setSelected] = useState<CellRef | null>(null);
   const [inspecting, setInspecting] = useState<CellRef | null>(null);
+  /** Row shown in the record view; null = closed. Mutually exclusive with the cell inspector. */
+  const [recordRow, setRecordRow] = useState<number | null>(null);
+  /** Cell the grid moves its selection to when the record view steps rows. */
+  const [focusCell, setFocusCell] = useState<CellRef | null>(null);
+  const [searchDraft, setSearchDraft] = useState(tab.query.search ?? "");
   const shiftDown = useRef(false);
   const [exporting, setExporting] = useState(false);
   const readOnly = useApp((s) => tabReadOnly(s, tab));
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const edits = useRowEdits(connId, tab.query.schema, tab.query.table, data.columns, data.rows, data.truncated, readOnly, () => refreshTab(tab.id));
+  const kind = useApp((s) => s.conns[connId]?.tree.find((n) => n.name === tab.query.schema)?.relations.find((r) => r.name === tab.query.table)?.kind);
+  // Views can't be the target of a foreign key: no lookup for them.
+  const referenceable = kind !== undefined && kind !== "view";
+  const referencing = useApp((s) => (referenceable ? s.referencing[referencingCacheKey(connId, tab.query.schema, tab.query.table)] : undefined));
+  useEffect(() => {
+    if (referenceable) loadReferencing(connId, tab.query.schema, tab.query.table);
+  }, [referenceable, connId, tab.query.schema, tab.query.table, loadReferencing]);
 
   // Streams the whole relation (current filters and sort) to disk in Rust; the grid's loaded rows don't matter.
   const exportCsv = async () => {
@@ -41,6 +57,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
         table: q.table,
         filters: filtersToRequest(q.filters),
         rawWhere: normalizeRawWhere(q.rawWhere),
+        search: normalizeRawWhere(q.search ?? ""),
         sort: q.sort,
       };
       const rows = await api.exportCsv(newRequestId(), source, path);
@@ -59,7 +76,32 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
   useEffect(() => {
     setInspecting(null);
     setSelected(null);
+    setRecordRow(null);
   }, [data.columns, firstRows]);
+
+  useEffect(() => setSearchDraft(tab.query.search ?? ""), [tab.query.search]);
+  const applySearch = (term: string) => {
+    if ((tab.query.search ?? "") === term) return;
+    if (edits.count) {
+      appStore.getState().pushToast("info", "Apply or discard pending changes before searching.");
+      return;
+    }
+    setTableQuery(tab.id, { search: term });
+  };
+
+  const openRows = edits.count ? undefined : (target: ForeignKeyTarget, value: string) => openRowsWhere(connId, target, value);
+  const truncatedCols = (row: number) => new Set(data.truncated.filter(([r]) => r === row).map(([, c]) => c));
+  const rowMenuItems = (row: number): MenuItem[] => {
+    const values = data.rows[row];
+    if (!openRows || !values || referencing?.status !== "ok") return [];
+    return referencingLinks(referencing.keys, data.columns, values, truncatedCols(row)).map((l) => ({ label: l.label, onSelect: () => openRows(l.target, l.value) }));
+  };
+  const moveRecord = (row: number) => {
+    const cell = { col: selected?.col ?? 0, row };
+    setRecordRow(row);
+    setSelected(cell);
+    setFocusCell(cell);
+  };
 
   const truncatedSet = useMemo(() => new Set(data.truncated.map(([r, c]) => `${r}:${c}`)), [data.truncated]);
 
@@ -71,7 +113,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
 
   const loaded = data.rows.length;
   const hasMore = data.nextCursor !== null;
-  const activeFilters = tab.query.filters.length + (tab.query.rawWhere.trim() ? 1 : 0);
+  const activeFilters = activeFilterCount(tab.query);
 
   return (
     <div
@@ -97,6 +139,45 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
         <button className="btn h-6 px-2 text-xs" onClick={() => openStructure(tab.query.schema, tab.query.table)}>
           <TableProperties size={12} aria-hidden /> Structure
         </button>
+        <form
+          role="search"
+          className="ml-1 flex h-6 w-56 min-w-0 items-center rounded-[var(--sv-radius-control)] border border-border-strong bg-paper focus-within:border-focus-ring"
+          onSubmit={(e) => {
+            e.preventDefault();
+            applySearch(searchDraft.trim());
+          }}
+        >
+          <Search size={12} className="mx-1.5 shrink-0 text-faint" aria-hidden />
+          <input
+            aria-label="Search all text columns"
+            className="h-full min-w-0 flex-1 bg-transparent text-xs"
+            // The surrounding form draws the focus ring (focus-within); the global :focus-visible ring would double it.
+            style={{ outline: "none" }}
+            placeholder="Search all text columns…"
+            value={searchDraft}
+            spellCheck={false}
+            onChange={(e) => setSearchDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Escape") return;
+              e.preventDefault();
+              setSearchDraft("");
+              applySearch("");
+            }}
+          />
+          {searchDraft !== "" && (
+            <button
+              type="button"
+              className="icon-btn mr-0.5 h-5 w-5"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearchDraft("");
+                applySearch("");
+              }}
+            >
+              <X size={11} />
+            </button>
+          )}
+        </form>
         <span className="flex-1" />
         <span className="px-1 text-xs text-muted tabular-nums" aria-live="polite">
           {data.counting ? (
@@ -137,12 +218,28 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
           {exporting ? <LoaderCircle size={12} className="animate-spin" aria-hidden /> : <FileDown size={12} aria-hidden />} Export CSV
         </button>
         <button
+          className={`icon-btn ${recordRow !== null ? "bg-surface-2 text-ink" : ""}`}
+          aria-label="Toggle record view"
+          aria-pressed={recordRow !== null}
+          title="Record view: the selected row as a form"
+          disabled={recordRow === null && !selected}
+          onClick={() => {
+            setInspecting(null);
+            setRecordRow((cur) => (cur !== null ? null : (selected?.row ?? null)));
+          }}
+        >
+          <Rows3 size={14} />
+        </button>
+        <button
           className={`icon-btn ${inspecting ? "bg-surface-2 text-ink" : ""}`}
           aria-label="Toggle cell inspector"
           aria-pressed={inspecting !== null}
           title="Cell inspector (double-click or ↵ on a cell)"
           disabled={!inspecting && !selected}
-          onClick={() => setInspecting((cur) => (cur ? null : selected))}
+          onClick={() => {
+            setRecordRow(null);
+            setInspecting((cur) => (cur ? null : selected));
+          }}
         >
           <PanelRight size={14} />
         </button>
@@ -175,14 +272,20 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
               onSelectCell={(c) => {
                 setSelected(c);
                 if (c && inspecting) setInspecting(c);
+                if (c && recordRow !== null) setRecordRow(c.row);
               }}
-              onOpenCell={setInspecting}
+              onOpenCell={(c) => {
+                setRecordRow(null);
+                setInspecting(c);
+              }}
               insertTarget={{ schema: tab.query.schema, table: tab.query.table }}
               copyPage={buildPageRequest(connId, tab.query, null)}
               rowChanges={edits.rowChanges}
               onSelectedRows={setSelectedRows}
               onEditCell={!readOnly && !edits.reason && !data.loading ? (c) => { pinTab(tab.id); void edits.start(c); } : undefined}
-              onFollowReference={edits.count ? undefined : (target, value) => appStore.getState().openReferenced(connId, target, value)}
+              onFollowReference={openRows}
+              rowMenuItems={rowMenuItems}
+              focusCell={focusCell}
             />
           ) : (
             data.loading && (
@@ -215,6 +318,21 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
             col={inspecting.col}
             truncated={truncatedSet.has(`${inspecting.row}:${inspecting.col}`)}
             onClose={() => setInspecting(null)}
+          />
+        )}
+        {recordRow !== null && data.rows[recordRow] && (
+          <RecordView
+            connId={connId}
+            schema={tab.query.schema}
+            table={tab.query.table}
+            columns={data.columns}
+            rows={data.rows}
+            row={recordRow}
+            truncatedCols={truncatedCols(recordRow)}
+            referencing={referencing}
+            onMove={moveRecord}
+            onClose={() => setRecordRow(null)}
+            onOpenRows={openRows}
           />
         )}
       </div>
