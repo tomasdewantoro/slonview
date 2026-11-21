@@ -1,10 +1,7 @@
-// Labels and actions for the sidebar's Sequences, Types, Triggers and Extensions groups.
-import { api, errorMessage } from "../../api";
+// Labels for the sidebar's Sequences, Types, Triggers and Extensions groups.
 import type { ExtensionInfo } from "../../bindings/ExtensionInfo";
-import type { ObjectKind } from "../../bindings/ObjectKind";
 import type { SequenceInfo } from "../../bindings/SequenceInfo";
 import type { TriggerInfo } from "../../bindings/TriggerInfo";
-import { appStore } from "../../store/app";
 
 /** Last value as shown in the tree: "?" when the role may not read it, "–" before first use. */
 export function sequenceValue(s: SequenceInfo): string {
@@ -23,20 +20,4 @@ export function filterExtensions(extensions: ExtensionInfo[], query: string): Ex
   const q = query.trim().toLowerCase();
   if (!q) return extensions;
   return extensions.filter((e) => e.name.toLowerCase().includes(q));
-}
-
-/** Loads an object's SQL text into a new SQL tab titled `title`; errors become a toast. */
-export async function openObject(kind: ObjectKind, oid: number, name: string, title: string): Promise<void> {
-  const connectedId = () => {
-    const c = appStore.getState().conn;
-    return c?.status === "connected" ? c.profileId : null;
-  };
-  const connId = connectedId();
-  if (!connId) return;
-  try {
-    const sql = await api.getObjectDefinition(connId, kind, oid);
-    if (connectedId() === connId) appStore.getState().openSql(sql, title);
-  } catch (e) {
-    if (connectedId() === connId) appStore.getState().pushToast("error", `Couldn't load the definition of ${name}: ${errorMessage(e)}`);
-  }
 }

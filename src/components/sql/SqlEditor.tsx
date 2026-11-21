@@ -141,12 +141,16 @@ interface SqlEditorProps {
   onExplain: () => void;
   /** Return true when a running query was cancelled (consumes Esc). */
   onCancel: () => boolean;
+  /** Called on every change to the document. */
+  onEdit?: () => void;
+  /** False once the tab is gone, so an unmount does not write its text back. */
+  keepText?: () => boolean;
 }
 
-export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, onRun, onExplain, onCancel }: SqlEditorProps) {
+export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, onRun, onExplain, onCancel, onEdit, keepText }: SqlEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const handlers = useRef({ onRun, onExplain, onCancel });
-  handlers.current = { onRun, onExplain, onCancel };
+  const handlers = useRef({ onRun, onExplain, onCancel, onEdit, keepText });
+  handlers.current = { onRun, onExplain, onCancel, onEdit, keepText };
   const columnsRef = useRef(columns);
   columnsRef.current = columns;
   const language = useRef(new Compartment());
@@ -184,6 +188,7 @@ export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, on
           errorField,
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return;
+            handlers.current.onEdit?.();
             window.clearTimeout(saveTimer);
             saveTimer = window.setTimeout(save, 300);
           }),
@@ -194,7 +199,7 @@ export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, on
     window.addEventListener("pagehide", save);
     return () => {
       window.removeEventListener("pagehide", save);
-      if (saveTimer !== undefined) save();
+      if (saveTimer !== undefined && (handlers.current.keepText?.() ?? true)) save();
       view.destroy();
       viewRef.current = null;
     };

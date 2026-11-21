@@ -7,7 +7,7 @@ import type { SchemaNode } from "../../bindings/SchemaNode";
 import { isDataModifying } from "../../lib/plan";
 import { formatElapsed } from "../../lib/sqlResult";
 import { pgPositionToOffset, statementAt } from "../../lib/sqlSplit";
-import { useApp } from "../../store/app";
+import { appStore, sqlEditorKey, useApp, wasTabDisposed } from "../../store/app";
 import { ConfirmDialog } from "../Dialog";
 import { HistoryPanel } from "./HistoryPanel";
 import { ResultsPanel, type RunOutcome } from "./ResultsPanel";
@@ -85,6 +85,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
   const execute = useCallback(
     async (executed: Executed, action: Action = { kind: "run" }) => {
       if (runningRef.current || executed.text.trim() === "") return;
+      appStore.getState().pinTab(tabId);
       const run: Running = { requestId: newRequestId(), startedAt: Date.now() };
       const runId = ++runCounter.current;
       runningRef.current = run;
@@ -121,7 +122,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
         if (action.kind === "run") setHistoryVersion((v) => v + 1);
       }
     },
-    [connId, maxRows],
+    [connId, maxRows, tabId],
   );
 
   /** Selection, else the statement at the cursor, else nothing. */
@@ -305,13 +306,15 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
           <div style={{ height: `${split * 100}%` }} className="min-h-0 shrink-0">
             <SqlEditor
               viewRef={viewRef}
-              storageKey={`slonview.sql.${tabId}`}
+              storageKey={sqlEditorKey(tabId)}
               initialSql={initialSql ?? ""}
               schema={schema}
               columns={columns}
               onRun={runFromEditor}
               onExplain={explainFromEditor}
               onCancel={cancel}
+              onEdit={() => appStore.getState().pinTab(tabId)}
+              keepText={() => !wasTabDisposed(tabId)}
             />
           </div>
           <div

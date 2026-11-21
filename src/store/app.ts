@@ -8,6 +8,7 @@ import type { ConnProfile } from "../bindings/ConnProfile";
 import type { Cursor } from "../bindings/Cursor";
 import type { ExtensionInfo } from "../bindings/ExtensionInfo";
 import type { FunctionInfo } from "../bindings/FunctionInfo";
+import type { ObjectKind } from "../bindings/ObjectKind";
 import type { Relation } from "../bindings/Relation";
 import type { SchemaNode } from "../bindings/SchemaNode";
 import type { ServerInfo } from "../bindings/ServerInfo";
@@ -21,26 +22,32 @@ export interface ConnState {
   server: ServerInfo | null;
 }
 
-export interface TableTab {
+/** How a sidebar item opens: a preview tab (replaced by the next preview) or a pinned one. */
+export type OpenMode = "preview" | "pinned";
+
+interface TabBase {
   id: string;
-  kind: "table";
   title: string;
+  /** Preview tab (VS Code model): at most one per connection; the next preview open replaces it. */
+  preview: boolean;
+}
+
+export interface TableTab extends TabBase {
+  kind: "table";
   query: TableQuery;
 }
 
-export interface StructureTab {
-  id: string;
+export interface StructureTab extends TabBase {
   kind: "structure";
-  title: string;
   schema: string;
   table: string;
 }
 
-export interface SqlTabInfo {
-  id: string;
+export interface SqlTabInfo extends TabBase {
   kind: "sql";
-  title: string;
   initialSql?: string;
+  /** Object the tab shows (`fn:<oid>`, `obj:<kind>:<oid>`); a repeat open activates it instead of refetching. */
+  source?: string;
 }
 
 export type Tab = TableTab | StructureTab | SqlTabInfo;
@@ -97,12 +104,17 @@ export interface AppState {
   loadTree(): Promise<void>;
   setTimeZone(timeZone: string | null): Promise<void>;
 
-  openTable(schema: string, table: string): void;
-  openStructure(schema: string, table: string): void;
-  /** New SQL tab; `title` defaults to "Query N". */
+  /** Sidebar opens take a mode; explicit commands (context menu, Structure button) default to pinned. */
+  openTable(schema: string, table: string, mode?: OpenMode): void;
+  openStructure(schema: string, table: string, mode?: OpenMode): void;
+  /** New pinned SQL tab; `title` defaults to "Query N". */
   openSql(initialSql?: string, title?: string): void;
-  /** New SQL tab holding the function's definition; errors become a toast. */
-  openFunction(fn: FunctionInfo): Promise<void>;
+  /** SQL tab holding the function's definition (one fetch per function at a time); errors become a toast. */
+  openFunction(fn: FunctionInfo, mode?: OpenMode): Promise<void>;
+  /** SQL tab holding a sequence/type/trigger/extension definition; errors become a toast. */
+  openObject(kind: ObjectKind, oid: number, name: string, title: string, mode?: OpenMode): Promise<void>;
+  /** Turns a preview tab into a normal one, in place. No-op for pinned tabs. */
+  pinTab(id: string): void;
   closeTab(id: string): void;
   activateTab(id: string): void;
   activateTabIndex(index: number): void;
@@ -163,12 +175,27 @@ export function readPersistedTabs(storage: Storage, connId: string): PersistedTa
     const raw = storage.getItem(tabsKey(connId));
     if (!raw) return { tabs: [], activeTabId: null };
     const parsed = JSON.parse(raw) as Partial<PersistedTabs>;
-    const tabs = Array.isArray(parsed.tabs) ? parsed.tabs.filter(isTab) : [];
+    // Tabs saved before preview tabs existed have no flag and load pinned; at most one stays a preview.
+    let previewSeen = false;
+    const tabs = (Array.isArray(parsed.tabs) ? parsed.tabs.filter(isTab) : []).map((t) => {
+      const preview = t.preview === true && !previewSeen;
+      previewSeen ||= preview;
+      return { ...t, preview };
+    });
     const activeTabId = tabs.some((t) => t.id === parsed.activeTabId) ? (parsed.activeTabId as string) : (tabs[0]?.id ?? null);
     return { tabs, activeTabId };
   } catch {
     return { tabs: [], activeTabId: null };
   }
+}
+
+/** localStorage key of a SQL tab's editor text. */
+export const sqlEditorKey = (tabId: string) => `slonview.sql.${tabId}`;
+
+/** Tabs closed or replaced this session. Their editors must not write text back on unmount. */
+const disposedTabs = new Set<string>();
+export function wasTabDisposed(tabId: string): boolean {
+  return disposedTabs.has(tabId);
 }
 
 /** Tab title for a function: `name(args)`, schema-qualified outside public, args shortened to fit a tab. */
@@ -224,9 +251,88 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       if (d.counting && d.countRequestId) api.cancelQuery(d.countRequestId).catch(ignore);
     };
 
+    /** Cancels a tab's requests and forgets its editor text; returns tableData without it. Shared by close and preview replacement. */
+    const disposeTab = (id: string): Record<string, TableData> => {
+      const { [id]: dropped, ...rest } = get().tableData;
+      cancelInFlight(dropped);
+      storage.removeItem(sqlEditorKey(id));
+      disposedTabs.add(id);
+      return rest;
+    };
+
+    /** Explicit new tab (Cmd+T, New SQL query): pinned, at the end. */
     const addTab = (tab: Tab) => {
       set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id }));
       persistTabs();
+    };
+
+    /** Bumped by every preview open, so a slow definition fetch can tell a newer preview superseded it. */
+    let previewSeq = 0;
+
+    /**
+     * Opens a sidebar item (VS Code preview model). An open tab for the item is activated, and
+     * pinned when `mode` is pinned. Otherwise a preview open replaces the preview tab in place;
+     * with no preview tab, the new tab goes right after the active one.
+     */
+    const openItem = (matches: (t: Tab) => boolean, make: (id: string) => Tab, mode: OpenMode) => {
+      if (mode === "preview") previewSeq++;
+      const { tabs, activeTabId } = get();
+      const existing = tabs.find(matches);
+      if (existing) {
+        const pin = mode === "pinned" && existing.preview;
+        set({ activeTabId: existing.id, tabs: pin ? tabs.map((t) => (t === existing ? { ...t, preview: false } : t)) : tabs });
+        persistTabs();
+        return;
+      }
+      const tab: Tab = { ...make(newRequestId()), preview: mode === "preview" };
+      const previewIdx = mode === "preview" ? tabs.findIndex((t) => t.preview) : -1;
+      if (previewIdx >= 0) {
+        const tableData = disposeTab(tabs[previewIdx].id);
+        set({ tabs: tabs.map((t, i) => (i === previewIdx ? tab : t)), activeTabId: tab.id, tableData });
+      } else {
+        const at = tabs.findIndex((t) => t.id === activeTabId) + 1 || tabs.length;
+        set({ tabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)], activeTabId: tab.id });
+      }
+      persistTabs();
+    };
+
+    /** In-flight definition fetches by `connId\0source`. `pinned` records a double-click that arrived meanwhile; `seq` the latest preview open of it. */
+    const definitionLoads = new Map<string, { pinned: boolean; seq: number; done: Promise<void> }>();
+
+    /** Opens an object's definition as a SQL tab keyed by `source`; one fetch per source at a time. */
+    const openDefinition = (source: string, title: string, name: string, mode: OpenMode, fetch: (connId: string) => Promise<string>): Promise<void> => {
+      const connId = connectedId();
+      if (!connId) return Promise.resolve();
+      const matches = (t: Tab) => t.kind === "sql" && t.source === source;
+      const open = get().tabs.find(matches);
+      if (open) {
+        openItem(matches, () => open, mode);
+        return Promise.resolve();
+      }
+      if (mode === "preview") previewSeq++;
+      const key = `${connId}\u0000${source}`;
+      const inflight = definitionLoads.get(key);
+      if (inflight) {
+        if (mode === "pinned") inflight.pinned = true;
+        else inflight.seq = previewSeq;
+        return inflight.done;
+      }
+      const entry = { pinned: mode === "pinned", seq: previewSeq, done: Promise.resolve() };
+      definitionLoads.set(key, entry);
+      entry.done = (async () => {
+        try {
+          const sql = await fetch(connId);
+          if (connectedId() !== connId) return;
+          // A newer preview open (another item clicked meanwhile) wins over this one; a pending pin always opens.
+          if (!entry.pinned && entry.seq !== previewSeq) return;
+          openItem(matches, (id) => ({ id, kind: "sql", title, initialSql: sql, source, preview: false }), entry.pinned ? "pinned" : "preview");
+        } catch (e) {
+          if (connectedId() === connId) get().pushToast("error", `Couldn't load the definition of ${name}: ${errorMessage(e)}`);
+        } finally {
+          definitionLoads.delete(key);
+        }
+      })();
+      return entry.done;
     };
 
     return {
@@ -347,49 +453,49 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         }
       },
 
-      openTable(schema, table) {
-        const existing = get().tabs.find((t) => t.kind === "table" && t.query.schema === schema && t.query.table === table);
-        if (existing) return get().activateTab(existing.id);
-        addTab({
-          id: newRequestId(),
-          kind: "table",
-          title: relationTitle(schema, table),
-          query: { schema, table, filters: [], rawWhere: "", sort: [] },
-        });
+      openTable(schema, table, mode = "pinned") {
+        openItem(
+          (t) => t.kind === "table" && t.query.schema === schema && t.query.table === table,
+          (id) => ({ id, kind: "table", title: relationTitle(schema, table), query: { schema, table, filters: [], rawWhere: "", sort: [] }, preview: false }),
+          mode,
+        );
       },
 
-      openStructure(schema, table) {
-        const existing = get().tabs.find((t) => t.kind === "structure" && t.schema === schema && t.table === table);
-        if (existing) return get().activateTab(existing.id);
-        addTab({ id: newRequestId(), kind: "structure", title: relationTitle(schema, table), schema, table });
+      openStructure(schema, table, mode = "pinned") {
+        openItem(
+          (t) => t.kind === "structure" && t.schema === schema && t.table === table,
+          (id) => ({ id, kind: "structure", title: relationTitle(schema, table), schema, table, preview: false }),
+          mode,
+        );
       },
 
       openSql(initialSql, title) {
         if (!connectedId()) return;
         const n = get().tabs.filter((t) => t.kind === "sql").length + 1;
-        addTab({ id: newRequestId(), kind: "sql", title: title ?? `Query ${n}`, initialSql });
+        addTab({ id: newRequestId(), kind: "sql", title: title ?? `Query ${n}`, initialSql, preview: false });
       },
 
-      async openFunction(fn) {
-        const connId = connectedId();
-        if (!connId) return;
-        try {
-          const sql = await api.getFunctionDefinition(connId, fn.oid);
-          if (connectedId() === connId) get().openSql(sql, functionTitle(fn));
-        } catch (e) {
-          if (connectedId() === connId) get().pushToast("error", `Couldn't load the definition of ${fn.name}: ${errorMessage(e)}`);
-        }
+      openFunction(fn, mode = "pinned") {
+        return openDefinition(`fn:${fn.oid}`, functionTitle(fn), fn.name, mode, (connId) => api.getFunctionDefinition(connId, fn.oid));
+      },
+
+      openObject(kind, oid, name, title, mode = "pinned") {
+        return openDefinition(`obj:${kind}:${oid}`, title, name, mode, (connId) => api.getObjectDefinition(connId, kind, oid));
+      },
+
+      pinTab(id) {
+        if (!get().tabs.some((t) => t.id === id && t.preview)) return;
+        set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, preview: false } : t)) }));
+        persistTabs();
       },
 
       closeTab(id) {
-        const { tabs, activeTabId, tableData } = get();
+        const { tabs, activeTabId } = get();
         const idx = tabs.findIndex((t) => t.id === id);
         if (idx < 0) return;
-        cancelInFlight(tableData[id]);
         const nextTabs = tabs.filter((t) => t.id !== id);
         const nextActive = activeTabId === id ? (nextTabs[Math.min(idx, nextTabs.length - 1)]?.id ?? null) : activeTabId;
-        const { [id]: _dropped, ...rest } = tableData;
-        set({ tabs: nextTabs, activeTabId: nextActive, tableData: rest });
+        set({ tabs: nextTabs, activeTabId: nextActive, tableData: disposeTab(id) });
         persistTabs();
       },
 
@@ -412,7 +518,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
 
       setTableQuery(tabId, patch) {
         set((s) => ({
-          tabs: s.tabs.map((t) => (t.id === tabId && t.kind === "table" ? { ...t, query: { ...t.query, ...patch } } : t)),
+          tabs: s.tabs.map((t) => (t.id === tabId && t.kind === "table" ? { ...t, query: { ...t.query, ...patch }, preview: false } : t)),
         }));
         persistTabs();
         void get().loadFirst(tabId);
@@ -495,6 +601,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         const connId = connectedId();
         const d = get().tableData[tabId];
         if (!tab || !connId || !d) return;
+        get().pinTab(tabId);
         if (d.counting && d.countRequestId) api.cancelQuery(d.countRequestId).catch(ignore);
         const rid = newRequestId();
         patchData(tabId, { countRequestId: rid, counting: true, countError: null });

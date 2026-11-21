@@ -14,6 +14,7 @@ import puppeteer from "puppeteer-core";
 const URL = process.env.SLONVIEW_UI_URL ?? "http://localhost:1450/";
 const BRIDGE = "http://127.0.0.1:1499/invoke/";
 const SHOTS = process.env.SLONVIEW_E2E_SHOTS ?? "/tmp/slonview-e2e";
+const PREVIEW_SHOTS = process.env.SLONVIEW_PREVIEW_SHOTS ?? "/tmp/slonview-preview";
 const CHROME =
   process.env.CHROME ??
   `${homedir()}/Library/Caches/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-mac-arm64/chrome-headless-shell`;
@@ -74,13 +75,36 @@ const clickText = async (label, sel = "button") => {
   );
   assert(ok, `no ${sel} "${label}"`);
 };
-const openRel = async (name, schema = "public") => {
-  const ok = await page.evaluate((nm) => {
-    const b = [...document.querySelectorAll('[role="group"] button[role="treeitem"]')].find((x) => x.querySelector("span")?.textContent === nm);
-    b?.click();
-    return !!b;
-  }, name);
+/** Clicks a relation in the tree like a mouse does: `detail` 1 (preview), or 1, 2 + dblclick when `keep`. */
+const clickRel = async (name, keep = false) => {
+  const ok = await page.evaluate(
+    (nm, keep) => {
+      const b = [...document.querySelectorAll('[role="group"] button[role="treeitem"]')].find((x) => x.querySelector("span")?.textContent === nm);
+      if (!b) return false;
+      b.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+      if (keep) {
+        b.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
+        b.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+      }
+      return true;
+    },
+    name,
+    keep,
+  );
   assert(ok, `relation ${name} not in tree`);
+};
+/** Tab strip as "title" / "title*" (preview, rendered italic). */
+const tabStrip = () =>
+  page.$$eval('[role="tab"]', (tabs) =>
+    tabs.map((t) => {
+      const italic = getComputedStyle(t.querySelector("span.truncate")).fontStyle === "italic";
+      if (italic !== t.hasAttribute("data-preview")) throw new Error(`italic/preview mismatch on ${t.innerText}`);
+      return `${t.innerText.trim()}${italic ? "*" : ""}`;
+    }),
+  );
+/** Opens a relation as a preview tab, or a kept (pinned) one with `{ keep: true }`. */
+const openRel = async (name, schema = "public", { keep = false } = {}) => {
+  await clickRel(name, keep);
   const title = schema === "public" ? name : `${schema}.${name}`;
   await until((t) => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === t, 10000, title);
   // The footer SQL names this relation and its grid is mounted.
@@ -199,6 +223,42 @@ try {
     });
     await until(() => document.querySelectorAll('[role="group"] button[role="treeitem"]').length > 5);
     return "schema tree loaded";
+  });
+
+  await check("Preview tabs: click previews, double-click and filters keep", async () => {
+    eq((await tabStrip()).length, 0, "no tabs before the check");
+    await openRel("orders");
+    await openRel("customers");
+    eq(JSON.stringify(await tabStrip()), JSON.stringify(["customers*"]), "second click replaced the preview");
+    const label = await page.$eval('[role="tab"]', (t) => `${t.getAttribute("aria-label")} | ${t.title}`);
+    assert(label.includes("Preview, double-click to keep open"), `preview hint missing: ${label}`);
+    await clickRel("customers", true);
+    await until(() => !document.querySelector('[role="tab"][data-preview]'), 5000);
+    eq(JSON.stringify(await tabStrip()), JSON.stringify(["customers"]), "double-click kept customers");
+    await openRel("no_pk");
+    eq(JSON.stringify(await tabStrip()), JSON.stringify(["customers", "no_pk*"]), "new preview after the kept tab");
+    mkdirSync(PREVIEW_SHOTS, { recursive: true });
+    for (const scheme of ["light", "dark"]) {
+      await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: scheme }]);
+      await sleep(300);
+      await page.screenshot({ path: `${PREVIEW_SHOTS}/tabs-${scheme}.png` });
+      const box = await (await page.$('[role="tablist"]')).boundingBox();
+      await page.screenshot({ path: `${PREVIEW_SHOTS}/tabs-strip-${scheme}.png`, clip: { x: box.x, y: box.y, width: 520, height: box.height } });
+    }
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
+    await ensureFilterBar();
+    await page.type('input[aria-label="Raw WHERE expression"]', "a > 1");
+    await page.keyboard.press("Enter");
+    await until(() => !document.querySelector('[role="tab"][data-preview]'), 5000);
+    eq(JSON.stringify(await tabStrip()), JSON.stringify(["customers", "no_pk"]), "filtering kept no_pk");
+    // Back to no tabs so the filtered no_pk does not leak into later checks.
+    for (let i = 0; i < 2; i++) {
+      await page.keyboard.down("Meta");
+      await page.keyboard.press("w");
+      await page.keyboard.up("Meta");
+    }
+    await until(() => document.querySelectorAll('[role="tab"]').length === 0, 5000);
+    return `orders then customers: [customers*]; double-click: [customers]; no_pk: [customers, no_pk*]; filter: [customers, no_pk]; shots in ${PREVIEW_SHOTS}`;
   });
 
   await check("E2E-03 scroll orders to 200k", async () => {
@@ -435,17 +495,21 @@ try {
 
   await check("E2E-10 rapidly click 5 tables", async () => {
     const names = ["customers", "events", "no_pk", "composite_pk", "order_totals"];
+    const before = await tabStrip();
     await page.evaluate((names) => {
       const btns = [...document.querySelectorAll('[role="group"] button[role="treeitem"]')];
-      for (const nm of names) btns.find((b) => b.querySelector("span")?.textContent === nm).click();
+      for (const nm of names) btns.find((b) => b.querySelector("span")?.textContent === nm).dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
     }, names);
     await sleep(1500);
     const active = await page.evaluate(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim());
     eq(active, "order_totals", "active tab");
     assert((await footerSql()).includes('"public"."order_totals"'), "grid shows another table");
+    const after = await tabStrip();
+    eq(after.filter((t) => t.endsWith("*")).join(), "order_totals*", "exactly one preview tab");
+    eq(after.length, before.filter((t) => !t.endsWith("*")).length + 1, "kept tabs plus one preview");
     const cols = await bridge("describe_table", { connId, schema: "public", table: "order_totals" });
     await page.screenshot({ path: `${SHOTS}/10-rapid.png` });
-    return `active order_totals; grid SQL targets order_totals (${cols.columns.length} cols)`;
+    return `active order_totals, the only preview tab (${after.length} tabs); grid SQL targets order_totals (${cols.columns.length} cols)`;
   });
 
   await check("A Cmd+T / Cmd+W shortcuts", async () => {
@@ -547,18 +611,19 @@ try {
   });
 
   await check("A reload restores tabs and SQL editor text", async () => {
-    const before = await page.evaluate(() => ({
-      tabs: [...document.querySelectorAll('[role="tab"]')].map((t) => t.innerText.trim()),
-      active: document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim(),
-    }));
+    const before = {
+      tabs: await tabStrip(),
+      active: await page.evaluate(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim()),
+    };
+    assert(before.tabs.some((t) => t.endsWith("*")), `no preview tab to restore: ${before.tabs}`);
     await sleep(500); // editor save debounce
     await page.reload({ waitUntil: "networkidle0" });
     await until(() => document.querySelectorAll('[role="tab"]').length > 0, 15000);
-    const after = await page.evaluate(() => ({
-      tabs: [...document.querySelectorAll('[role="tab"]')].map((t) => t.innerText.trim()),
-      active: document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim(),
-    }));
-    eq(JSON.stringify(after), JSON.stringify(before), "tabs");
+    const after = {
+      tabs: await tabStrip(),
+      active: await page.evaluate(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim()),
+    };
+    eq(JSON.stringify(after), JSON.stringify(before), "tabs (with preview flag)");
     await activateTab("Query 1");
     eq(await page.$eval(".cm-content", (e) => e.innerText.trim()), "SELECT * FROM orders", "editor text");
     return `${after.tabs.length} tabs restored, active ${after.active}; editor text restored`;

@@ -1,5 +1,14 @@
 import { ChevronDown, ChevronRight, type LucideIcon } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
+import type { OpenMode } from "../../store/app";
+
+/**
+ * Open mode of a tree item click: a single mouse click previews; the second click of a
+ * double-click (`detail` 2+) and Enter/Space (`detail` 0, keyboard users have no double-click) pin.
+ */
+export function clickMode(e: MouseEvent): OpenMode {
+  return e.detail === 1 ? "preview" : "pinned";
+}
 
 /** Indentation per depth: group header and its rows. Depth 0 = database level, 1 = inside a schema. */
 const PAD = [
@@ -50,7 +59,8 @@ interface RowProps {
   value?: string;
   title: string;
   depth: 0 | 1;
-  onOpen: () => void;
+  /** Click previews, double-click / Enter / Space pins. */
+  onOpen: (mode: OpenMode) => void;
   onMenu: (e: MouseEvent) => void;
 }
 
@@ -62,7 +72,7 @@ export function ObjectRow({ icon: Icon, kind, accent, name, detail, value, title
       aria-selected={false}
       className={`flex w-full items-center gap-1.5 py-[3px] pr-2 ${PAD[depth].row} text-left hover:bg-surface-2`}
       title={title}
-      onClick={onOpen}
+      onClick={(e) => onOpen(clickMode(e))}
       onContextMenu={(e) => {
         e.preventDefault();
         onMenu(e);
