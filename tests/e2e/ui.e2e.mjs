@@ -696,6 +696,49 @@ try {
     return out.join("; ");
   });
 
+  await check("Status-bar time zone switch applies live (no disconnect)", async () => {
+    // The previous check left the fixture connected with Asia/Jakarta. Switch zones purely
+    // from the status bar popover and confirm orders.created_at re-renders without a reconnect.
+    const switchZone = async (zone) => {
+      await page.click('[data-testid="session-tz"]');
+      await until(() => !!document.querySelector('[role="dialog"][aria-label="Session time zone"]'));
+      const ok = await page.evaluate((z) => {
+        const b = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.trim() === z);
+        b?.click();
+        return !!b;
+      }, zone);
+      assert(ok, `no zone option ${zone}`);
+      await until((z) => document.querySelector('[data-testid="session-tz"]')?.innerText.trim() === z, 10000, zone);
+    };
+    const createdSuffix = async () => {
+      for (let attempt = 0; ; attempt++) {
+        await selectRows(0, 0);
+        await page.evaluate(() => (window.__clipboard = ""));
+        await page.keyboard.down("Meta");
+        await page.keyboard.press("c");
+        await page.keyboard.up("Meta");
+        try {
+          await until(() => (window.__clipboard ?? "").includes("\n"), 2000);
+          break;
+        } catch (e) {
+          if (attempt === 3) throw e;
+        }
+      }
+      const [header, row] = (await page.evaluate(() => window.__clipboard)).split("\n");
+      return row.split("\t")[header.split("\t").indexOf("created_at")];
+    };
+    const out = [];
+    for (const [zone, suffix] of [["UTC", "+00"], ["Asia/Jakarta", "+07"]]) {
+      await switchZone(zone);
+      eq((await bridge("list_profiles")).find((p) => p.id === connId).timeZone, zone, "profile timeZone persisted without reconnect");
+      const createdAt = await createdSuffix();
+      assert(createdAt?.endsWith(suffix), `${zone}: created_at ${createdAt} does not end with ${suffix}`);
+      out.push(`${zone}: ${createdAt}`);
+    }
+    await page.screenshot({ path: `${SHOTS}/A-time-zone-status-bar.png` });
+    return out.join("; ");
+  });
+
   await check("A UI layout: dark + light at 1100x700", async () => {
     const out = [];
     for (const scheme of ["dark", "light"]) {

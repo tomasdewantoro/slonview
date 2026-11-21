@@ -73,6 +73,17 @@ impl Engine {
         Ok(info)
     }
 
+    /// Atomically swaps the pool so a new session time zone applies without a full
+    /// disconnect; checked-out sessions and all open tabs keep working. The change is
+    /// persisted only after the new settings connect successfully.
+    pub async fn set_time_zone(&self, conn_id: ConnId, time_zone: Option<String>) -> AppResult<Vec<ConnProfile>> {
+        let mut profile = self.profiles.get(conn_id)?;
+        profile.time_zone = time_zone.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+        let password = self.secrets.get(conn_id)?;
+        self.connect_with(profile.clone(), password.as_deref()).await?;
+        self.profiles.upsert(profile)
+    }
+
     pub async fn disconnect(&self, conn_id: ConnId) -> AppResult<()> {
         if let Some(session) = self.sessions_write().remove(&conn_id) {
             session.pool.close();

@@ -206,6 +206,10 @@ pub async fn explain(
     engine.explain(request_id, conn_id, sql, analyze).await
 }
 
+pub async fn set_time_zone(engine: &Engine, conn_id: ConnId, time_zone: Option<String>) -> AppResult<Vec<ConnProfile>> {
+    engine.set_time_zone(conn_id, time_zone).await
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

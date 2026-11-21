@@ -95,6 +95,7 @@ export interface AppState {
   connect(id: string): Promise<void>;
   disconnect(): Promise<void>;
   loadTree(): Promise<void>;
+  setTimeZone(timeZone: string | null): Promise<void>;
 
   openTable(schema: string, table: string): void;
   openStructure(schema: string, table: string): void;
@@ -263,6 +264,15 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       async saveProfile(profile, password) {
         const profiles = await api.saveProfile(profile, password);
         set({ profiles, selectedProfileId: profile.id });
+      },
+
+      async setTimeZone(timeZone) {
+        const connId = connectedId();
+        if (!connId) return;
+        const profiles = await api.setTimeZone(connId, timeZone);
+        if (connectedId() !== connId) return;
+        set({ profiles });
+        await Promise.all(get().tabs.filter((tab) => tab.kind === "table").map((tab) => get().loadFirst(tab.id)));
       },
 
       async deleteProfile(id) {
