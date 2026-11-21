@@ -6,6 +6,7 @@ import { api, errorMessage, isAppError, newRequestId } from "../api";
 import type { Column } from "../bindings/Column";
 import type { ConnProfile } from "../bindings/ConnProfile";
 import type { Cursor } from "../bindings/Cursor";
+import type { ExtensionInfo } from "../bindings/ExtensionInfo";
 import type { FunctionInfo } from "../bindings/FunctionInfo";
 import type { Relation } from "../bindings/Relation";
 import type { SchemaNode } from "../bindings/SchemaNode";
@@ -77,6 +78,8 @@ export interface AppState {
   tree: SchemaNode[];
   treeLoading: boolean;
   treeError: unknown | null;
+  /** Installed extensions, loaded with the tree. */
+  extensions: ExtensionInfo[];
   tabs: Tab[];
   activeTabId: string | null;
   tableData: Record<string, TableData>;
@@ -232,6 +235,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       tree: [],
       treeLoading: false,
       treeError: null,
+      extensions: [],
       tabs: [],
       activeTabId: null,
       tableData: {},
@@ -284,6 +288,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
           selectedProfileId: id,
           tree: [],
           treeError: null,
+          extensions: [],
           tabs: [],
           activeTabId: null,
           tableData: {},
@@ -308,7 +313,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         const prev = get().conn;
         if (!prev) return;
         Object.values(get().tableData).forEach(cancelInFlight);
-        set({ conn: null, tree: [], treeError: null, tabs: [], activeTabId: null, tableData: {}, structureNonce: {} });
+        set({ conn: null, tree: [], treeError: null, extensions: [], tabs: [], activeTabId: null, tableData: {}, structureNonce: {} });
         storage.removeItem(LAST_CONN_KEY);
         if (prev.status === "connected") {
           try {
@@ -324,8 +329,8 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         if (!connId) return;
         set({ treeLoading: true, treeError: null });
         try {
-          const tree = await api.listSchemaTree(connId);
-          if (connectedId() === connId) set({ tree, treeLoading: false });
+          const { schemas, extensions } = await api.listSchemaTree(connId);
+          if (connectedId() === connId) set({ tree: schemas, extensions, treeLoading: false });
         } catch (e) {
           if (connectedId() === connId) set({ treeError: e, treeLoading: false });
         }

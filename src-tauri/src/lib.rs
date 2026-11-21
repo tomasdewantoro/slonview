@@ -39,6 +39,7 @@ pub fn run() {
             commands::export::export_csv,
             commands::history::list_history,
             commands::history::clear_history,
+            commands::objects::get_object_definition,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

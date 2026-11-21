@@ -1,13 +1,18 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   AppWindow,
+  Braces,
   ChevronDown,
   ChevronRight,
   Eye,
   Layers,
+  List,
+  ListOrdered,
   LoaderCircle,
+  Puzzle,
   RefreshCw,
   Search,
+  ShieldCheck,
   Sigma,
   SquareFunction,
   SquareStack,
@@ -16,20 +21,26 @@ import {
   Globe,
   Workflow,
   X,
+  Zap,
+  ZapOff,
   type LucideIcon,
 } from "lucide-react";
-import { forwardRef, useMemo, useState } from "react";
+import { forwardRef, useMemo, useState, type MouseEvent } from "react";
 import { errorMessage } from "../api";
 import type { FunctionInfo } from "../bindings/FunctionInfo";
 import type { FunctionKind } from "../bindings/FunctionKind";
+import type { ObjectKind } from "../bindings/ObjectKind";
 import type { Relation } from "../bindings/Relation";
 import type { RelationKind } from "../bindings/RelationKind";
 import type { SchemaNode } from "../bindings/SchemaNode";
-import { appStore, useApp } from "../store/app";
+import type { TypeKind } from "../bindings/TypeKind";
+import { appStore, relationTitle, useApp } from "../store/app";
 import { formatBytes, formatCount, quoteIdent, selectSql } from "../store/queries";
 import { ColorDot, ConnectionList } from "./ConnectionList";
 import { ContextMenu } from "./ContextMenu";
 import { ErrorPanel } from "./ErrorPanel";
+import { filterExtensions, openObject, sequenceValue, triggerSummary } from "./sidebar/objects";
+import { ObjectRow, TreeGroup } from "./sidebar/TreeGroup";
 
 const KIND: Record<RelationKind, { icon: LucideIcon; label: string }> = {
   table: { icon: Table2, label: "table" },
@@ -46,6 +57,12 @@ const FUNCTION_KIND: Record<FunctionKind, { icon: LucideIcon; label: string }> =
   window: { icon: AppWindow, label: "window function" },
 };
 
+const TYPE_KIND: Record<TypeKind, { icon: LucideIcon; label: string }> = {
+  enum: { icon: List, label: "enum" },
+  domain: { icon: ShieldCheck, label: "domain" },
+  composite: { icon: Braces, label: "composite type" },
+};
+
 /** `schema.name(identity args)`: unique among overloads and valid after DROP/ALTER FUNCTION. */
 export function functionSignature(f: FunctionInfo): string {
   const ident = (name: string) => (/^[a-z_][a-z0-9_$]*$/.test(name) ? name : quoteIdent(name));
@@ -53,8 +70,9 @@ export function functionSignature(f: FunctionInfo): string {
 }
 
 /**
- * Case-insensitive substring match on "schema.name" for relations and functions; schemas whose
- * name matches keep everything. Schemas with no match are dropped.
+ * Case-insensitive substring match on "schema.name" for every object (triggers match as
+ * "schema.table.trigger"); schemas whose name matches keep everything. Schemas with no match
+ * are dropped.
  */
 export function filterTree(tree: SchemaNode[], query: string): SchemaNode[] {
   const q = query.trim().toLowerCase();
@@ -62,9 +80,15 @@ export function filterTree(tree: SchemaNode[], query: string): SchemaNode[] {
   const out: SchemaNode[] = [];
   for (const s of tree) {
     const matches = (name: string) => `${s.name}.${name}`.toLowerCase().includes(q);
-    const relations = s.relations.filter((r) => matches(r.name));
-    const functions = s.functions.filter((f) => matches(f.name));
-    if (relations.length || functions.length) out.push({ ...s, relations, functions });
+    const node: SchemaNode = {
+      ...s,
+      relations: s.relations.filter((r) => matches(r.name)),
+      functions: s.functions.filter((f) => matches(f.name)),
+      sequences: s.sequences.filter((x) => matches(x.name)),
+      types: s.types.filter((t) => matches(t.name)),
+      triggers: s.triggers.filter((t) => matches(`${t.table}.${t.name}`)),
+    };
+    if (node.relations.length || node.functions.length || node.sequences.length || node.types.length || node.triggers.length) out.push(node);
   }
   return out;
 }
@@ -110,8 +134,17 @@ export const Sidebar = forwardRef<HTMLInputElement>(function Sidebar(_props, sea
   );
 });
 
+/** Object to open from a row, the context menu or Enter in the filter. */
+interface Openable {
+  kind: ObjectKind;
+  oid: number;
+  name: string;
+  title: string;
+}
+
 const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, searchRef) {
   const tree = useApp((s) => s.tree);
+  const extensions = useApp((s) => s.extensions);
   const loading = useApp((s) => s.treeLoading);
   const error = useApp((s) => s.treeError);
   const activeRel = useApp((s) => {
@@ -122,10 +155,11 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
   });
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  /** Schemas whose Functions group is expanded (collapsed by default). */
-  const [fnOpen, setFnOpen] = useState<Set<string>>(new Set());
+  /** Expanded object groups, keyed "group\0schema" ("extensions" at the top); collapsed by default. */
+  const [groupsOpen, setGroupsOpen] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<Menu | null>(null);
   const filtered = useMemo(() => filterTree(tree, query), [tree, query]);
+  const shownExtensions = useMemo(() => filterExtensions(extensions, query), [extensions, query]);
   const { openTable, openStructure, openSql, openFunction, loadTree } = appStore.getState();
   const searching = query.trim() !== "";
 
@@ -136,6 +170,25 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
       else next.add(name);
       return next;
     });
+  const groupOpen = (key: string) => searching || groupsOpen.has(key);
+  const menuAt = (e: MouseEvent, target: MenuTarget) => setMenu({ x: e.clientX, y: e.clientY, ...target });
+  const open = (o: Openable) => void openObject(o.kind, o.oid, o.name, o.title);
+
+  const openFirstMatch = () => {
+    for (const s of filtered) {
+      const rel = s.relations[0];
+      if (rel) return openTable(rel.schema, rel.name);
+      if (s.functions[0]) return void openFunction(s.functions[0]);
+      const seq = s.sequences[0];
+      if (seq) return open({ kind: "sequence", oid: seq.oid, name: seq.name, title: relationTitle(seq.schema, seq.name) });
+      const ty = s.types[0];
+      if (ty) return open({ kind: "type", oid: ty.oid, name: ty.name, title: relationTitle(ty.schema, ty.name) });
+      const tg = s.triggers[0];
+      if (tg) return open({ kind: "trigger", oid: tg.oid, name: tg.name, title: relationTitle(tg.schema, tg.name) });
+    }
+    const ext = shownExtensions[0];
+    if (ext) open({ kind: "extension", oid: ext.oid, name: ext.name, title: ext.name });
+  };
 
   return (
     <>
@@ -145,17 +198,13 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
           <input
             ref={searchRef}
             className="field h-6 w-full pr-6 pl-7 text-xs"
-            placeholder="Filter tables, functions  ⇧⌘F"
-            aria-label="Filter tables and functions"
+            placeholder="Filter tables, functions, types…  ⇧⌘F"
+            aria-label="Filter schema objects"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") setQuery("");
-              if (e.key === "Enter") {
-                const first = filtered[0];
-                if (first?.relations[0]) openTable(first.relations[0].schema, first.relations[0].name);
-                else if (first?.functions[0]) void openFunction(first.functions[0]);
-              }
+              if (e.key === "Enter") openFirstMatch();
             }}
             spellCheck={false}
           />
@@ -172,23 +221,50 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
       <div role="tree" aria-label="Schemas" className="min-h-0 flex-1 overflow-auto py-1 text-[12.5px]">
         {error != null && <ErrorPanel error={error} onRetry={() => void loadTree()} />}
         {loading && tree.length === 0 && <div className="px-3 py-2 text-muted">Loading schemas…</div>}
-        {!loading && error == null && filtered.length === 0 && (
+        {!loading && error == null && filtered.length === 0 && shownExtensions.length === 0 && (
           <div className="px-3 py-2 text-xs text-muted">{searching ? `Nothing matches "${query.trim()}".` : "This database has no user tables."}</div>
         )}
+        {shownExtensions.length > 0 && (
+          <TreeGroup
+            label="Extensions"
+            ariaLabel={`Extensions, ${shownExtensions.length}`}
+            count={shownExtensions.length}
+            open={groupOpen("extensions")}
+            depth={0}
+            onToggle={() => toggleIn(setGroupsOpen, "extensions")}
+          >
+            {shownExtensions.map((x) => {
+              const target: Openable = { kind: "extension", oid: x.oid, name: x.name, title: x.name };
+              return (
+                <ObjectRow
+                  key={x.oid}
+                  icon={Puzzle}
+                  kind="extension"
+                  name={x.name}
+                  value={x.version}
+                  title={`extension · version ${x.version} · schema ${x.schema}`}
+                  depth={0}
+                  onOpen={() => open(target)}
+                  onMenu={(e) => menuAt(e, { obj: target, label: "Show definition" })}
+                />
+              );
+            })}
+          </TreeGroup>
+        )}
         {filtered.map((s) => {
-          const open = searching || !collapsed.has(s.name);
-          const functionsOpen = searching || fnOpen.has(s.name);
+          const schemaOpen = searching || !collapsed.has(s.name);
+          const key = (group: string) => `${group}\u0000${s.name}`;
           return (
-            <div key={s.name} role="treeitem" aria-expanded={open} aria-selected={false}>
+            <div key={s.name} role="treeitem" aria-expanded={schemaOpen} aria-selected={false}>
               <button
                 className="flex w-full items-center gap-1 px-1.5 py-[3px] text-left text-muted hover:bg-surface-2"
                 onClick={() => toggleIn(setCollapsed, s.name)}
               >
-                {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
+                {schemaOpen ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
                 <span className="truncate font-medium text-ink">{s.name}</span>
                 {s.relations.length > 0 && <span className="ml-auto pr-1.5 text-[11px] text-faint tabular-nums">{s.relations.length}</span>}
               </button>
-              {open && (
+              {schemaOpen && (
                 <div role="group">
                   {s.relations.map((r) => {
                     const k = KIND[r.kind];
@@ -214,44 +290,118 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                     );
                   })}
                   {s.functions.length > 0 && (
-                    <div role="treeitem" aria-expanded={functionsOpen} aria-selected={false}>
-                      <button
-                        className="flex w-full items-center gap-1.5 py-[3px] pr-2 pl-6 text-left text-muted hover:bg-surface-2"
-                        aria-label={`Functions in ${s.name}, ${s.functions.length}`}
-                        onClick={() => toggleIn(setFnOpen, s.name)}
-                      >
-                        {functionsOpen ? <ChevronDown size={13} className="shrink-0" aria-hidden /> : <ChevronRight size={13} className="shrink-0" aria-hidden />}
-                        <span className="min-w-0 flex-1 truncate">Functions</span>
-                        <span className="shrink-0 font-mono text-[11px] text-faint tabular-nums">{s.functions.length}</span>
-                      </button>
-                      {functionsOpen && (
-                        <div role="group">
-                          {s.functions.map((f) => {
-                            const k = FUNCTION_KIND[f.kind];
-                            const Icon = k.icon;
-                            const returns = f.result == null ? "" : ` → ${f.result}`;
-                            return (
-                              <button
-                                key={f.oid}
-                                role="treeitem"
-                                aria-selected={false}
-                                className="flex w-full items-center gap-1.5 py-[3px] pr-2 pl-[43px] text-left hover:bg-surface-2"
-                                title={`${k.label} · ${functionSignature(f)}${returns} · ${f.language}`}
-                                onClick={() => void openFunction(f)}
-                                onContextMenu={(e) => {
-                                  e.preventDefault();
-                                  setMenu({ x: e.clientX, y: e.clientY, fn: f });
-                                }}
-                              >
-                                <Icon size={13} className={`shrink-0 ${f.kind === "function" ? "text-faint" : "text-accent"}`} aria-label={k.label} />
-                                <span className="max-w-[75%] shrink-0 truncate">{f.name}</span>
-                                <span className="min-w-0 flex-1 truncate text-[11.5px] text-faint">({f.args})</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                    <TreeGroup
+                      label="Functions"
+                      ariaLabel={`Functions in ${s.name}, ${s.functions.length}`}
+                      count={s.functions.length}
+                      open={groupOpen(key("functions"))}
+                      depth={1}
+                      onToggle={() => toggleIn(setGroupsOpen, key("functions"))}
+                    >
+                      {s.functions.map((f) => {
+                        const k = FUNCTION_KIND[f.kind];
+                        const returns = f.result == null ? "" : ` → ${f.result}`;
+                        return (
+                          <ObjectRow
+                            key={f.oid}
+                            icon={k.icon}
+                            kind={k.label}
+                            accent={f.kind !== "function"}
+                            name={f.name}
+                            detail={`(${f.args})`}
+                            title={`${k.label} · ${functionSignature(f)}${returns} · ${f.language}`}
+                            depth={1}
+                            onOpen={() => void openFunction(f)}
+                            onMenu={(e) => menuAt(e, { fn: f })}
+                          />
+                        );
+                      })}
+                    </TreeGroup>
+                  )}
+                  {s.sequences.length > 0 && (
+                    <TreeGroup
+                      label="Sequences"
+                      ariaLabel={`Sequences in ${s.name}, ${s.sequences.length}`}
+                      count={s.sequences.length}
+                      open={groupOpen(key("sequences"))}
+                      depth={1}
+                      onToggle={() => toggleIn(setGroupsOpen, key("sequences"))}
+                    >
+                      {s.sequences.map((x) => {
+                        const target: Openable = { kind: "sequence", oid: x.oid, name: x.name, title: relationTitle(x.schema, x.name) };
+                        const last = x.readable ? (x.lastValue ?? "not used yet") : "? (no SELECT or USAGE privilege)";
+                        return (
+                          <ObjectRow
+                            key={x.oid}
+                            icon={ListOrdered}
+                            kind="sequence"
+                            name={x.name}
+                            value={sequenceValue(x)}
+                            title={`sequence · ${x.dataType} · last value ${last}`}
+                            depth={1}
+                            onOpen={() => open(target)}
+                            onMenu={(e) => menuAt(e, { obj: target, label: "Open query" })}
+                          />
+                        );
+                      })}
+                    </TreeGroup>
+                  )}
+                  {s.types.length > 0 && (
+                    <TreeGroup
+                      label="Types"
+                      ariaLabel={`Types in ${s.name}, ${s.types.length}`}
+                      count={s.types.length}
+                      open={groupOpen(key("types"))}
+                      depth={1}
+                      onToggle={() => toggleIn(setGroupsOpen, key("types"))}
+                    >
+                      {s.types.map((t) => {
+                        const k = TYPE_KIND[t.kind];
+                        const target: Openable = { kind: "type", oid: t.oid, name: t.name, title: relationTitle(t.schema, t.name) };
+                        return (
+                          <ObjectRow
+                            key={t.oid}
+                            icon={k.icon}
+                            kind={k.label}
+                            accent={t.kind !== "enum"}
+                            name={t.name}
+                            detail={t.detail}
+                            title={`${k.label} · ${t.detail}`}
+                            depth={1}
+                            onOpen={() => open(target)}
+                            onMenu={(e) => menuAt(e, { obj: target, label: "Show definition" })}
+                          />
+                        );
+                      })}
+                    </TreeGroup>
+                  )}
+                  {s.triggers.length > 0 && (
+                    <TreeGroup
+                      label="Triggers"
+                      ariaLabel={`Triggers in ${s.name}, ${s.triggers.length}`}
+                      count={s.triggers.length}
+                      open={groupOpen(key("triggers"))}
+                      depth={1}
+                      onToggle={() => toggleIn(setGroupsOpen, key("triggers"))}
+                    >
+                      {s.triggers.map((t) => {
+                        const target: Openable = { kind: "trigger", oid: t.oid, name: t.name, title: relationTitle(t.schema, t.name) };
+                        const summary = `${triggerSummary(t)}${t.enabled ? "" : " · disabled"}`;
+                        return (
+                          <ObjectRow
+                            key={t.oid}
+                            icon={t.enabled ? Zap : ZapOff}
+                            kind={t.enabled ? "trigger" : "disabled trigger"}
+                            name={`${t.table}.${t.name}`}
+                            detail={summary}
+                            title={`trigger on ${t.table} · ${summary} · executes ${t.function}()`}
+                            depth={1}
+                            onOpen={() => open(target)}
+                            onMenu={(e) => menuAt(e, { obj: target, label: "Show definition" })}
+                          />
+                        );
+                      })}
+                    </TreeGroup>
                   )}
                 </div>
               )}
@@ -271,12 +421,18 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                   { label: "Structure", onSelect: () => openStructure(menu.rel.schema, menu.rel.name) },
                   { label: "New SQL query", onSelect: () => openSql(selectSql(menu.rel.schema, menu.rel.name)) },
                 ]
-              : [
-                  { label: "Show definition", onSelect: () => void openFunction(menu.fn) },
-                  { separator: true },
-                  { label: "Copy name", onSelect: () => void copy(menu.fn.name) },
-                  { label: "Copy signature", onSelect: () => void copy(functionSignature(menu.fn)) },
-                ]
+              : "fn" in menu
+                ? [
+                    { label: "Show definition", onSelect: () => void openFunction(menu.fn) },
+                    { separator: true },
+                    { label: "Copy name", onSelect: () => void copy(menu.fn.name) },
+                    { label: "Copy signature", onSelect: () => void copy(functionSignature(menu.fn)) },
+                  ]
+                : [
+                    { label: menu.label, onSelect: () => open(menu.obj) },
+                    { separator: true },
+                    { label: "Copy name", onSelect: () => void copy(menu.obj.name) },
+                  ]
           }
         />
       )}
@@ -284,7 +440,8 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
   );
 });
 
-type Menu = { x: number; y: number } & ({ rel: Relation } | { fn: FunctionInfo });
+type MenuTarget = { rel: Relation } | { fn: FunctionInfo } | { obj: Openable; label: string };
+type Menu = { x: number; y: number } & MenuTarget;
 
 async function copy(text: string) {
   try {

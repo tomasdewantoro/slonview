@@ -1,5 +1,5 @@
 //! Schema tree, table description and function definitions.
-use slonview_core::model::{ConnId, SchemaNode, TableDescription};
+use slonview_core::model::{ConnId, SchemaTree, TableDescription};
 use slonview_core::AppResult;
 use tauri::State;
 
@@ -7,7 +7,7 @@ use crate::ops;
 use crate::state::AppState;
 
 #[tauri::command]
-pub async fn list_schema_tree(engine: State<'_, AppState>, conn_id: ConnId) -> AppResult<Vec<SchemaNode>> {
+pub async fn list_schema_tree(engine: State<'_, AppState>, conn_id: ConnId) -> AppResult<SchemaTree> {
     ops::list_schema_tree(&engine, conn_id).await
 }
 

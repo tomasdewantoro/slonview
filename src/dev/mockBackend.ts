@@ -14,7 +14,13 @@ import type { PageRequest } from "../bindings/PageRequest";
 import type { ParsedConn } from "../bindings/ParsedConn";
 import type { QueryResult } from "../bindings/QueryResult";
 import type { RelationKind } from "../bindings/RelationKind";
+import type { ExtensionInfo } from "../bindings/ExtensionInfo";
+import type { ObjectKind } from "../bindings/ObjectKind";
 import type { SchemaNode } from "../bindings/SchemaNode";
+import type { SchemaTree } from "../bindings/SchemaTree";
+import type { SequenceInfo } from "../bindings/SequenceInfo";
+import type { TriggerInfo } from "../bindings/TriggerInfo";
+import type { TypeInfo } from "../bindings/TypeInfo";
 import type { TableDescription } from "../bindings/TableDescription";
 
 const TRUNCATE = 2048;
@@ -463,15 +469,92 @@ const functions: MockFunction[] = [
     "$function$ SELECT \"Region Code\", 0::numeric WHERE include_tax IS NOT NULL $function$"),
 ];
 
-function schemaTree(): SchemaNode[] {
+/** Sidebar objects (sequences, types, triggers, extensions) with the text `get_object_definition` returns. */
+type Mock<T> = T & { definition: string };
+const objOid = (() => {
+  let n = 17_000;
+  return () => n++;
+})();
+const mq = (s: string) => (/^[a-z_][a-z0-9_]*$/.test(s) ? s : `"${s.replace(/"/g, '""')}"`);
+
+function seq(schema: string, name: string, dataType: string, lastValue: string | null, readable = true, ownedBy?: string): Mock<SequenceInfo> {
+  const q = `${mq(schema)}.${mq(name)}`;
+  const max = dataType === "integer" ? "2147483647" : "9223372036854775807";
+  const definition = `-- Sequence ${q}\n--   CREATE SEQUENCE ${q} AS ${dataType}\n--     INCREMENT BY 1 MINVALUE 1 MAXVALUE ${max} START WITH 1 CACHE 1 NO CYCLE;\n${ownedBy ? `--   Owned by ${ownedBy}\n` : ""}SELECT * FROM ${q};\n`;
+  return { oid: objOid(), schema, name, dataType, readable, lastValue: readable ? lastValue : null, definition };
+}
+
+const sequences: Mock<SequenceInfo>[] = [
+  seq("public", "customers_id_seq", "bigint", "1000", true, "public.customers.id"),
+  seq("public", "invoice_number_seq", "integer", "1010"),
+  seq("public", "orders_id_seq", "bigint", "200000", true, "public.orders.id"),
+  seq("audit", "log_id_seq", "bigint", null, false, "audit.log.id"),
+];
+
+const types: Mock<TypeInfo>[] = [
+  {
+    oid: objOid(), schema: "public", name: "money_range", kind: "composite", detail: "low numeric(12,2), high numeric(12,2), currency text",
+    definition: "CREATE TYPE public.money_range AS (\n    low numeric(12,2),\n    high numeric(12,2),\n    currency text COLLATE pg_catalog.\"C\"\n);\n",
+  },
+  {
+    oid: objOid(), schema: "public", name: "order_status", kind: "enum", detail: "pending, paid, shipped, cancelled",
+    definition: "CREATE TYPE public.order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');\n",
+  },
+  {
+    oid: objOid(), schema: "public", name: "positive_amount", kind: "domain", detail: "numeric(12,2) NOT NULL CHECK (VALUE >= 0::numeric)",
+    definition: "CREATE DOMAIN public.positive_amount AS numeric(12,2)\n  DEFAULT 0\n  NOT NULL\n  CONSTRAINT positive_amount_check CHECK (VALUE >= 0::numeric);\n\nCOMMENT ON DOMAIN public.positive_amount IS 'Money amount, never negative';\n",
+  },
+  {
+    oid: objOid(), schema: "Sales Data", name: "Region Kind", kind: "enum", detail: "north, south's, East West",
+    definition: "CREATE TYPE \"Sales Data\".\"Region Kind\" AS ENUM ('north', 'south''s', 'East West');\n",
+  },
+];
+
+const triggers: Mock<TriggerInfo>[] = [
+  {
+    oid: objOid(), schema: "public", table: "customers", name: "customers_email_check", timing: "before", events: ["insert", "update"], forEachRow: true, enabled: true,
+    function: "public.customers_email_check",
+    definition: "CREATE TRIGGER customers_email_check BEFORE INSERT OR UPDATE OF email ON public.customers FOR EACH ROW EXECUTE FUNCTION customers_email_check();\n\n-- Trigger function: public.customers_email_check()\n",
+  },
+  {
+    oid: objOid(), schema: "public", table: "orders", name: "orders_no_truncate", timing: "before", events: ["truncate"], forEachRow: false, enabled: false,
+    function: "public.forbid_truncate",
+    definition: "CREATE TRIGGER orders_no_truncate BEFORE TRUNCATE ON public.orders FOR EACH STATEMENT EXECUTE FUNCTION forbid_truncate();\nALTER TABLE public.orders DISABLE TRIGGER orders_no_truncate;\n\n-- Trigger function: public.forbid_truncate()\n",
+  },
+  {
+    oid: objOid(), schema: "Sales Data", table: 'Weird "Name" Table', name: "Weird Audit", timing: "after", events: ["insert", "delete"], forEachRow: true, enabled: true,
+    function: '"Sales Data"."Weird Audit Fn"',
+    definition: 'CREATE TRIGGER "Weird Audit" AFTER INSERT OR DELETE ON "Sales Data"."Weird ""Name"" Table" FOR EACH ROW EXECUTE FUNCTION "Sales Data"."Weird Audit Fn"();\n\n-- Trigger function: "Sales Data"."Weird Audit Fn"()\n',
+  },
+];
+
+const extensions: Mock<ExtensionInfo>[] = [
+  { oid: objOid(), name: "pg_trgm", version: "1.6", schema: "public", definition: "-- text similarity measurement and index searching based on trigrams\nCREATE EXTENSION pg_trgm WITH SCHEMA public VERSION '1.6';\n" },
+  { oid: objOid(), name: "plpgsql", version: "1.0", schema: "pg_catalog", definition: "-- PL/pgSQL procedural language\nCREATE EXTENSION plpgsql WITH SCHEMA pg_catalog VERSION '1.0';\n" },
+  { oid: objOid(), name: "uuid-ossp", version: "1.1", schema: "public", definition: "-- generate universally unique identifiers (UUIDs)\nCREATE EXTENSION \"uuid-ossp\" WITH SCHEMA public VERSION '1.1';\n" },
+];
+
+const strip = <T,>({ definition: _definition, ...rest }: Mock<T>) => rest as T;
+
+function schemaTree(): SchemaTree {
   const bySchema = new Map<string, SchemaNode>();
   for (const t of tables) {
-    const node = bySchema.get(t.schema) ?? { name: t.schema, relations: [], functions: [] };
+    const node = bySchema.get(t.schema) ?? { name: t.schema, relations: [], functions: [], sequences: [], types: [], triggers: [] };
     node.relations.push({ schema: t.schema, name: t.name, kind: t.kind, estRows: t.name === "broken_table" ? -1 : t.rowCount, sizeBytes: t.sizeBytes });
     bySchema.set(t.schema, node);
   }
   for (const { definition: _definition, ...f } of functions) bySchema.get(f.schema)?.functions.push(f);
-  return [...bySchema.values()].sort((a, b) => a.name.localeCompare(b.name));
+  for (const s of sequences) bySchema.get(s.schema)?.sequences.push(strip(s));
+  for (const t of types) bySchema.get(t.schema)?.types.push(strip(t));
+  for (const t of triggers) bySchema.get(t.schema)?.triggers.push(strip(t));
+  return { schemas: [...bySchema.values()].sort((a, b) => a.name.localeCompare(b.name)), extensions: extensions.map(strip) };
+}
+
+function objectDefinition(kind: ObjectKind, oid: number): string {
+  const all: Record<ObjectKind, { oid: number; definition: string }[]> = { sequence: sequences, type: types, trigger: triggers, extension: extensions };
+  const o = all[kind].find((x) => x.oid === oid);
+  if (!o) throw err({ kind: "invalid", message: `${kind} with oid ${oid} not found (it may have been dropped)`, position: null });
+  return o.definition;
 }
 
 function parseUrl(url: string): ParsedConn {
@@ -625,6 +708,10 @@ export function installMockBackend(): void {
         if (!f) throw err({ kind: "invalid", message: `function with oid ${a.oid} not found (it may have been dropped)`, position: null });
         return f.definition;
       }
+      case "get_object_definition":
+        requireConn(a.connId);
+        await delay(null, 60);
+        return objectDefinition(a.kind, a.oid);
       case "fetch_page":
         return fetchPage(a.requestId, a.req);
       case "count_exact": {

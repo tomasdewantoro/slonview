@@ -88,6 +88,17 @@ pub struct Relation {
     pub size_bytes: i64,
 }
 
+/// `list_schema_tree` result: per-schema objects plus database-level extensions (which often
+/// live in `pg_catalog`, a schema the tree does not show).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SchemaTree {
+    pub schemas: Vec<SchemaNode>,
+    /// Installed extensions, ordered by name.
+    pub extensions: Vec<ExtensionInfo>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -96,6 +107,121 @@ pub struct SchemaNode {
     pub relations: Vec<Relation>,
     /// Functions, procedures and aggregates, ordered by name then identity arguments.
     pub functions: Vec<FunctionInfo>,
+    /// Sequences, ordered by name.
+    pub sequences: Vec<SequenceInfo>,
+    /// Enum, domain and standalone composite types, ordered by name.
+    pub types: Vec<TypeInfo>,
+    /// User triggers on this schema's tables (not partitions, not internal FK triggers),
+    /// ordered by table then trigger name.
+    pub triggers: Vec<TriggerInfo>,
+}
+
+/// What `get_object_definition` should describe; `oid` is from the matching catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum ObjectKind {
+    Sequence,
+    Type,
+    Trigger,
+    Extension,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SequenceInfo {
+    /// `pg_class.oid`.
+    #[ts(type = "number")]
+    pub oid: u32,
+    pub schema: String,
+    pub name: String,
+    /// `format_type(seqtypid)`: "smallint", "integer" or "bigint".
+    pub data_type: String,
+    /// False when the session lacks SELECT/USAGE on the sequence (the UI shows "?").
+    pub readable: bool,
+    /// `pg_sequence_last_value` as decimal text (bigint does not fit a JS number); None when
+    /// unreadable or never used.
+    pub last_value: Option<String>,
+}
+
+/// `pg_type.typtype`: e / d / c (standalone composite types only, not table row types).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TypeKind {
+    Enum,
+    Domain,
+    Composite,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TypeInfo {
+    /// `pg_type.oid`.
+    #[ts(type = "number")]
+    pub oid: u32,
+    pub schema: String,
+    pub name: String,
+    pub kind: TypeKind,
+    /// One-line summary: enum labels ("a, b, c"), domain base type plus NOT NULL and
+    /// constraints, or composite attributes ("x integer, y text").
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TriggerTiming {
+    Before,
+    After,
+    InsteadOf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TriggerEvent {
+    Insert,
+    Update,
+    Delete,
+    Truncate,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TriggerInfo {
+    /// `pg_trigger.oid`.
+    #[ts(type = "number")]
+    pub oid: u32,
+    /// Schema of the table the trigger is on.
+    pub schema: String,
+    pub table: String,
+    pub name: String,
+    pub timing: TriggerTiming,
+    /// In INSERT, UPDATE, DELETE, TRUNCATE order.
+    pub events: Vec<TriggerEvent>,
+    /// FOR EACH ROW (true) or FOR EACH STATEMENT.
+    pub for_each_row: bool,
+    /// False when `tgenabled = 'D'`; replica/always modes count as enabled.
+    pub enabled: bool,
+    /// Trigger function as `schema.name`, quoted where needed.
+    pub function: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ExtensionInfo {
+    /// `pg_extension.oid`.
+    #[ts(type = "number")]
+    pub oid: u32,
+    pub name: String,
+    pub version: String,
+    /// Schema holding the extension's objects.
+    pub schema: String,
 }
 
 /// `pg_proc.prokind`: f / p / a / w.

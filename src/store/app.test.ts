@@ -41,7 +41,7 @@ function installIpc(): Ipc {
       case "connect":
         return { version: "PostgreSQL 18", database: "db", user: "u", readOnly: true };
       case "list_schema_tree":
-        return [];
+        return { schemas: [], extensions: [] };
       case "cancel_query":
         cancelled.push(a.requestId);
         return null;

@@ -104,7 +104,7 @@ async fn bad_credentials_and_hosts_map_to_typed_errors() {
 #[tokio::test]
 async fn schema_tree_lists_fixture_relations() {
     let f = fixture().await;
-    let tree = f.engine.list_schema_tree(f.conn).await.unwrap();
+    let tree = f.engine.list_schema_tree(f.conn).await.unwrap().schemas;
     assert_eq!(tree[0].name, "public");
     let find = |schema: &str, name: &str| {
         tree.iter()
@@ -132,7 +132,7 @@ async fn schema_tree_lists_fixture_relations() {
 #[tokio::test]
 async fn schema_tree_lists_fixture_functions() {
     let f = fixture().await;
-    let tree = f.engine.list_schema_tree(f.conn).await.unwrap();
+    let tree = f.engine.list_schema_tree(f.conn).await.unwrap().schemas;
     let funcs = |schema: &str| tree.iter().find(|s| s.name == schema).unwrap().functions.clone();
     let public = funcs("public");
     fn sig(fi: &FunctionInfo) -> (&str, &str, Option<&str>, FunctionKind, &str) {
@@ -145,6 +145,8 @@ async fn schema_tree_lists_fixture_functions() {
             ("archive_orders", "IN p_before timestamp with time zone, INOUT p_moved bigint", None, FunctionKind::Procedure, "plpgsql"),
             ("comma_join", "text", Some("text"), FunctionKind::Aggregate, "internal"),
             ("customer_label", "p_id bigint", Some("text"), FunctionKind::Function, "plpgsql"),
+            ("customers_email_check", "", Some("trigger"), FunctionKind::Function, "plpgsql"),
+            ("forbid_truncate", "", Some("trigger"), FunctionKind::Function, "plpgsql"),
             ("order_total", "p_customer bigint", Some("numeric"), FunctionKind::Function, "sql"),
             ("order_total", "p_customer bigint, p_status order_status", Some("numeric"), FunctionKind::Function, "sql"),
             ("text_concat_step", "acc text, val text", Some("text"), FunctionKind::Function, "sql"),
@@ -154,21 +156,202 @@ async fn schema_tree_lists_fixture_functions() {
     let sales = funcs("Sales Data");
     assert_eq!(
         sales.iter().map(sig).collect::<Vec<_>>(),
-        vec![(
-            "Weird Total",
-            "\"Region Code\" text, include_tax boolean",
-            Some("TABLE(\"Region\" text, total numeric)"),
-            FunctionKind::Function,
-            "sql"
-        )]
+        vec![
+            ("Weird Audit Fn", "", Some("trigger"), FunctionKind::Function, "plpgsql"),
+            (
+                "Weird Total",
+                "\"Region Code\" text, include_tax boolean",
+                Some("TABLE(\"Region\" text, total numeric)"),
+                FunctionKind::Function,
+                "sql"
+            ),
+        ]
     );
     assert!(tree.iter().all(|s| s.functions.iter().all(|fi| fi.schema == s.name)));
 }
 
 #[tokio::test]
-async fn function_definitions_by_kind() {
+async fn schema_tree_lists_sequences_types_triggers_extensions() {
     let f = fixture().await;
     let tree = f.engine.list_schema_tree(f.conn).await.unwrap();
+    let schema = |name: &str| tree.schemas.iter().find(|s| s.name == name).unwrap().clone();
+    let public = schema("public");
+    let sales = schema("Sales Data");
+
+    let seqs: Vec<_> = public.sequences.iter().map(|s| (s.name.as_str(), s.data_type.as_str(), s.readable, s.last_value.as_deref())).collect();
+    assert_eq!(
+        seqs,
+        vec![
+            ("all_types_id_seq", "integer", true, Some("5")),
+            ("customers_id_seq", "bigint", true, Some("1000")),
+            ("invoice_number_seq", "integer", true, Some("1010")),
+            ("orders_id_seq", "bigint", true, Some("1000000")),
+        ]
+    );
+    let ticket = &sales.sequences[0];
+    assert_eq!((ticket.name.as_str(), ticket.last_value.as_deref(), ticket.oid > 0), ("Ticket Seq", None, true));
+
+    let types: Vec<_> = public.types.iter().map(|t| (t.name.as_str(), t.kind, t.detail.as_str())).collect();
+    assert_eq!(
+        types,
+        vec![
+            ("money_range", TypeKind::Composite, "low numeric(12,2), high numeric(12,2), currency text"),
+            ("order_status", TypeKind::Enum, "pending, paid, shipped, cancelled"),
+            ("positive_amount", TypeKind::Domain, "numeric(12,2) NOT NULL CHECK (VALUE >= 0::numeric)"),
+        ]
+    );
+    assert_eq!(sales.types.len(), 1);
+    assert_eq!((sales.types[0].name.as_str(), sales.types[0].detail.as_str()), ("Region Kind", "north, south's, East West"));
+
+    let trig = |t: &TriggerInfo| (t.table.clone(), t.name.clone(), t.timing, t.events.clone(), t.for_each_row, t.enabled, t.function.clone());
+    assert_eq!(
+        public.triggers.iter().map(trig).collect::<Vec<_>>(),
+        vec![
+            (
+                "customers".into(),
+                "customers_email_check".into(),
+                TriggerTiming::Before,
+                vec![TriggerEvent::Insert, TriggerEvent::Update],
+                true,
+                true,
+                "public.customers_email_check".into()
+            ),
+            (
+                "events".into(),
+                "events_audit".into(),
+                TriggerTiming::After,
+                vec![TriggerEvent::Insert],
+                true,
+                true,
+                "\"Sales Data\".\"Weird Audit Fn\"".into()
+            ),
+            (
+                "orders".into(),
+                "orders_no_truncate".into(),
+                TriggerTiming::Before,
+                vec![TriggerEvent::Truncate],
+                false,
+                false,
+                "public.forbid_truncate".into()
+            ),
+        ],
+        "no internal FK triggers, no partition clones"
+    );
+    assert_eq!(
+        sales.triggers.iter().map(trig).collect::<Vec<_>>(),
+        vec![(
+            "Weird \"Name\" Table".into(),
+            "Weird Audit".into(),
+            TriggerTiming::After,
+            vec![TriggerEvent::Insert, TriggerEvent::Delete],
+            true,
+            true,
+            "\"Sales Data\".\"Weird Audit Fn\"".into()
+        )]
+    );
+    assert!(tree.schemas.iter().all(|s| s.sequences.iter().all(|x| x.schema == s.name)
+        && s.types.iter().all(|x| x.schema == s.name)
+        && s.triggers.iter().all(|x| x.schema == s.name)));
+
+    let plpgsql = tree.extensions.iter().find(|e| e.name == "plpgsql").unwrap();
+    assert_eq!((plpgsql.version.as_str(), plpgsql.schema.as_str()), ("1.0", "pg_catalog"));
+    let names: Vec<_> = tree.extensions.iter().map(|e| e.name.clone()).collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted);
+}
+
+/// A role without sequence privileges still gets the tree; unreadable sequences say so.
+#[tokio::test]
+async fn schema_tree_unreadable_sequence() {
+    let ro = fixture_with(|p| p.user = "slonview_ro".into()).await;
+    let tree = ro.engine.list_schema_tree(ro.conn).await.unwrap();
+    let public = tree.schemas.iter().find(|s| s.name == "public").unwrap();
+    let inv = public.sequences.iter().find(|s| s.name == "invoice_number_seq").unwrap();
+    assert!(!inv.readable && inv.last_value.is_none(), "{inv:?}");
+    // The definition comes from pg_sequence, which needs no sequence privilege.
+    let def = ro.engine.get_object_definition(ro.conn, ObjectKind::Sequence, inv.oid).await.unwrap();
+    assert!(def.contains("SELECT * FROM public.invoice_number_seq;"), "{def}");
+}
+
+#[tokio::test]
+async fn object_definitions_by_kind() {
+    let f = fixture().await;
+    let tree = f.engine.list_schema_tree(f.conn).await.unwrap();
+    let schema = |name: &str| tree.schemas.iter().find(|s| s.name == name).unwrap();
+    let def = |kind: ObjectKind, oid: u32| {
+        let engine = f.engine.clone();
+        let conn = f.conn;
+        async move { engine.get_object_definition(conn, kind, oid).await.unwrap() }
+    };
+    let seq = |s: &str, n: &str| schema(s).sequences.iter().find(|x| x.name == n).unwrap().oid;
+    let ty = |s: &str, n: &str| schema(s).types.iter().find(|x| x.name == n).unwrap().oid;
+    let tg = |s: &str, n: &str| schema(s).triggers.iter().find(|x| x.name == n).unwrap().oid;
+
+    assert_eq!(
+        def(ObjectKind::Sequence, seq("public", "invoice_number_seq")).await,
+        "-- Sequence public.invoice_number_seq\n\
+         --   CREATE SEQUENCE public.invoice_number_seq AS integer\n\
+         --     INCREMENT BY 10 MINVALUE 1 MAXVALUE 2147483647 START WITH 1000 CACHE 1 NO CYCLE;\n\
+         SELECT * FROM public.invoice_number_seq;\n"
+    );
+    let owned = def(ObjectKind::Sequence, seq("public", "orders_id_seq")).await;
+    assert!(owned.contains("--   Owned by public.orders.id\n"), "{owned}");
+    let quoted = def(ObjectKind::Sequence, seq("Sales Data", "Ticket Seq")).await;
+    assert!(quoted.ends_with("SELECT * FROM \"Sales Data\".\"Ticket Seq\";\n"), "{quoted}");
+
+    assert_eq!(
+        def(ObjectKind::Type, ty("public", "order_status")).await,
+        "CREATE TYPE public.order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');\n"
+    );
+    assert_eq!(
+        def(ObjectKind::Type, ty("Sales Data", "Region Kind")).await,
+        "CREATE TYPE \"Sales Data\".\"Region Kind\" AS ENUM ('north', 'south''s', 'East West');\n"
+    );
+    assert_eq!(
+        def(ObjectKind::Type, ty("public", "positive_amount")).await,
+        "CREATE DOMAIN public.positive_amount AS numeric(12,2)\n  DEFAULT 0\n  NOT NULL\n  \
+         CONSTRAINT positive_amount_check CHECK (VALUE >= 0::numeric);\n\n\
+         COMMENT ON DOMAIN public.positive_amount IS 'Money amount, never negative';\n"
+    );
+    assert_eq!(
+        def(ObjectKind::Type, ty("public", "money_range")).await,
+        "CREATE TYPE public.money_range AS (\n    low numeric(12,2),\n    high numeric(12,2),\n    currency text COLLATE pg_catalog.\"C\"\n);\n"
+    );
+
+    let email = def(ObjectKind::Trigger, tg("public", "customers_email_check")).await;
+    assert_eq!(
+        email,
+        "CREATE TRIGGER customers_email_check BEFORE INSERT OR UPDATE OF email ON public.customers \
+         FOR EACH ROW EXECUTE FUNCTION customers_email_check();\n\n\
+         -- Trigger function: public.customers_email_check()\n"
+    );
+    let disabled = def(ObjectKind::Trigger, tg("public", "orders_no_truncate")).await;
+    assert!(disabled.contains("\nALTER TABLE public.orders DISABLE TRIGGER orders_no_truncate;\n"), "{disabled}");
+    let weird = def(ObjectKind::Trigger, tg("Sales Data", "Weird Audit")).await;
+    assert!(weird.starts_with("CREATE TRIGGER \"Weird Audit\" AFTER INSERT OR DELETE ON \"Sales Data\".\"Weird \"\"Name\"\" Table\""), "{weird}");
+
+    let plpgsql = tree.extensions.iter().find(|e| e.name == "plpgsql").unwrap().oid;
+    assert_eq!(
+        def(ObjectKind::Extension, plpgsql).await,
+        "-- PL/pgSQL procedural language\nCREATE EXTENSION plpgsql WITH SCHEMA pg_catalog VERSION '1.0';\n"
+    );
+
+    for kind in [ObjectKind::Sequence, ObjectKind::Type, ObjectKind::Trigger, ObjectKind::Extension] {
+        let err = f.engine.get_object_definition(f.conn, kind, 4_000_000_000).await.unwrap_err();
+        assert!(matches!(err, AppError::Invalid { .. }), "{kind:?}: {err:?}");
+    }
+    let int4 = psql_values(&f, "select 'int4'::regtype::oid::text").await[0][0].clone().unwrap().parse().unwrap();
+    let err = f.engine.get_object_definition(f.conn, ObjectKind::Type, int4).await.unwrap_err();
+    assert!(matches!(err, AppError::Invalid { .. }), "{err:?}");
+    let err = f.engine.get_object_definition(uuid::Uuid::new_v4(), ObjectKind::Type, 1).await.unwrap_err();
+    assert_eq!(err, AppError::NotConnected);
+}
+
+#[tokio::test]
+async fn function_definitions_by_kind() {
+    let f = fixture().await;
+    let tree = f.engine.list_schema_tree(f.conn).await.unwrap().schemas;
     let oid = |schema: &str, name: &str, args: &str| {
         tree.iter()
             .find(|s| s.name == schema)

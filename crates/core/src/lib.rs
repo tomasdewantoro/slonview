@@ -11,6 +11,7 @@ mod conn;
 mod export;
 mod ident;
 mod introspect;
+mod objects;
 mod paging;
 mod query;
 mod split;

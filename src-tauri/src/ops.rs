@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use slonview_core::model::{
-    CellRequest, ConnId, ConnProfile, ExportSource, Filter, HistoryEntry, Page, PageRequest, ParsedConn,
-    QueryResult, RequestId, SchemaNode, ServerInfo, TableDescription, DEFAULT_SQL_MAX_ROWS,
+    CellRequest, ConnId, ConnProfile, ExportSource, Filter, HistoryEntry, ObjectKind, Page, PageRequest, ParsedConn,
+    QueryResult, RequestId, SchemaTree, ServerInfo, TableDescription, DEFAULT_SQL_MAX_ROWS,
 };
 use slonview_core::{connurl, AppError, AppResult, Engine};
 use serde_json::Value;
@@ -92,7 +92,7 @@ pub async fn disconnect(engine: &Engine, conn_id: ConnId) -> AppResult<()> {
 
 // Schema
 
-pub async fn list_schema_tree(engine: &Engine, conn_id: ConnId) -> AppResult<Vec<SchemaNode>> {
+pub async fn list_schema_tree(engine: &Engine, conn_id: ConnId) -> AppResult<SchemaTree> {
     engine.list_schema_tree(conn_id).await
 }
 
@@ -164,6 +164,10 @@ pub async fn list_history(
 
 pub async fn clear_history(engine: &Engine) -> AppResult<()> {
     engine.history.clear()
+}
+
+pub async fn get_object_definition(engine: &Engine, conn_id: ConnId, kind: ObjectKind, oid: u32) -> AppResult<String> {
+    engine.get_object_definition(conn_id, kind, oid).await
 }
 
 #[cfg(test)]
@@ -251,7 +255,8 @@ mod tests {
         connect(&engine, id).await.unwrap();
 
         let tree = list_schema_tree(&engine, id).await.unwrap();
-        assert!(tree.iter().any(|s| s.name == "Sales Data"));
+        assert!(tree.schemas.iter().any(|s| s.name == "Sales Data"));
+        assert!(tree.extensions.iter().any(|e| e.name == "plpgsql"));
         let desc = describe_table(&engine, id, "public", "orders").await.unwrap();
         assert!(desc.columns.iter().any(|c| c.name == "id" && c.is_pk));
 

@@ -714,6 +714,34 @@ try {
     return `${names.length} functions in public; definition tab "customer_label(p_id bigint)" shows CREATE OR REPLACE FUNCTION`;
   });
 
+  await check("Types: expand public > Types, open the order_status enum definition", async () => {
+    await page.click('[aria-label^="Types in public"]');
+    const rows = await page.evaluate(() =>
+      [...document.querySelectorAll('[aria-label^="Types in public"] + [role="group"] button[role="treeitem"]')].map((b) => b.querySelector("span").textContent),
+    );
+    for (const name of ["money_range", "order_status", "positive_amount"]) assert(rows.includes(name), `type ${name} listed (got ${rows.join(", ")})`);
+    await page.evaluate(() => {
+      [...document.querySelectorAll('[aria-label^="Types in public"] + [role="group"] button[role="treeitem"]')]
+        .find((b) => b.querySelector("span").textContent === "order_status")
+        .click();
+    });
+    const want = "CREATE TYPE public.order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');";
+    try {
+      await until(
+        (want) =>
+          document.querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim() === "order_status" &&
+          [...document.querySelectorAll(".cm-content")].find((el) => el.offsetParent !== null)?.textContent.includes(want),
+        10000,
+        want,
+      );
+    } catch {
+      const shown = await page.evaluate(() => [...document.querySelectorAll(".cm-content")].find((el) => el.offsetParent !== null)?.textContent);
+      throw new Error(`enum definition tab not shown; visible editor: ${shown}`);
+    }
+    await page.screenshot({ path: `${SHOTS}/types-enum-definition.png` });
+    return `${rows.length} types in public; tab "order_status" shows ${want}`;
+  });
+
   await check("A zero console errors", async () => {
     eq(consoleErrors.length, 0, `console errors: ${consoleErrors.join(" | ")}`);
     return "0 console/page errors";

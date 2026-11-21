@@ -18,7 +18,7 @@ use crate::split::split_statements;
 use crate::{AppError, AppResult, export, query};
 
 /// One connected profile.
-struct Session {
+pub(crate) struct Session {
     profile: ConnProfile,
     pool: Pool,
 }
@@ -78,7 +78,7 @@ impl Engine {
         Ok(())
     }
 
-    pub async fn list_schema_tree(&self, conn_id: ConnId) -> AppResult<Vec<SchemaNode>> {
+    pub async fn list_schema_tree(&self, conn_id: ConnId) -> AppResult<SchemaTree> {
         let (_, client) = self.client(conn_id).await?;
         introspect::schema_tree(&client).await
     }
@@ -322,7 +322,7 @@ impl Engine {
         self.sessions.write().unwrap_or_else(|e| e.into_inner())
     }
 
-    async fn client(&self, conn_id: ConnId) -> AppResult<(Arc<Session>, Object)> {
+    pub(crate) async fn client(&self, conn_id: ConnId) -> AppResult<(Arc<Session>, Object)> {
         let session = self
             .sessions
             .read()
