@@ -703,7 +703,8 @@ try {
       await page.click('[data-testid="session-tz"]');
       await until(() => !!document.querySelector('[role="dialog"][aria-label="Session time zone"]'));
       const ok = await page.evaluate((z) => {
-        const b = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.trim() === z);
+        // Match by zone id, not label: the Mac's own zone is labelled "<zone> (this Mac)".
+        const b = [...document.querySelectorAll('[role="option"]')].find((x) => x.dataset.zone === z);
         b?.click();
         return !!b;
       }, zone);

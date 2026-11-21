@@ -97,7 +97,7 @@ function TimeZonePicker({ value }: { value: string | null }) {
       <label htmlFor="status-tz-search" className="mb-1 block font-semibold">Session time zone</label>
       <input ref={input} id="status-tz-search" className="field w-full" placeholder="Search time zones" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && zones.length) { e.preventDefault(); void choose(zones[0]); } }} disabled={busy} />
       <div role="listbox" aria-label="Time zones" aria-busy={busy} className="mt-1 max-h-56 overflow-auto">
-        {zones.map((zone) => <button key={zone} role="option" aria-selected={(value ?? "") === zone} disabled={busy} className="block w-full rounded px-2 py-1.5 text-left font-mono hover:bg-surface-2 aria-selected:bg-accent-soft" onClick={() => void choose(zone)}>{zone || "Server default"}{zone === macZone ? " (this Mac)" : ""}</button>)}
+        {zones.map((zone) => <button key={zone} role="option" data-zone={zone} aria-selected={(value ?? "") === zone} disabled={busy} className="block w-full rounded px-2 py-1.5 text-left font-mono hover:bg-surface-2 aria-selected:bg-accent-soft" onClick={() => void choose(zone)}>{zone || "Server default"}{zone === macZone ? " (this Mac)" : ""}</button>)}
         {!zones.length && <p className="p-2 text-muted">No matching time zones.</p>}
       </div>
       {busy && <p role="status" className="mt-1 text-muted">Applying time zone…</p>}
