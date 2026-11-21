@@ -640,12 +640,21 @@ try {
       await until(() => document.querySelectorAll('[role="group"] button[role="treeitem"]').length > 5);
       await until((tz) => document.querySelector('[data-testid="session-tz"]')?.innerText.trim() === tz, 10000, tz);
       await openRel("orders");
-      await selectRows(0, 0);
-      await page.evaluate(() => (window.__clipboard = ""));
-      await page.keyboard.down("Meta");
-      await page.keyboard.press("c");
-      await page.keyboard.up("Meta");
-      await until(() => (window.__clipboard ?? "").includes("\n"), 5000);
+      // After a reconnect the grid can mount before it takes keyboard focus, so the first
+      // Cmd+C may land nowhere. Re-select and copy until the clipboard fills (max 4 tries).
+      for (let attempt = 0; ; attempt++) {
+        await selectRows(0, 0);
+        await page.evaluate(() => (window.__clipboard = ""));
+        await page.keyboard.down("Meta");
+        await page.keyboard.press("c");
+        await page.keyboard.up("Meta");
+        try {
+          await until(() => (window.__clipboard ?? "").includes("\n"), 2000);
+          break;
+        } catch (e) {
+          if (attempt === 3) throw e;
+        }
+      }
       const [header, row] = (await page.evaluate(() => window.__clipboard)).split("\n");
       const createdAt = row.split("\t")[header.split("\t").indexOf("created_at")];
       assert(createdAt?.endsWith(suffix), `${tz}: first created_at ${createdAt} does not end with ${suffix}`);
