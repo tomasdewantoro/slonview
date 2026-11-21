@@ -52,18 +52,33 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 - **Per-connection time zone:** set an IANA zone such as `Asia/Jakarta` on a connection and every session (table browsing and the SQL editor) shows `timestamptz` values in that zone, whatever the server default is. A `postgres://` URL with `options=-c timezone=...` fills it in.
 - **Small:** about 8 MB on disk.
 
+## Install
+
+Prebuilt macOS (Apple Silicon and Intel), Linux (AppImage, deb) and Windows (msi, setup.exe) builds are attached to each [GitHub release](https://github.com/tomasdewantoro/slonview/releases). Release builds are unsigned until signing is set up (see [docs/RELEASING.md](docs/RELEASING.md)): on macOS right-click the app and choose **Open** the first time; on Windows choose **More info**, then **Run anyway**.
+
+Saved passwords go to the operating system's credential store: the macOS Keychain, the Secret Service on Linux (GNOME Keyring, KWallet or KeePassXC; one must be running), or the Windows Credential Manager.
+
 ## Install from source
 
-Requirements: macOS on Apple Silicon, [rustup](https://rustup.rs) (stable Rust), Node.js 20+, and [pnpm](https://pnpm.io).
+Requirements: [rustup](https://rustup.rs) (stable Rust), Node.js 20+, and [pnpm](https://pnpm.io). On Linux also install the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux) and `libdbus-1-dev`; on Debian/Ubuntu:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+  libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config
+```
+
+On Windows, install the Visual Studio C++ build tools and WebView2 (preinstalled on Windows 10 and 11) as described in the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#windows).
 
 ```bash
 git clone https://github.com/tomasdewantoro/slonview.git
 cd slonview
 pnpm install
-pnpm tauri build
+pnpm tauri build                          # macOS: .app + .dmg
+pnpm tauri build --bundles appimage,deb   # Linux
+pnpm tauri build --bundles msi,nsis       # Windows
 ```
 
-The app bundle is written to `target/release/bundle/macos/Slonview.app` and a disk image to `target/release/bundle/dmg/`. The build is not code-signed or notarized yet, so macOS Gatekeeper will ask for confirmation on first launch.
+Bundles are written to `target/release/bundle/` (for example `macos/Slonview.app` and `dmg/` on macOS). Local builds are not code-signed, so Gatekeeper or SmartScreen asks for confirmation on first launch.
 
 ## Development
 
