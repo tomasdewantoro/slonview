@@ -49,8 +49,9 @@ describe("sqlResult helpers", () => {
       {
         name: "Sales Data",
         relations: [{ schema: "Sales Data", name: 'Weird "Name" Table', kind: "table", estRows: 0, sizeBytes: 0 }],
+        functions: [],
       },
-      { name: "public", relations: [{ schema: "public", name: "a.b", kind: "view", estRows: 0, sizeBytes: 0 }] },
+      { name: "public", relations: [{ schema: "public", name: "a.b", kind: "view", estRows: 0, sizeBytes: 0 }], functions: [] },
     ]) as Record<string, { self: { label: string; apply?: string }; children: Record<string, { self: { apply?: string } }> }>;
     expect(ns["Sales Data"].self.apply).toBe('"Sales Data"');
     expect(ns["Sales Data"].children['Weird "Name" Table'].self.apply).toBe('"Weird ""Name"" Table"');

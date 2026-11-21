@@ -1,4 +1,4 @@
-//! Schema tree and table description.
+//! Schema tree, table description and function definitions.
 use slonview_core::model::{ConnId, SchemaNode, TableDescription};
 use slonview_core::AppResult;
 use tauri::State;
@@ -19,4 +19,9 @@ pub async fn describe_table(
     table: String,
 ) -> AppResult<TableDescription> {
     ops::describe_table(&engine, conn_id, &schema, &table).await
+}
+
+#[tauri::command]
+pub async fn get_function_definition(engine: State<'_, AppState>, conn_id: ConnId, oid: u32) -> AppResult<String> {
+    ops::get_function_definition(&engine, conn_id, oid).await
 }

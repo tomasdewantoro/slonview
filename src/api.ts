@@ -59,6 +59,8 @@ export const api = {
   listSchemaTree: (connId: string) => invoke<SchemaNode[]>("list_schema_tree", { connId }),
   describeTable: (connId: string, schema: string, table: string) =>
     invoke<TableDescription>("describe_table", { connId, schema, table }),
+  /** `CREATE OR REPLACE …` text; aggregates get an SQL comment block instead. */
+  getFunctionDefinition: (connId: string, oid: number) => invoke<string>("get_function_definition", { connId, oid }),
 
   // Data
   fetchPage: (requestId: string, req: PageRequest) => invoke<Page>("fetch_page", { requestId, req }),

@@ -6,6 +6,7 @@ import { api, errorMessage, isAppError, newRequestId } from "../api";
 import type { Column } from "../bindings/Column";
 import type { ConnProfile } from "../bindings/ConnProfile";
 import type { Cursor } from "../bindings/Cursor";
+import type { FunctionInfo } from "../bindings/FunctionInfo";
 import type { Relation } from "../bindings/Relation";
 import type { SchemaNode } from "../bindings/SchemaNode";
 import type { ServerInfo } from "../bindings/ServerInfo";
@@ -94,7 +95,10 @@ export interface AppState {
 
   openTable(schema: string, table: string): void;
   openStructure(schema: string, table: string): void;
-  openSql(initialSql?: string): void;
+  /** New SQL tab; `title` defaults to "Query N". */
+  openSql(initialSql?: string, title?: string): void;
+  /** New SQL tab holding the function's definition; errors become a toast. */
+  openFunction(fn: FunctionInfo): Promise<void>;
   closeTab(id: string): void;
   activateTab(id: string): void;
   activateTabIndex(index: number): void;
@@ -161,6 +165,12 @@ export function readPersistedTabs(storage: Storage, connId: string): PersistedTa
   } catch {
     return { tabs: [], activeTabId: null };
   }
+}
+
+/** Tab title for a function: `name(args)`, schema-qualified outside public, args shortened to fit a tab. */
+export function functionTitle(fn: Pick<FunctionInfo, "schema" | "name" | "args">, maxArgs = 32): string {
+  const args = fn.args.length > maxArgs ? `${fn.args.slice(0, maxArgs - 1).trimEnd()}…` : fn.args;
+  return `${relationTitle(fn.schema, fn.name)}(${args})`;
 }
 
 export function relationTitle(schema: string, table: string): string {
@@ -338,10 +348,21 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         addTab({ id: newRequestId(), kind: "structure", title: relationTitle(schema, table), schema, table });
       },
 
-      openSql(initialSql) {
+      openSql(initialSql, title) {
         if (!connectedId()) return;
         const n = get().tabs.filter((t) => t.kind === "sql").length + 1;
-        addTab({ id: newRequestId(), kind: "sql", title: `Query ${n}`, initialSql });
+        addTab({ id: newRequestId(), kind: "sql", title: title ?? `Query ${n}`, initialSql });
+      },
+
+      async openFunction(fn) {
+        const connId = connectedId();
+        if (!connId) return;
+        try {
+          const sql = await api.getFunctionDefinition(connId, fn.oid);
+          if (connectedId() === connId) get().openSql(sql, functionTitle(fn));
+        } catch (e) {
+          if (connectedId() === connId) get().pushToast("error", `Couldn't load the definition of ${fn.name}: ${errorMessage(e)}`);
+        }
       },
 
       closeTab(id) {

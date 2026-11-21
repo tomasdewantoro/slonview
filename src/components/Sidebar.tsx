@@ -1,4 +1,6 @@
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
+  AppWindow,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -6,19 +8,25 @@ import {
   LoaderCircle,
   RefreshCw,
   Search,
+  Sigma,
+  SquareFunction,
   SquareStack,
   Table2,
   Unplug,
   Globe,
+  Workflow,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { forwardRef, useMemo, useState } from "react";
+import { errorMessage } from "../api";
+import type { FunctionInfo } from "../bindings/FunctionInfo";
+import type { FunctionKind } from "../bindings/FunctionKind";
 import type { Relation } from "../bindings/Relation";
 import type { RelationKind } from "../bindings/RelationKind";
 import type { SchemaNode } from "../bindings/SchemaNode";
 import { appStore, useApp } from "../store/app";
-import { formatBytes, formatCount, selectSql } from "../store/queries";
+import { formatBytes, formatCount, quoteIdent, selectSql } from "../store/queries";
 import { ColorDot, ConnectionList } from "./ConnectionList";
 import { ContextMenu } from "./ContextMenu";
 import { ErrorPanel } from "./ErrorPanel";
@@ -31,14 +39,32 @@ const KIND: Record<RelationKind, { icon: LucideIcon; label: string }> = {
   "foreign-table": { icon: Globe, label: "foreign table" },
 };
 
-/** Case-insensitive substring match on "schema.name"; schemas whose name matches keep all relations. */
+const FUNCTION_KIND: Record<FunctionKind, { icon: LucideIcon; label: string }> = {
+  function: { icon: SquareFunction, label: "function" },
+  procedure: { icon: Workflow, label: "procedure" },
+  aggregate: { icon: Sigma, label: "aggregate function" },
+  window: { icon: AppWindow, label: "window function" },
+};
+
+/** `schema.name(identity args)`: unique among overloads and valid after DROP/ALTER FUNCTION. */
+export function functionSignature(f: FunctionInfo): string {
+  const ident = (name: string) => (/^[a-z_][a-z0-9_$]*$/.test(name) ? name : quoteIdent(name));
+  return `${ident(f.schema)}.${ident(f.name)}(${f.args})`;
+}
+
+/**
+ * Case-insensitive substring match on "schema.name" for relations and functions; schemas whose
+ * name matches keep everything. Schemas with no match are dropped.
+ */
 export function filterTree(tree: SchemaNode[], query: string): SchemaNode[] {
   const q = query.trim().toLowerCase();
   if (!q) return tree;
   const out: SchemaNode[] = [];
   for (const s of tree) {
-    const relations = s.relations.filter((r) => `${s.name}.${r.name}`.toLowerCase().includes(q));
-    if (relations.length) out.push({ ...s, relations });
+    const matches = (name: string) => `${s.name}.${name}`.toLowerCase().includes(q);
+    const relations = s.relations.filter((r) => matches(r.name));
+    const functions = s.functions.filter((f) => matches(f.name));
+    if (relations.length || functions.length) out.push({ ...s, relations, functions });
   }
   return out;
 }
@@ -96,13 +122,15 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
   });
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [menu, setMenu] = useState<{ x: number; y: number; rel: Relation } | null>(null);
+  /** Schemas whose Functions group is expanded (collapsed by default). */
+  const [fnOpen, setFnOpen] = useState<Set<string>>(new Set());
+  const [menu, setMenu] = useState<Menu | null>(null);
   const filtered = useMemo(() => filterTree(tree, query), [tree, query]);
-  const { openTable, openStructure, openSql, loadTree } = appStore.getState();
+  const { openTable, openStructure, openSql, openFunction, loadTree } = appStore.getState();
   const searching = query.trim() !== "";
 
-  const toggle = (name: string) =>
-    setCollapsed((cur) => {
+  const toggleIn = (set: typeof setCollapsed, name: string) =>
+    set((cur) => {
       const next = new Set(cur);
       if (next.has(name)) next.delete(name);
       else next.add(name);
@@ -117,15 +145,16 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
           <input
             ref={searchRef}
             className="field h-6 w-full pr-6 pl-7 text-xs"
-            placeholder="Filter tables  ⇧⌘F"
-            aria-label="Filter tables"
+            placeholder="Filter tables, functions  ⇧⌘F"
+            aria-label="Filter tables and functions"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") setQuery("");
-              if (e.key === "Enter" && filtered[0]?.relations[0]) {
-                const r = filtered[0].relations[0];
-                openTable(r.schema, r.name);
+              if (e.key === "Enter") {
+                const first = filtered[0];
+                if (first?.relations[0]) openTable(first.relations[0].schema, first.relations[0].name);
+                else if (first?.functions[0]) void openFunction(first.functions[0]);
               }
             }}
             spellCheck={false}
@@ -144,19 +173,20 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
         {error != null && <ErrorPanel error={error} onRetry={() => void loadTree()} />}
         {loading && tree.length === 0 && <div className="px-3 py-2 text-muted">Loading schemas…</div>}
         {!loading && error == null && filtered.length === 0 && (
-          <div className="px-3 py-2 text-xs text-muted">{searching ? `No tables match "${query.trim()}".` : "This database has no user tables."}</div>
+          <div className="px-3 py-2 text-xs text-muted">{searching ? `Nothing matches "${query.trim()}".` : "This database has no user tables."}</div>
         )}
         {filtered.map((s) => {
           const open = searching || !collapsed.has(s.name);
+          const functionsOpen = searching || fnOpen.has(s.name);
           return (
             <div key={s.name} role="treeitem" aria-expanded={open} aria-selected={false}>
               <button
                 className="flex w-full items-center gap-1 px-1.5 py-[3px] text-left text-muted hover:bg-surface-2"
-                onClick={() => toggle(s.name)}
+                onClick={() => toggleIn(setCollapsed, s.name)}
               >
                 {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
                 <span className="truncate font-medium text-ink">{s.name}</span>
-                <span className="ml-auto pr-1.5 text-[11px] text-faint tabular-nums">{s.relations.length}</span>
+                {s.relations.length > 0 && <span className="ml-auto pr-1.5 text-[11px] text-faint tabular-nums">{s.relations.length}</span>}
               </button>
               {open && (
                 <div role="group">
@@ -183,6 +213,46 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                       </button>
                     );
                   })}
+                  {s.functions.length > 0 && (
+                    <div role="treeitem" aria-expanded={functionsOpen} aria-selected={false}>
+                      <button
+                        className="flex w-full items-center gap-1.5 py-[3px] pr-2 pl-6 text-left text-muted hover:bg-surface-2"
+                        aria-label={`Functions in ${s.name}, ${s.functions.length}`}
+                        onClick={() => toggleIn(setFnOpen, s.name)}
+                      >
+                        {functionsOpen ? <ChevronDown size={13} className="shrink-0" aria-hidden /> : <ChevronRight size={13} className="shrink-0" aria-hidden />}
+                        <span className="min-w-0 flex-1 truncate">Functions</span>
+                        <span className="shrink-0 font-mono text-[11px] text-faint tabular-nums">{s.functions.length}</span>
+                      </button>
+                      {functionsOpen && (
+                        <div role="group">
+                          {s.functions.map((f) => {
+                            const k = FUNCTION_KIND[f.kind];
+                            const Icon = k.icon;
+                            const returns = f.result == null ? "" : ` → ${f.result}`;
+                            return (
+                              <button
+                                key={f.oid}
+                                role="treeitem"
+                                aria-selected={false}
+                                className="flex w-full items-center gap-1.5 py-[3px] pr-2 pl-[43px] text-left hover:bg-surface-2"
+                                title={`${k.label} · ${functionSignature(f)}${returns} · ${f.language}`}
+                                onClick={() => void openFunction(f)}
+                                onContextMenu={(e) => {
+                                  e.preventDefault();
+                                  setMenu({ x: e.clientX, y: e.clientY, fn: f });
+                                }}
+                              >
+                                <Icon size={13} className={`shrink-0 ${f.kind === "function" ? "text-faint" : "text-accent"}`} aria-label={k.label} />
+                                <span className="max-w-[75%] shrink-0 truncate">{f.name}</span>
+                                <span className="min-w-0 flex-1 truncate text-[11.5px] text-faint">({f.args})</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -194,13 +264,32 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
-          items={[
-            { label: "Open data", onSelect: () => openTable(menu.rel.schema, menu.rel.name) },
-            { label: "Structure", onSelect: () => openStructure(menu.rel.schema, menu.rel.name) },
-            { label: "New SQL query", onSelect: () => openSql(selectSql(menu.rel.schema, menu.rel.name)) },
-          ]}
+          items={
+            "rel" in menu
+              ? [
+                  { label: "Open data", onSelect: () => openTable(menu.rel.schema, menu.rel.name) },
+                  { label: "Structure", onSelect: () => openStructure(menu.rel.schema, menu.rel.name) },
+                  { label: "New SQL query", onSelect: () => openSql(selectSql(menu.rel.schema, menu.rel.name)) },
+                ]
+              : [
+                  { label: "Show definition", onSelect: () => void openFunction(menu.fn) },
+                  { separator: true },
+                  { label: "Copy name", onSelect: () => void copy(menu.fn.name) },
+                  { label: "Copy signature", onSelect: () => void copy(functionSignature(menu.fn)) },
+                ]
+          }
         />
       )}
     </>
   );
 });
+
+type Menu = { x: number; y: number } & ({ rel: Relation } | { fn: FunctionInfo });
+
+async function copy(text: string) {
+  try {
+    await writeText(text);
+  } catch (e) {
+    appStore.getState().pushToast("error", `Copy failed: ${errorMessage(e)}`);
+  }
+}

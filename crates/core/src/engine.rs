@@ -88,6 +88,12 @@ impl Engine {
         introspect::describe(&client, schema, table).await
     }
 
+    /// `pg_get_functiondef` text, or a comment block for aggregates. Unknown oid = Invalid.
+    pub async fn get_function_definition(&self, conn_id: ConnId, oid: u32) -> AppResult<String> {
+        let (_, client) = self.client(conn_id).await?;
+        introspect::function_definition(&client, oid).await
+    }
+
     pub async fn fetch_page(&self, request_id: &str, req: &PageRequest) -> AppResult<Page> {
         let started = Instant::now();
         let (session, client) = self.client(req.conn_id).await?;

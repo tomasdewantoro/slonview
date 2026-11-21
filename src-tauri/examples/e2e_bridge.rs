@@ -58,6 +58,9 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
             &arg::<String>(a, "table")?,
         )
         .await?),
+        "get_function_definition" => {
+            ok(ops::get_function_definition(engine, arg(a, "connId")?, arg(a, "oid")?).await?)
+        }
         "fetch_page" => ok(ops::fetch_page(engine, &arg(a, "requestId")?, &arg(a, "req")?).await?),
         "count_exact" => {
             let raw_where: Option<String> = arg(a, "rawWhere")?;

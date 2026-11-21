@@ -1,12 +1,20 @@
 //! Catalog queries. All use the extended protocol with schema/table names bound as
 //! parameters, so no identifier quoting is involved.
+use std::collections::HashMap;
+use std::fmt::Write as _;
+
 use tokio_postgres::Client;
 use tokio_postgres::types::Oid;
 
 use crate::model::{
-    Column, ColumnDetail, ForeignKeyInfo, IndexInfo, Relation, RelationKind, SchemaNode, TableDescription,
+    Column, ColumnDetail, ForeignKeyInfo, FunctionInfo, FunctionKind, IndexInfo, Relation, RelationKind, SchemaNode,
+    TableDescription,
 };
 use crate::{AppError, AppResult};
+
+/// Schemas shown in the tree (`n` = pg_namespace).
+const SCHEMA_FILTER: &str = "n.nspname NOT IN ('pg_catalog', 'information_schema')
+           AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'";
 
 /// Estimated rows and total size; partitioned parents aggregate their leaf partitions.
 const STATS_COLUMNS: &str = "
@@ -29,26 +37,48 @@ fn relation_kind(relkind: &str) -> AppResult<RelationKind> {
     })
 }
 
+fn function_kind(prokind: &str) -> AppResult<FunctionKind> {
+    Ok(match prokind {
+        "f" => FunctionKind::Function,
+        "p" => FunctionKind::Procedure,
+        "a" => FunctionKind::Aggregate,
+        "w" => FunctionKind::Window,
+        other => return Err(AppError::internal(format!("unexpected prokind {other:?}"))),
+    })
+}
+
 fn db_err(e: tokio_postgres::Error) -> AppError {
     crate::conn::map_query_error(e, false)
 }
 
 pub(crate) async fn schema_tree(client: &Client) -> AppResult<Vec<SchemaNode>> {
-    let sql = format!(
+    let relations_sql = format!(
         "SELECT n.nspname::text, c.relname::text, c.relkind::text, {STATS_COLUMNS}
          FROM pg_namespace n
          LEFT JOIN pg_class c ON c.relnamespace = n.oid
               AND c.relkind IN ('r', 'v', 'm', 'p', 'f') AND NOT c.relispartition
-         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-           AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'
+         WHERE {SCHEMA_FILTER}
          ORDER BY n.nspname <> 'public', n.nspname, c.relname"
     );
-    let rows = client.query(&sql, &[]).await.map_err(db_err)?;
+    // Extension-owned functions are included on purpose (e.g. uuid-ossp's uuid_generate_*).
+    let functions_sql = format!(
+        "SELECT p.oid, n.nspname::text, p.proname::text, pg_get_function_identity_arguments(p.oid) AS args,
+                CASE WHEN p.prokind <> 'p' THEN pg_get_function_result(p.oid) END,
+                p.prokind::text, l.lanname::text
+         FROM pg_proc p
+         JOIN pg_namespace n ON n.oid = p.pronamespace
+         JOIN pg_language l ON l.oid = p.prolang
+         WHERE {SCHEMA_FILTER}
+         ORDER BY p.proname, args"
+    );
+    // Both queries are pipelined on the one connection: a single round trip of latency.
+    let (rel_rows, fn_rows) =
+        futures_util::try_join!(client.query(&relations_sql, &[]), client.query(&functions_sql, &[])).map_err(db_err)?;
     let mut out: Vec<SchemaNode> = Vec::new();
-    for row in rows {
+    for row in rel_rows {
         let schema: String = row.get(0);
         if out.last().is_none_or(|n| n.name != schema) {
-            out.push(SchemaNode { name: schema.clone(), relations: Vec::new() });
+            out.push(SchemaNode { name: schema.clone(), relations: Vec::new(), functions: Vec::new() });
         }
         let Some(name) = row.get::<_, Option<String>>(1) else {
             continue; // schema without relations
@@ -61,6 +91,78 @@ pub(crate) async fn schema_tree(client: &Client) -> AppResult<Vec<SchemaNode>> {
             est_rows: row.get::<_, Option<i64>>(3).unwrap_or(-1),
             size_bytes: row.get::<_, Option<i64>>(4).unwrap_or(0),
         });
+    }
+    let index: HashMap<String, usize> = out.iter().enumerate().map(|(i, n)| (n.name.clone(), i)).collect();
+    for row in fn_rows {
+        let schema: String = row.get(1);
+        // A schema created between the two snapshots is simply skipped until the next refresh.
+        let Some(&i) = index.get(&schema) else { continue };
+        let prokind: String = row.get(5);
+        out[i].functions.push(FunctionInfo {
+            oid: row.get::<_, Oid>(0),
+            schema,
+            name: row.get(2),
+            args: row.get(3),
+            result: row.get(4),
+            kind: function_kind(&prokind)?,
+            language: row.get(6),
+        });
+    }
+    Ok(out)
+}
+
+/// `CREATE OR REPLACE …` text for functions, procedures and window functions. Aggregates,
+/// which `pg_get_functiondef` rejects, get an SQL comment block built from `pg_aggregate`.
+pub(crate) async fn function_definition(client: &Client, oid: Oid) -> AppResult<String> {
+    let row = client
+        .query_opt(
+            "SELECT p.prokind::text,
+                    CASE WHEN p.prokind <> 'a' THEN pg_get_functiondef(p.oid) END,
+                    format('%I.%I', n.nspname, p.proname), pg_get_function_identity_arguments(p.oid),
+                    pg_get_function_result(p.oid), a.aggtransfn::regprocedure::text,
+                    format_type(a.aggtranstype, NULL), NULLIF(a.aggfinalfn, 0)::regprocedure::text,
+                    a.agginitval, a.aggkind::text, NULLIF(a.aggsortop, 0)::regoperator::text
+             FROM pg_proc p
+             JOIN pg_namespace n ON n.oid = p.pronamespace
+             LEFT JOIN pg_aggregate a ON a.aggfnoid = p.oid
+             WHERE p.oid = $1",
+            &[&oid],
+        )
+        .await
+        .map_err(db_err)?
+        .ok_or_else(|| AppError::invalid(format!("function with oid {oid} not found (it may have been dropped)")))?;
+    let prokind: String = row.get(0);
+    if prokind != "a" {
+        return row
+            .get::<_, Option<String>>(1)
+            .ok_or_else(|| AppError::internal(format!("pg_get_functiondef returned no text for oid {oid}")));
+    }
+    let name: String = row.get(2);
+    let args: String = row.get(3);
+    let result: Option<String> = row.get(4);
+    let comment = |s: &str| s.replace('\n', "\n--     ");
+    let mut out = String::new();
+    let _ = writeln!(out, "-- Aggregate function {name}({args})");
+    let _ = writeln!(out, "-- Returns: {}", result.as_deref().unwrap_or("unknown"));
+    out.push_str("--\n-- pg_get_functiondef does not support aggregates; details from pg_aggregate:\n");
+    let kind = match row.get::<_, Option<String>>(9).as_deref() {
+        Some("o") => "ordered-set",
+        Some("h") => "hypothetical-set",
+        _ => "normal",
+    };
+    let _ = writeln!(out, "--   KIND      = {kind}");
+    if let Some(sfunc) = row.get::<_, Option<String>>(5) {
+        let _ = writeln!(out, "--   SFUNC     = {sfunc}");
+    }
+    if let Some(stype) = row.get::<_, Option<String>>(6) {
+        let _ = writeln!(out, "--   STYPE     = {stype}");
+    }
+    let finalfunc = row.get::<_, Option<String>>(7);
+    let _ = writeln!(out, "--   FINALFUNC = {}", finalfunc.as_deref().unwrap_or("(none)"));
+    let initcond = row.get::<_, Option<String>>(8);
+    let _ = writeln!(out, "--   INITCOND  = {}", initcond.map_or("(null)".to_owned(), |c| format!("'{}'", comment(&c))));
+    if let Some(sortop) = row.get::<_, Option<String>>(10) {
+        let _ = writeln!(out, "--   SORTOP    = {sortop}");
     }
     Ok(out)
 }

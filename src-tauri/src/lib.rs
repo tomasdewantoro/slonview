@@ -30,6 +30,7 @@ pub fn run() {
             commands::conn::disconnect,
             commands::schema::list_schema_tree,
             commands::schema::describe_table,
+            commands::schema::get_function_definition,
             commands::data::fetch_page,
             commands::data::count_exact,
             commands::data::get_cell,

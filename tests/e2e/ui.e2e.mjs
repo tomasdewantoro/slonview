@@ -685,6 +685,35 @@ try {
     return out.join("; ");
   });
 
+  await check("Functions: expand public > Functions, open a plpgsql definition", async () => {
+    await page.click('[aria-label^="Functions in public"]');
+    const names = await page.evaluate(() =>
+      [...document.querySelectorAll('[role="group"] [role="group"] button[role="treeitem"]')].map((b) => b.querySelector("span").textContent),
+    );
+    eq(names.filter((n) => n === "order_total").length, 2, "both order_total overloads listed");
+    await page.evaluate(() => {
+      [...document.querySelectorAll('[role="group"] [role="group"] button[role="treeitem"]')]
+        .find((b) => b.querySelector("span").textContent === "customer_label")
+        .click();
+    });
+    // SQL tabs stay mounted (hidden), so match only the visible editor.
+    try {
+      await until(
+        () =>
+          document.querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim() === "customer_label(p_id bigint)" &&
+          [...document.querySelectorAll(".cm-content")]
+            .find((el) => el.offsetParent !== null)
+            ?.textContent.includes("CREATE OR REPLACE FUNCTION public.customer_label"),
+        10000,
+      );
+    } catch {
+      const shown = await page.evaluate(() => [...document.querySelectorAll(".cm-content")].find((el) => el.offsetParent !== null)?.textContent);
+      throw new Error(`definition tab not shown; visible editor: ${shown}`);
+    }
+    await page.screenshot({ path: `${SHOTS}/functions-definition.png` });
+    return `${names.length} functions in public; definition tab "customer_label(p_id bigint)" shows CREATE OR REPLACE FUNCTION`;
+  });
+
   await check("A zero console errors", async () => {
     eq(consoleErrors.length, 0, `console errors: ${consoleErrors.join(" | ")}`);
     return "0 console/page errors";

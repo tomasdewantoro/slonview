@@ -92,6 +92,34 @@ INSERT INTO events SELECT g, date '2024-01-01' + (g % 700), jsonb_build_object('
 
 CREATE TABLE scratch_insert_target (LIKE orders INCLUDING DEFAULTS);
 
+-- Routines for the sidebar's Functions group: an overloaded SQL pair, plpgsql, a procedure,
+-- a custom aggregate, and a function in a quoted schema.
+CREATE OR REPLACE FUNCTION order_total(p_customer bigint) RETURNS numeric
+  LANGUAGE sql STABLE AS $$ SELECT coalesce(sum(amount), 0) FROM orders WHERE customer_id = p_customer $$;
+CREATE OR REPLACE FUNCTION order_total(p_customer bigint, p_status order_status) RETURNS numeric
+  LANGUAGE sql STABLE AS $$ SELECT coalesce(sum(amount), 0) FROM orders WHERE customer_id = p_customer AND status = p_status $$;
+CREATE OR REPLACE FUNCTION customer_label(p_id bigint) RETURNS text
+  LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_name text;
+BEGIN
+  SELECT name INTO v_name FROM customers WHERE id = p_id;
+  RETURN coalesce(v_name, 'unknown') || ' <#' || p_id || '>';
+END;
+$$;
+CREATE OR REPLACE PROCEDURE archive_orders(p_before timestamptz, INOUT p_moved bigint DEFAULT 0)
+  LANGUAGE plpgsql AS $$
+BEGIN
+  SELECT count(*) INTO p_moved FROM orders WHERE created_at < p_before;
+END;
+$$;
+CREATE OR REPLACE FUNCTION text_concat_step(acc text, val text) RETURNS text
+  LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN acc = '' THEN val ELSE acc || ', ' || val END $$;
+CREATE OR REPLACE AGGREGATE comma_join(text) (SFUNC = text_concat_step, STYPE = text, INITCOND = '');
+CREATE OR REPLACE FUNCTION "Sales Data"."Weird Total"("Region Code" text, include_tax boolean DEFAULT true)
+  RETURNS TABLE("Region" text, total numeric)
+  LANGUAGE sql STABLE AS $$ SELECT "Region Code", 0::numeric WHERE include_tax IS NOT NULL $$;
+
 ANALYZE;
 
 DO $$ BEGIN

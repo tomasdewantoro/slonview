@@ -94,6 +94,37 @@ pub struct Relation {
 pub struct SchemaNode {
     pub name: String,
     pub relations: Vec<Relation>,
+    /// Functions, procedures and aggregates, ordered by name then identity arguments.
+    pub functions: Vec<FunctionInfo>,
+}
+
+/// `pg_proc.prokind`: f / p / a / w.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum FunctionKind {
+    Function,
+    Procedure,
+    Aggregate,
+    Window,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FunctionInfo {
+    /// `pg_proc.oid`; the key for `get_function_definition`.
+    #[ts(type = "number")]
+    pub oid: u32,
+    pub schema: String,
+    pub name: String,
+    /// `pg_get_function_identity_arguments`, e.g. "a integer, b integer"; empty for none.
+    pub args: String,
+    /// `pg_get_function_result`, e.g. "uuid" or "TABLE(id integer)"; None for procedures.
+    pub result: Option<String>,
+    pub kind: FunctionKind,
+    /// `pg_language.lanname`, e.g. "sql", "plpgsql", "c", "internal".
+    pub language: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

@@ -130,6 +130,100 @@ async fn schema_tree_lists_fixture_relations() {
 }
 
 #[tokio::test]
+async fn schema_tree_lists_fixture_functions() {
+    let f = fixture().await;
+    let tree = f.engine.list_schema_tree(f.conn).await.unwrap();
+    let funcs = |schema: &str| tree.iter().find(|s| s.name == schema).unwrap().functions.clone();
+    let public = funcs("public");
+    fn sig(fi: &FunctionInfo) -> (&str, &str, Option<&str>, FunctionKind, &str) {
+        (fi.name.as_str(), fi.args.as_str(), fi.result.as_deref(), fi.kind, fi.language.as_str())
+    }
+    let got: Vec<_> = public.iter().map(sig).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("archive_orders", "IN p_before timestamp with time zone, INOUT p_moved bigint", None, FunctionKind::Procedure, "plpgsql"),
+            ("comma_join", "text", Some("text"), FunctionKind::Aggregate, "internal"),
+            ("customer_label", "p_id bigint", Some("text"), FunctionKind::Function, "plpgsql"),
+            ("order_total", "p_customer bigint", Some("numeric"), FunctionKind::Function, "sql"),
+            ("order_total", "p_customer bigint, p_status order_status", Some("numeric"), FunctionKind::Function, "sql"),
+            ("text_concat_step", "acc text, val text", Some("text"), FunctionKind::Function, "sql"),
+        ]
+    );
+    assert!(public.iter().all(|fi| fi.schema == "public" && fi.oid > 0));
+    let sales = funcs("Sales Data");
+    assert_eq!(
+        sales.iter().map(sig).collect::<Vec<_>>(),
+        vec![(
+            "Weird Total",
+            "\"Region Code\" text, include_tax boolean",
+            Some("TABLE(\"Region\" text, total numeric)"),
+            FunctionKind::Function,
+            "sql"
+        )]
+    );
+    assert!(tree.iter().all(|s| s.functions.iter().all(|fi| fi.schema == s.name)));
+}
+
+#[tokio::test]
+async fn function_definitions_by_kind() {
+    let f = fixture().await;
+    let tree = f.engine.list_schema_tree(f.conn).await.unwrap();
+    let oid = |schema: &str, name: &str, args: &str| {
+        tree.iter()
+            .find(|s| s.name == schema)
+            .and_then(|s| s.functions.iter().find(|fi| fi.name == name && fi.args == args))
+            .unwrap_or_else(|| panic!("{schema}.{name}({args}) missing"))
+            .oid
+    };
+    let def = |o: u32| {
+        let engine = f.engine.clone();
+        let conn = f.conn;
+        async move { engine.get_function_definition(conn, o).await }
+    };
+
+    let plpgsql = def(oid("public", "customer_label", "p_id bigint")).await.unwrap();
+    assert!(plpgsql.starts_with("CREATE OR REPLACE FUNCTION public.customer_label(p_id bigint)"), "{plpgsql}");
+    assert!(plpgsql.contains("LANGUAGE plpgsql") && plpgsql.contains("SELECT name INTO v_name"));
+
+    let one = def(oid("public", "order_total", "p_customer bigint")).await.unwrap();
+    let two = def(oid("public", "order_total", "p_customer bigint, p_status order_status")).await.unwrap();
+    assert!(one.starts_with("CREATE OR REPLACE FUNCTION public.order_total(p_customer bigint)\n"), "{one}");
+    assert!(two.contains("p_status order_status") && !one.contains("p_status"));
+
+    let proc = def(oid("public", "archive_orders", "IN p_before timestamp with time zone, INOUT p_moved bigint")).await.unwrap();
+    assert!(proc.starts_with("CREATE OR REPLACE PROCEDURE public.archive_orders("), "{proc}");
+
+    let quoted = def(oid("Sales Data", "Weird Total", "\"Region Code\" text, include_tax boolean")).await.unwrap();
+    assert!(quoted.starts_with("CREATE OR REPLACE FUNCTION \"Sales Data\".\"Weird Total\"("), "{quoted}");
+
+    let agg = def(oid("public", "comma_join", "text")).await.unwrap();
+    assert_eq!(
+        agg,
+        "-- Aggregate function public.comma_join(text)\n\
+         -- Returns: text\n\
+         --\n\
+         -- pg_get_functiondef does not support aggregates; details from pg_aggregate:\n\
+         --   KIND      = normal\n\
+         --   SFUNC     = text_concat_step(text,text)\n\
+         --   STYPE     = text\n\
+         --   FINALFUNC = (none)\n\
+         --   INITCOND  = ''\n"
+    );
+
+    // A built-in window function (not in the tree, but any pg_proc oid is accepted).
+    let row_number = psql_values(&f, "select 'row_number()'::regprocedure::oid::text").await;
+    let window = def(row_number[0][0].as_deref().unwrap().parse().unwrap()).await.unwrap();
+    assert!(window.starts_with("CREATE OR REPLACE FUNCTION pg_catalog.row_number()"), "{window}");
+    assert!(window.contains("WINDOW"), "{window}");
+
+    let err = def(4_000_000_000).await.unwrap_err();
+    assert!(matches!(err, AppError::Invalid { .. }), "{err:?}");
+    let err = f.engine.get_function_definition(uuid::Uuid::new_v4(), 1).await.unwrap_err();
+    assert_eq!(err, AppError::NotConnected);
+}
+
+#[tokio::test]
 async fn describe_orders() {
     let f = fixture().await;
     let d = f.engine.describe_table(f.conn, "public", "orders").await.unwrap();

@@ -100,6 +100,10 @@ pub async fn describe_table(engine: &Engine, conn_id: ConnId, schema: &str, tabl
     engine.describe_table(conn_id, schema, table).await
 }
 
+pub async fn get_function_definition(engine: &Engine, conn_id: ConnId, oid: u32) -> AppResult<String> {
+    engine.get_function_definition(conn_id, oid).await
+}
+
 // Data
 
 pub async fn fetch_page(engine: &Engine, request_id: &RequestId, req: &PageRequest) -> AppResult<Page> {

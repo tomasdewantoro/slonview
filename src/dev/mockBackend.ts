@@ -6,6 +6,8 @@ import type { Column } from "../bindings/Column";
 import type { ColumnDetail } from "../bindings/ColumnDetail";
 import type { ConnProfile } from "../bindings/ConnProfile";
 import type { Filter } from "../bindings/Filter";
+import type { FunctionInfo } from "../bindings/FunctionInfo";
+import type { FunctionKind } from "../bindings/FunctionKind";
 import type { HistoryEntry } from "../bindings/HistoryEntry";
 import type { Page } from "../bindings/Page";
 import type { PageRequest } from "../bindings/PageRequest";
@@ -415,13 +417,60 @@ async function fetchPage(requestId: string, req: PageRequest): Promise<Page> {
   };
 }
 
+interface MockFunction extends FunctionInfo {
+  definition: string;
+}
+
+let nextOid = 16_500;
+function fn(schema: string, name: string, args: string, result: string | null, kind: FunctionKind, language: string, body: string): MockFunction {
+  const q = (s: string) => (/^[a-z_][a-z0-9_]*$/.test(s) ? s : `"${s.replace(/"/g, '""')}"`);
+  const head = kind === "procedure" ? "PROCEDURE" : "FUNCTION";
+  const definition =
+    kind === "aggregate"
+      ? `-- Aggregate function ${q(schema)}.${q(name)}(${args})\n-- Returns: ${result}\n--\n-- pg_get_functiondef does not support aggregates; details from pg_aggregate:\n${body}`
+      : `CREATE OR REPLACE ${head} ${q(schema)}.${q(name)}(${args})\n${result ? ` RETURNS ${result}\n` : ""} LANGUAGE ${language}\n${kind === "window" ? " WINDOW\n" : ""}AS ${body}\n`;
+  return { oid: nextOid++, schema, name, args, result, kind, language, definition };
+}
+
+const UUID_OSSP = (name: string, args: string) => fn("public", name, args, "uuid", "function", "c", `'$libdir/uuid-ossp', '${name}'`);
+
+const functions: MockFunction[] = [
+  fn("public", "archive_orders", "IN p_before timestamp with time zone, INOUT p_moved bigint", null, "procedure", "plpgsql",
+    "$procedure$\nBEGIN\n  SELECT count(*) INTO p_moved FROM orders WHERE created_at < p_before;\nEND;\n$procedure$"),
+  fn("public", "comma_join", "text", "text", "aggregate", "internal",
+    "--   KIND      = normal\n--   SFUNC     = text_concat_step(text,text)\n--   STYPE     = text\n--   FINALFUNC = (none)\n--   INITCOND  = ''\n"),
+  fn("public", "customer_label", "p_id bigint", "text", "function", "plpgsql",
+    "$function$\nDECLARE\n  v_name text;\nBEGIN\n  SELECT name INTO v_name FROM customers WHERE id = p_id;\n  RETURN coalesce(v_name, 'unknown') || ' <#' || p_id || '>';\nEND;\n$function$"),
+  fn("public", "order_revenue_report", "p_from timestamp with time zone, p_to timestamp with time zone, p_status text DEFAULT 'paid'::text, p_city text DEFAULT NULL::text",
+    "TABLE(day date, city text, orders bigint, revenue numeric)", "function", "sql",
+    "$function$\n  SELECT o.created_at::date, c.city, count(*), sum(o.amount)\n  FROM orders o JOIN customers c ON c.id = o.customer_id\n  WHERE o.created_at >= p_from AND o.created_at < p_to AND o.status = p_status\n    AND (p_city IS NULL OR c.city = p_city)\n  GROUP BY 1, 2 ORDER BY 1, 2\n$function$"),
+  fn("public", "order_total", "p_customer bigint", "numeric", "function", "sql",
+    "$function$ SELECT coalesce(sum(amount), 0) FROM orders WHERE customer_id = p_customer $function$"),
+  fn("public", "order_total", "p_customer bigint, p_status text", "numeric", "function", "sql",
+    "$function$ SELECT coalesce(sum(amount), 0) FROM orders WHERE customer_id = p_customer AND status = p_status $function$"),
+  fn("public", "running_rank", "score numeric", "bigint", "window", "c", "'$libdir/ranking', 'running_rank'"),
+  UUID_OSSP("uuid_generate_v1", ""),
+  UUID_OSSP("uuid_generate_v1mc", ""),
+  UUID_OSSP("uuid_generate_v3", "namespace uuid, name text"),
+  UUID_OSSP("uuid_generate_v4", ""),
+  UUID_OSSP("uuid_generate_v5", "namespace uuid, name text"),
+  UUID_OSSP("uuid_nil", ""),
+  UUID_OSSP("uuid_ns_dns", ""),
+  UUID_OSSP("uuid_ns_oid", ""),
+  UUID_OSSP("uuid_ns_url", ""),
+  UUID_OSSP("uuid_ns_x500", ""),
+  fn("Sales Data", "Weird Total", "\"Region Code\" text, include_tax boolean", "TABLE(\"Region\" text, total numeric)", "function", "sql",
+    "$function$ SELECT \"Region Code\", 0::numeric WHERE include_tax IS NOT NULL $function$"),
+];
+
 function schemaTree(): SchemaNode[] {
   const bySchema = new Map<string, SchemaNode>();
   for (const t of tables) {
-    const node = bySchema.get(t.schema) ?? { name: t.schema, relations: [] };
+    const node = bySchema.get(t.schema) ?? { name: t.schema, relations: [], functions: [] };
     node.relations.push({ schema: t.schema, name: t.name, kind: t.kind, estRows: t.name === "broken_table" ? -1 : t.rowCount, sizeBytes: t.sizeBytes });
     bySchema.set(t.schema, node);
   }
+  for (const { definition: _definition, ...f } of functions) bySchema.get(f.schema)?.functions.push(f);
   return [...bySchema.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -568,6 +617,13 @@ export function installMockBackend(): void {
           viewDefinition: t.viewDefinition ?? null,
         };
         return d;
+      }
+      case "get_function_definition": {
+        requireConn(a.connId);
+        await delay(null, 80);
+        const f = functions.find((x) => x.oid === a.oid);
+        if (!f) throw err({ kind: "invalid", message: `function with oid ${a.oid} not found (it may have been dropped)`, position: null });
+        return f.definition;
       }
       case "fetch_page":
         return fetchPage(a.requestId, a.req);
