@@ -80,6 +80,42 @@ pub(crate) fn tls() -> MakeRustlsConnect {
     TLS.clone()
 }
 
+/// verify-ca differs from verify-full only by omitting the name check; all
+/// signature, validity, purpose and chain checks still run in WebPki.
+#[derive(Debug)]
+struct CaVerifier(Arc<rustls::client::WebPkiServerVerifier>);
+impl ServerCertVerifier for CaVerifier {
+    fn verify_server_cert(&self, cert: &CertificateDer<'_>, chain: &[CertificateDer<'_>], name: &ServerName<'_>, ocsp: &[u8], now: UnixTime) -> Result<ServerCertVerified, rustls::Error> {
+        match self.0.verify_server_cert(cert, chain, name, ocsp, now) {
+            Err(rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName | rustls::CertificateError::NotValidForNameContext { .. })) => Ok(ServerCertVerified::assertion()),
+            result => result,
+        }
+    }
+    fn verify_tls12_signature(&self, m: &[u8], c: &CertificateDer<'_>, s: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> { self.0.verify_tls12_signature(m,c,s) }
+    fn verify_tls13_signature(&self, m: &[u8], c: &CertificateDer<'_>, s: &DigitallySignedStruct) -> Result<HandshakeSignatureValid, rustls::Error> { self.0.verify_tls13_signature(m,c,s) }
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> { self.0.supported_verify_schemes() }
+}
+
+fn verifier(profile: &ConnProfile) -> AppResult<Arc<dyn ServerCertVerifier>> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+    if let Some(path) = &profile.ssl_root_cert {
+        let file = std::fs::File::open(path).map_err(|e| AppError::Tls { message: format!("Cannot open CA file {path}: {e}") })?;
+        let certs = rustls_pemfile::certs(&mut std::io::BufReader::new(file)).collect::<Result<Vec<_>,_>>().map_err(|e| AppError::Tls { message: format!("Invalid PEM CA file: {e}") })?;
+        if certs.is_empty() { return Err(AppError::Tls { message: "CA file contains no PEM certificates".into() }); }
+        for cert in certs { roots.add(cert).map_err(|e| AppError::Tls { message: format!("Invalid CA certificate: {e}") })?; }
+    }
+    let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(Arc::new(roots), Arc::new(ring::default_provider())).build().map_err(|e| AppError::Tls { message: e.to_string() })?;
+    Ok(if profile.ssl == SslMode::VerifyCa { Arc::new(CaVerifier(verifier)) } else { verifier })
+}
+
+/// Per-profile TLS connector: encrypt-only for prefer/require, WebPki verification
+/// against system roots (plus an optional CA bundle) for verify-ca/verify-full.
+fn profile_tls(profile: &ConnProfile) -> AppResult<MakeRustlsConnect> {
+    if !matches!(profile.ssl, SslMode::VerifyCa | SslMode::VerifyFull) { return Ok(TLS.clone()); }
+    Ok(MakeRustlsConnect::new(rustls::ClientConfig::builder_with_provider(Arc::new(ring::default_provider())).with_safe_default_protocol_versions().expect("TLS versions").dangerous().with_custom_certificate_verifier(verifier(profile)?).with_no_client_auth()))
+}
+
 fn pg_config(profile: &ConnProfile, password: Option<&str>, ssl: PgSslMode) -> Config {
     let mut cfg = Config::new();
     if profile.host.starts_with('/') {
@@ -116,8 +152,8 @@ pub(crate) fn session_setup_sql(profile: &ConnProfile) -> String {
     sql
 }
 
-async fn connect_once(cfg: &Config) -> Result<Client, AppError> {
-    let fut = cfg.connect(tls());
+async fn connect_once(cfg: &Config, tls: MakeRustlsConnect) -> Result<Client, AppError> {
+    let fut = cfg.connect(tls);
     let (client, connection) = match tokio::time::timeout(CONNECT_TIMEOUT, fut).await {
         Ok(Ok(pair)) => pair,
         Ok(Err(e)) => return Err(map_connect_error(e)),
@@ -138,14 +174,15 @@ async fn connect_once(cfg: &Config) -> Result<Client, AppError> {
 /// Opens one standalone session (no pool). For `Prefer`, a failed TLS handshake
 /// is retried without TLS. Returns the client and the ssl mode that worked.
 pub(crate) async fn open_client(profile: &ConnProfile, password: Option<&str>) -> AppResult<(Client, PgSslMode)> {
+    let tls = profile_tls(profile)?;
     let modes: &[PgSslMode] = match profile.ssl {
         SslMode::Disable => &[PgSslMode::Disable],
-        SslMode::Require => &[PgSslMode::Require],
+        SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull => &[PgSslMode::Require],
         SslMode::Prefer => &[PgSslMode::Prefer, PgSslMode::Disable],
     };
     let mut last_err = None;
     for &mode in modes {
-        match connect_once(&pg_config(profile, password, mode)).await {
+        match connect_once(&pg_config(profile, password, mode), tls.clone()).await {
             Ok(client) => return Ok((client, mode)),
             Err(AppError::Connect { message }) if mode == PgSslMode::Prefer && message.starts_with(TLS_HANDSHAKE_ERR) => {
                 tracing::debug!("TLS handshake failed, retrying without TLS: {message}");
@@ -163,7 +200,7 @@ const TLS_HANDSHAKE_ERR: &str = "error performing TLS handshake";
 pub(crate) fn build_pool(profile: &ConnProfile, password: Option<&str>, ssl: PgSslMode) -> AppResult<Pool> {
     let manager = Manager::from_config(
         pg_config(profile, password, ssl),
-        tls(),
+        profile_tls(profile)?,
         ManagerConfig { recycling_method: RecyclingMethod::Fast },
     );
     let setup: Arc<str> = session_setup_sql(profile).into();
@@ -202,6 +239,12 @@ pub(crate) fn map_connect_error(e: tokio_postgres::Error) -> AppError {
         };
     }
     let message = error_chain(&e);
+    if message.contains("UnknownIssuer") || message.contains("unknown issuer") {
+        return AppError::Tls { message: "Unknown certificate issuer. Choose the server's CA PEM file or install its CA in the system trust store.".into() };
+    }
+    if message.contains("NotValidForName") || message.contains("not valid for name") {
+        return AppError::Tls { message: "Certificate hostname mismatch. Use the hostname listed in the server certificate.".into() };
+    }
     if message.starts_with("authentication error") {
         AppError::Auth { message }
     } else {
@@ -314,6 +357,7 @@ mod tests {
             color: None,
             statement_timeout_ms: 1500,
             time_zone: None,
+            ssl_root_cert: None,
         }
     }
 
@@ -336,5 +380,35 @@ mod tests {
         assert!(session_setup_sql(&p).ends_with("; SET default_transaction_read_only = on; SET TIME ZONE 'Asia/Jakarta'"));
         p.time_zone = Some("x'; DROP TABLE t; --".into());
         assert!(session_setup_sql(&p).ends_with("; SET TIME ZONE 'x''; DROP TABLE t; --'"));
+    }
+
+    #[test]
+    fn verified_tls_checks_chain_and_optional_hostname() {
+        use rcgen::{CertificateParams, IsCa, BasicConstraints, KeyPair, Issuer};
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params = CertificateParams::new(vec![]).unwrap();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let issuer = Issuer::new(ca_params, ca_key);
+        let key = KeyPair::generate().unwrap();
+        let cert = CertificateParams::new(vec!["db.example.com".into()]).unwrap().signed_by(&key, &issuer).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("root.pem");
+        std::fs::write(&path, ca.pem()).unwrap();
+        let mut p = profile(true);
+        p.ssl = SslMode::VerifyFull;
+        p.ssl_root_cert = Some(path.to_string_lossy().into_owned());
+        let valid = ServerName::try_from("db.example.com").unwrap();
+        let wrong = ServerName::try_from("wrong.example.com").unwrap();
+        let verifier_full = verifier(&p).unwrap();
+        assert!(verifier_full.verify_server_cert(cert.der(), &[], &valid, &[], UnixTime::now()).is_ok());
+        assert!(matches!(verifier_full.verify_server_cert(cert.der(), &[], &wrong, &[], UnixTime::now()), Err(rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForNameContext { .. } | rustls::CertificateError::NotValidForName))));
+        p.ssl = SslMode::VerifyCa;
+        assert!(verifier(&p).unwrap().verify_server_cert(cert.der(), &[], &wrong, &[], UnixTime::now()).is_ok());
+        p.ssl_root_cert = None;
+        for mode in [SslMode::VerifyCa, SslMode::VerifyFull] {
+            p.ssl = mode;
+            assert!(matches!(verifier(&p).unwrap().verify_server_cert(cert.der(), &[], &valid, &[], UnixTime::now()), Err(rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer))));
+        }
     }
 }

@@ -16,4 +16,4 @@ position: number | null, } | { "kind": "cancelled" } | { "kind": "timeout" } | {
 /**
  * 1-based character position in the submitted SQL, when the input is SQL text.
  */
-position: number | null, } | { "kind": "internal", message: string, };
+position: number | null, } | { "kind": "internal", message: string, } | { "kind": "tls", message: string, };

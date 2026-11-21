@@ -1,4 +1,5 @@
 import { Check, Eye, EyeOff, LoaderCircle } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
 import { api, errorMessage } from "../api";
 import type { ConnProfile } from "../bindings/ConnProfile";
@@ -69,6 +70,7 @@ export function newProfile(): ConnProfile {
     color: null,
     statementTimeoutMs: 30000,
     timeZone: null,
+    sslRootCert: null,
   };
 }
 
@@ -100,10 +102,17 @@ export function ConnectionDialog({ existing, onClose }: Props) {
     setTest({ kind: "idle" });
   };
 
+  const chooseCa = async () => {
+    try {
+      const path = await open({ multiple: false, filters: [{ name: "PEM certificates", extensions: ["pem", "crt"] }] });
+      if (typeof path === "string") update({ sslRootCert: path });
+    } catch (e) { setSaveError(errorMessage(e)); }
+  };
+
   const applyParsed = (parsed: ParsedConn) => {
     // Keep identity (id, color, read-only choice) of the profile being edited; take the connection fields.
-    const { host, port, database, user, ssl, timeZone } = parsed.profile;
-    setP((cur) => ({ ...cur, host, port, database, user, ssl, timeZone: timeZone ?? cur.timeZone, name: cur.name || parsed.profile.name }));
+    const { host, port, database, user, ssl, timeZone, sslRootCert } = parsed.profile;
+    setP((cur) => ({ ...cur, host, port, database, user, ssl, sslRootCert, timeZone: timeZone ?? cur.timeZone, name: cur.name || parsed.profile.name }));
     setPassword(parsed.password ?? "");
     setPasswordTouched(true);
     setTest({ kind: "idle" });
@@ -151,6 +160,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
     database: p.database.trim(),
     user: p.user.trim(),
     timeZone: p.timeZone?.trim() || null,
+    sslRootCert: p.sslRootCert?.trim() || null,
   });
 
   const valid = p.host.trim() !== "" && p.database.trim() !== "" && p.user.trim() !== "" && p.port > 0 && p.port < 65536;
@@ -374,11 +384,23 @@ export function ConnectionDialog({ existing, onClose }: Props) {
         <label htmlFor="cd-ssl" className="text-muted">
           SSL
         </label>
-        <select id="cd-ssl" className="field w-32" value={p.ssl} onChange={(e) => update({ ssl: e.target.value as SslMode })}>
-          <option value="disable">disable</option>
-          <option value="prefer">prefer</option>
-          <option value="require">require</option>
-        </select>
+        <div>
+          <select id="cd-ssl" className="field w-36" value={p.ssl} onChange={(e) => update({ ssl: e.target.value as SslMode })} aria-describedby="cd-ssl-help">
+            <option value="disable">disable</option>
+            <option value="prefer">prefer</option>
+            <option value="require">require</option>
+            <option value="verify-ca">verify-ca</option>
+            <option value="verify-full">verify-full</option>
+          </select>
+          <p id="cd-ssl-help" className="mt-1 text-xs text-muted">{{ disable: "No encryption. Use only for trusted local connections.", prefer: "Try encryption; allow an unencrypted fallback. Does not verify the server.", require: "Require encryption without verifying the server certificate.", "verify-ca": "Require encryption and a trusted certificate chain; hostname is not checked.", "verify-full": "Verify the certificate chain and hostname. Recommended for production." }[p.ssl]}</p>
+        </div>
+        {(p.ssl === "verify-ca" || p.ssl === "verify-full") && <>
+          <label htmlFor="cd-ca" className="text-muted">CA file</label>
+          <div>
+            <div className="flex gap-2"><input id="cd-ca" className="field min-w-0 flex-1 font-mono text-xs" value={p.sslRootCert ?? ""} placeholder="System roots only" onChange={(e) => update({ sslRootCert: e.target.value || null })} /><button type="button" className="btn" onClick={chooseCa}>Choose…</button></div>
+            <p className="mt-1 text-xs text-muted">Optional PEM bundle, added to this Mac's trusted roots.</p>
+          </div>
+        </>}
 
         <label htmlFor="cd-timeout" className="text-muted">
           Timeout

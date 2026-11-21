@@ -33,6 +33,7 @@ pub fn new_profile() -> ConnProfile {
         color: None,
         statement_timeout_ms: 30_000,
         time_zone: None,
+        ssl_root_cert: None,
     }
 }
 
@@ -249,4 +250,6 @@ mod tests {
         assert!(fs::read_to_string(&path).unwrap().contains("timeZone = \"Asia/Jakarta\""));
         assert_eq!(store.get(p.id).unwrap(), p);
     }
+
+
 }

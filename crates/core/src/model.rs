@@ -17,6 +17,8 @@ pub enum SslMode {
     #[default]
     Prefer,
     Require,
+    VerifyCa,
+    VerifyFull,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -40,6 +42,9 @@ pub struct ConnProfile {
     /// session; None = server default. Absent in older connections.toml files.
     #[serde(default)]
     pub time_zone: Option<String>,
+    /// Optional PEM CA bundle, added to the system trust roots.
+    #[serde(default)]
+    pub ssl_root_cert: Option<String>,
 }
 
 /// Result of parsing a `postgres://` URL or a `~/.pgpass` line.

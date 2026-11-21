@@ -117,7 +117,7 @@ tests/e2e/run.sh
 
 - **Read-only mode is a guard, not a permission system.** It stops ordinary writes, transaction escapes, and multi-command text in Raw WHERE and filters. It does not stop functions with effects outside the transaction (for example `pg_advisory_lock`, or extensions such as `dblink` and `postgres_fdw` that open their own connections). For a hard guarantee, connect as a database role that only has `SELECT`.
 - **Passwords live in the macOS Keychain** (service `slonview`, one item per profile). Connection profiles are stored without passwords in `~/Library/Application Support/slonview/connections.toml` (file mode `0600`).
-- **TLS encrypts but does not verify the server certificate.** `prefer` and `require` behave like libpq `sslmode=require`: the connection is encrypted, but the certificate chain is not validated against a CA, so it does not protect against an active man-in-the-middle. `verify-ca` and `verify-full` in pasted URLs are currently treated as `require`.
+- **TLS modes.** `prefer` and `require` encrypt but do not verify the server certificate (libpq `sslmode=require` semantics), so they do not protect against an active man-in-the-middle. `verify-ca` validates the certificate chain against the system trust store (plus an optional per-profile CA PEM bundle) but skips the hostname check; `verify-full` also checks the hostname. **Use `verify-full` for production** connections to untrusted networks.
 - The frontend never builds SQL for table browsing; the Rust core quotes identifiers and binds values.
 
 ## Trademark

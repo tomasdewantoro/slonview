@@ -18,4 +18,8 @@ statementTimeoutMs: number,
  * IANA time zone (e.g. "Asia/Jakarta") applied with `SET TIME ZONE` to every
  * session; None = server default. Absent in older connections.toml files.
  */
-timeZone: string | null, };
+timeZone: string | null, 
+/**
+ * Optional PEM CA bundle, added to the system trust roots.
+ */
+sslRootCert: string | null, };
