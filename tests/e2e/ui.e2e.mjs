@@ -483,8 +483,14 @@ try {
     await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Cancel"));
     await clickText("Cancel");
     await until(() => document.body.innerText.includes("Load cancelled."), 3000);
-    await sleep(800);
-    const active = psql("select count(*) from pg_stat_activity where datname='slonview_fixture' and state='active' and pid <> pg_backend_pid()");
+    // Only Slonview's own sessions count; other tools (cargo tests, psql) may share the DB.
+    // Poll briefly: a cancelled backend can take a moment to report idle.
+    let active = "";
+    for (let i = 0; i < 20; i++) {
+      active = psql("select count(*) from pg_stat_activity where datname='slonview_fixture' and application_name='slonview' and state='active'");
+      if (active === "0") break;
+      await sleep(150);
+    }
     eq(active, "0", "server-side queries still active");
     await page.$eval('input[aria-label="Raw WHERE expression"]', (e) => e.select());
     await page.keyboard.press("Backspace");
@@ -690,10 +696,17 @@ try {
       await openRel("scratch_insert_target");
       // Edit permissions load asynchronously; "Add row" is enabled only once editing is allowed.
       await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Add row" && !b.disabled), 10000);
-      // Activate the `note` cell (column 4, row 0) through Glide's accessible cell mirror:
-      // its click sends Enter to exactly that cell, whatever the grid's scroll position.
-      await until(() => !!document.querySelector('[data-testid="glide-cell-4-0"]'), 10000);
-      await page.evaluate(() => document.querySelector('[data-testid="glide-cell-4-0"]').click());
+      // Activate the `note` cell (row 0) through Glide's accessible cell mirror: clicking a
+      // mirror cell sends Enter to exactly that cell, whatever the grid's scroll position.
+      // Column indexes include the row-marker column, so resolve `note` by its header.
+      await until(() => [...document.querySelectorAll('th[role="columnheader"]')].some((h) => h.textContent.trim() === "note"), 10000);
+      const ok = await page.evaluate(() => {
+        const th = [...document.querySelectorAll('th[role="columnheader"]')].find((h) => h.textContent.trim() === "note");
+        const cell = th && document.querySelector(`td[role="gridcell"][aria-colindex="${th.getAttribute("aria-colindex")}"]`);
+        cell?.click();
+        return !!cell;
+      });
+      assert(ok, "note cell not in the accessible grid");
       await page.waitForSelector('[aria-label="Edit note"]');
       await page.$eval("#edit-value", e => e.select());
       await page.type("#edit-value", "grid-after 'quoted'");
