@@ -48,6 +48,8 @@ pub fn run() {
             commands::sql_assist::list_columns,
             commands::sql_assist::explain,
             commands::connections::set_time_zone,
+            commands::connections::save_ssh_secret,
+            commands::connections::test_tunnel_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

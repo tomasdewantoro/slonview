@@ -41,7 +41,12 @@ impl Engine {
 
     /// Connect with an unsaved profile + password; runs `SELECT version()`; closes after.
     pub async fn test_connection(&self, profile: &ConnProfile, password: Option<&str>) -> AppResult<ServerInfo> {
-        let transport = Transport::new(profile).await?;
+        let secret = self.ssh_secret(profile)?;
+        self.test_connection_with_ssh(profile, password, secret.as_deref()).await
+    }
+
+    pub async fn test_connection_with_ssh(&self, profile: &ConnProfile, password: Option<&str>, ssh_secret: Option<&str>) -> AppResult<ServerInfo> {
+        let transport = Transport::new(profile, ssh_secret).await?;
         let (client, _) = conn::open_client(profile, password, &transport).await?;
         client
             .batch_execute(&conn::session_setup_sql(profile))
@@ -60,7 +65,8 @@ impl Engine {
 
     async fn connect_with(&self, profile: ConnProfile, password: Option<&str>) -> AppResult<ServerInfo> {
         // A standalone probe settles which TLS mode works (Prefer may fall back to plain).
-        let transport = Transport::new(&profile).await?;
+        let secret = self.ssh_secret(&profile)?;
+        let transport = Transport::new(&profile, secret.as_deref()).await?;
         let (probe, ssl) = conn::open_client(&profile, password, &transport).await?;
         drop(probe);
         let pool = conn::build_pool(&profile, password, ssl, transport.clone())?;
@@ -74,6 +80,14 @@ impl Engine {
             old.pool.close();
         }
         Ok(info)
+    }
+
+    fn ssh_secret(&self, profile: &ConnProfile) -> AppResult<Option<String>> {
+        match profile.ssh.as_ref().map(|ssh| &ssh.auth) {
+            Some(SshAuth::Key { .. }) => self.secrets.get_ssh(profile.id, true),
+            Some(SshAuth::Password) => self.secrets.get_ssh(profile.id, false),
+            _ => Ok(None),
+        }
     }
 
     /// Atomically swap pools, leaving checked-out sessions and all open tabs alive.

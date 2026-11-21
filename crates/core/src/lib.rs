@@ -17,6 +17,7 @@ mod objects;
 mod paging;
 mod query;
 mod split;
+mod ssh;
 mod edit;
 
 pub use error::{AppError, AppResult};

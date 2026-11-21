@@ -1,6 +1,7 @@
 import { Check, Eye, EyeOff, LoaderCircle } from "lucide-react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { SshConfig } from "../bindings/SshConfig";
 import { api, errorMessage } from "../api";
 import type { ConnProfile } from "../bindings/ConnProfile";
 import type { ParsedConn } from "../bindings/ParsedConn";
@@ -71,6 +72,7 @@ export function newProfile(): ConnProfile {
     statementTimeoutMs: 30000,
     timeZone: null,
     sslRootCert: null,
+    ssh: null,
   };
 }
 
@@ -96,17 +98,19 @@ export function ConnectionDialog({ existing, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [macZone] = useState(localTimeZone);
-
-  const update = (patch: Partial<ConnProfile>) => {
-    setP((cur) => ({ ...cur, ...patch }));
-    setTest({ kind: "idle" });
-  };
-
+  const [sshSecret, setSshSecret] = useState("");
+  const [sshSecretTouched, setSshSecretTouched] = useState(false);
+  const updateSsh = (patch: Partial<SshConfig>) => { if (p.ssh) update({ ssh: { ...p.ssh, ...patch } }); };
   const chooseCa = async () => {
     try {
       const path = await open({ multiple: false, filters: [{ name: "PEM certificates", extensions: ["pem", "crt"] }] });
       if (typeof path === "string") update({ sslRootCert: path });
     } catch (e) { setSaveError(errorMessage(e)); }
+  };
+
+  const update = (patch: Partial<ConnProfile>) => {
+    setP((cur) => ({ ...cur, ...patch }));
+    setTest({ kind: "idle" });
   };
 
   const applyParsed = (parsed: ParsedConn) => {
@@ -146,7 +150,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
   const runTest = async () => {
     setTest({ kind: "running" });
     try {
-      const info = await api.testConnection(finalProfile(), passwordArg() ?? null);
+      const info = await api.testTunnelConnection(finalProfile(), passwordArg() ?? null, sshSecretTouched ? sshSecret : null);
       setTest({ kind: "ok", info });
     } catch (e) {
       setTest({ kind: "error", message: errorMessage(e) });
@@ -163,12 +167,13 @@ export function ConnectionDialog({ existing, onClose }: Props) {
     sslRootCert: p.sslRootCert?.trim() || null,
   });
 
-  const valid = p.host.trim() !== "" && p.database.trim() !== "" && p.user.trim() !== "" && p.port > 0 && p.port < 65536;
+  const valid = p.host.trim() !== "" && p.database.trim() !== "" && p.user.trim() !== "" && p.port > 0 && p.port < 65536 && (!p.ssh || (!!p.ssh.host.trim() && !!p.ssh.user.trim() && p.ssh.port > 0 && p.ssh.port < 65536 && (p.ssh.auth.kind !== "key" || !!p.ssh.auth.path.trim())));
 
   const save = async () => {
     setSaving(true);
     setSaveError(null);
     try {
+      if (p.ssh && sshSecretTouched && p.ssh.auth.kind !== "agent") await api.saveSshSecret(p.id, p.ssh.auth.kind === "key", sshSecret || null);
       await appStore.getState().saveProfile(finalProfile(), passwordArg());
       onClose();
     } catch (e) {
@@ -401,6 +406,21 @@ export function ConnectionDialog({ existing, onClose }: Props) {
             <p className="mt-1 text-xs text-muted">Optional PEM bundle, added to this Mac's trusted roots.</p>
           </div>
         </>}
+
+        <div className="col-span-2 my-1 h-px bg-border" />
+        <span className="text-muted">SSH tunnel</span>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={!!p.ssh} onChange={(e) => update({ ssh: e.target.checked ? { host: "", port: 22, user: "", auth: { kind: "agent" } } : null })} />Connect through SSH</label>
+        {p.ssh && <>
+          <label htmlFor="cd-ssh-host" className="text-muted">SSH host</label>
+          <div className="flex gap-2"><input id="cd-ssh-host" className="field min-w-0 flex-1 font-mono text-xs" value={p.ssh.host} onChange={(e) => updateSsh({ host: e.target.value })} /><input aria-label="SSH port" className="field w-20 font-mono text-xs" type="number" min="1" max="65535" value={p.ssh.port} onChange={(e) => updateSsh({ port: Number(e.target.value) })} /></div>
+          <label htmlFor="cd-ssh-user" className="text-muted">SSH user</label><input id="cd-ssh-user" className="field" value={p.ssh.user} onChange={(e) => updateSsh({ user: e.target.value })} />
+          <label htmlFor="cd-ssh-auth" className="text-muted">Authenticate</label>
+          <select id="cd-ssh-auth" className="field" value={p.ssh.auth.kind} onChange={(e) => { updateSsh({ auth: e.target.value === "key" ? { kind: "key", path: "~/.ssh/id_ed25519" } : { kind: e.target.value as "agent" | "password" } }); setSshSecret(""); setSshSecretTouched(false); }}><option value="agent">SSH agent</option><option value="key">Private key</option><option value="password">Password</option></select>
+          {p.ssh.auth.kind === "key" && <><label htmlFor="cd-ssh-key" className="text-muted">Key path</label><input id="cd-ssh-key" className="field font-mono text-xs" value={p.ssh.auth.path} onChange={(e) => updateSsh({ auth: { kind: "key", path: e.target.value } })} /></>}
+          {p.ssh.auth.kind !== "agent" && <><label htmlFor="cd-ssh-secret" className="text-muted">{p.ssh.auth.kind === "key" ? "Passphrase" : "SSH password"}</label><input id="cd-ssh-secret" className="field" type="password" value={sshSecret} placeholder={existing && !sshSecretTouched ? "Keychain (unchanged)" : "Stored in Keychain"} onChange={(e) => { setSshSecret(e.target.value); setSshSecretTouched(true); setTest({ kind: "idle" }); }} autoComplete="off" /></>}
+          <span /><p className="text-xs text-muted">The database host is reached from the SSH server. Host keys must already be trusted in ~/.ssh/known_hosts.</p>
+        </>}
+        <div className="col-span-2 my-1 h-px bg-border" />
 
         <label htmlFor="cd-timeout" className="text-muted">
           Timeout

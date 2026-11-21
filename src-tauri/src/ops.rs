@@ -210,6 +210,24 @@ pub async fn set_time_zone(engine: &Engine, conn_id: ConnId, time_zone: Option<S
     engine.set_time_zone(conn_id, time_zone).await
 }
 
+/// SSH secrets never enter ConnProfile or connections.toml. None means clear.
+pub async fn save_ssh_secret(engine: &Engine, id: ConnId, passphrase: bool, value: Option<&str>) -> AppResult<()> {
+    engine.secrets.set_ssh(id, passphrase, value)
+}
+
+pub async fn test_tunnel_connection(engine: &Engine, profile: &ConnProfile, password: Option<&str>, ssh_secret: Option<&str>) -> AppResult<ServerInfo> {
+    let stored;
+    let ssh_secret = if ssh_secret.is_none() {
+        stored = match profile.ssh.as_ref().map(|ssh| &ssh.auth) {
+            Some(slonview_core::model::SshAuth::Password) => engine.secrets.get_ssh(profile.id, false)?,
+            Some(slonview_core::model::SshAuth::Key { .. }) => engine.secrets.get_ssh(profile.id, true)?,
+            _ => None,
+        };
+        stored.as_deref()
+    } else { ssh_secret };
+    engine.test_connection_with_ssh(&normalize_profile(profile.clone()), password, ssh_secret).await
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

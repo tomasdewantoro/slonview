@@ -9,6 +9,8 @@ pub trait SecretStore: Send + Sync {
     fn set(&self, id: ConnId, password: &str) -> AppResult<()>;
     /// Deleting a missing entry is Ok.
     fn delete(&self, id: ConnId) -> AppResult<()>;
+    fn get_ssh(&self, id: ConnId, passphrase: bool) -> AppResult<Option<String>>;
+    fn set_ssh(&self, id: ConnId, passphrase: bool, value: Option<&str>) -> AppResult<()>;
 }
 
 pub struct KeychainStore;
@@ -17,6 +19,7 @@ pub struct KeychainStore;
 #[derive(Default)]
 pub struct MemorySecretStore {
     inner: std::sync::Mutex<std::collections::HashMap<ConnId, String>>,
+    ssh: std::sync::Mutex<std::collections::HashMap<(ConnId, bool), String>>,
 }
 
 fn keychain_entry(id: ConnId) -> AppResult<keyring::Entry> {
@@ -44,6 +47,23 @@ impl SecretStore for KeychainStore {
             Err(e) => Err(keychain_error(e)),
         }
     }
+    fn get_ssh(&self, id: ConnId, passphrase: bool) -> AppResult<Option<String>> {
+        match ssh_entry(id, passphrase)?.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(keychain_error(e)),
+        }
+    }
+    fn set_ssh(&self, id: ConnId, passphrase: bool, value: Option<&str>) -> AppResult<()> {
+        let entry = ssh_entry(id, passphrase)?;
+        match value {
+            Some(value) => entry.set_password(value).map_err(keychain_error),
+            None => match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(e) => Err(keychain_error(e)),
+            },
+        }
+    }
 }
 
 impl SecretStore for MemorySecretStore {
@@ -58,6 +78,20 @@ impl SecretStore for MemorySecretStore {
         self.inner.lock().unwrap().remove(&id);
         Ok(())
     }
+    fn get_ssh(&self, id: ConnId, passphrase: bool) -> AppResult<Option<String>> {
+        Ok(self.ssh.lock().unwrap().get(&(id, passphrase)).cloned())
+    }
+    fn set_ssh(&self, id: ConnId, passphrase: bool, value: Option<&str>) -> AppResult<()> {
+        let mut secrets = self.ssh.lock().unwrap();
+        if let Some(value) = value { secrets.insert((id, passphrase), value.to_owned()); }
+        else { secrets.remove(&(id, passphrase)); }
+        Ok(())
+    }
+}
+
+fn ssh_entry(id: ConnId, passphrase: bool) -> AppResult<keyring::Entry> {
+    let suffix = if passphrase { "ssh-key-passphrase" } else { "ssh-password" };
+    keyring::Entry::new(SERVICE, &format!("{id}:{suffix}")).map_err(keychain_error)
 }
 
 #[cfg(test)]

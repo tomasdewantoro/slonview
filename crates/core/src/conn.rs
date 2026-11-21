@@ -118,18 +118,41 @@ fn profile_tls(profile: &ConnProfile) -> AppResult<MakeRustlsConnect> {
 #[derive(Clone)]
 pub(crate) struct Transport {
     tls: MakeRustlsConnect,
+    tunnel: Option<Arc<crate::ssh::Tunnel>>,
+    host: String,
+    port: u16,
 }
 impl Transport {
-    pub(crate) async fn new(profile: &ConnProfile) -> AppResult<Self> {
+    pub(crate) async fn new(profile: &ConnProfile, secret: Option<&str>) -> AppResult<Self> {
         let tls = profile_tls(profile)?;
-        Ok(Self { tls })
+        let tunnel = match &profile.ssh {
+            Some(config) => Some(tokio::time::timeout(CONNECT_TIMEOUT, crate::ssh::Tunnel::connect(config, secret)).await.map_err(|_| AppError::Ssh { message: "SSH connection timed out after 10s".into() })??),
+            None => None,
+        };
+        Ok(Self { tls, tunnel, host: profile.host.clone(), port: profile.port })
     }
     pub(crate) async fn cancel(&self, token: &CancelToken) -> AppResult<()> {
-        token.cancel_query(self.tls.clone()).await.map_err(map_connect_error)
+        use tokio_postgres::tls::MakeTlsConnect;
+        if let Some(tunnel) = &self.tunnel {
+            let stream: russh::ChannelStream<russh::client::Msg> = tunnel.stream(&self.host, self.port).await?;
+            let mut maker = self.tls.clone();
+            let tls = MakeTlsConnect::<russh::ChannelStream<russh::client::Msg>>::make_tls_connect(&mut maker, &self.host).expect("infallible TLS connector");
+            token.cancel_query_raw(stream, tls).await.map_err(map_connect_error)
+        } else { token.cancel_query(self.tls.clone()).await.map_err(map_connect_error) }
     }
     async fn connect(&self, cfg: &Config) -> AppResult<(Client, tokio::task::JoinHandle<()>)> {
-        let (client, connection) = cfg.connect(self.tls.clone()).await.map_err(map_connect_error)?;
-        Ok((client, tokio::spawn(async move { if let Err(e) = connection.await { tracing::debug!("postgres connection closed: {e}"); } })))
+        use tokio_postgres::tls::MakeTlsConnect;
+        if let Some(tunnel) = &self.tunnel {
+            let stream: russh::ChannelStream<russh::client::Msg> = tunnel.stream(&self.host, self.port).await?;
+            let mut maker = self.tls.clone();
+            let tls = MakeTlsConnect::<russh::ChannelStream<russh::client::Msg>>::make_tls_connect(&mut maker, &self.host).expect("infallible TLS connector");
+            let (client, connection) = cfg.connect_raw(stream, tls).await.map_err(map_connect_error)?;
+            let keep_alive = self.tunnel.clone();
+            Ok((client, tokio::spawn(async move { let _tunnel = keep_alive; if let Err(e) = connection.await { tracing::debug!("postgres connection closed: {e}"); } })))
+        } else {
+            let (client, connection) = cfg.connect(self.tls.clone()).await.map_err(map_connect_error)?;
+            Ok((client, tokio::spawn(async move { if let Err(e) = connection.await { tracing::debug!("postgres connection closed: {e}"); } })))
+        }
     }
 }
 
@@ -369,6 +392,7 @@ mod tests {
             statement_timeout_ms: 1500,
             time_zone: None,
             ssl_root_cert: None,
+            ssh: None,
         }
     }
 
