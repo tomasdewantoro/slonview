@@ -1,7 +1,7 @@
 // SQL editor tab. Owned by WP-FE-SQL. Rendered by App for tabs with kind "sql".
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EditorView } from "@codemirror/view";
-import { History, ListTree, ListVideo, LoaderCircle, Play, Square } from "lucide-react";
+import { History, ListTree, ListVideo, LoaderCircle, Play, Square, WandSparkles } from "lucide-react";
 import { api, isAppError, newRequestId } from "../../api";
 import type { SchemaNode } from "../../bindings/SchemaNode";
 import { isDataModifying } from "../../lib/plan";
@@ -11,7 +11,7 @@ import { appStore, sqlEditorKey, useApp, wasTabDisposed } from "../../store/app"
 import { ConfirmDialog } from "../Dialog";
 import { HistoryPanel } from "./HistoryPanel";
 import { ResultsPanel, type RunOutcome } from "./ResultsPanel";
-import { clearSqlError, markSqlError, SqlEditor, type RunMode } from "./SqlEditor";
+import { clearSqlError, formatSqlInEditor, markSqlError, SqlEditor, type RunMode } from "./SqlEditor";
 import { useColumnIndex } from "./useColumnIndex";
 
 export interface SqlTabProps {
@@ -248,6 +248,15 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
           >
             <ListTree className="size-3.5" />
             Explain
+          </button>
+          <button
+            type="button"
+            className={toolbarButton}
+            onClick={() => viewRef.current && formatSqlInEditor(viewRef.current)}
+            title="Format SQL (⌥⇧F)"
+          >
+            <WandSparkles className="size-3.5" />
+            Format
           </button>
           <label className="flex h-6 items-center gap-1 rounded px-1 text-muted hover:text-ink" title="ANALYZE executes the statement inside a transaction that is always rolled back">
             <input

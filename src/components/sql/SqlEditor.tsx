@@ -1,7 +1,7 @@
 // CodeMirror 6 SQL editor used by SqlTab. Owns the EditorView; SqlTab drives it via `viewRef`.
 import { useEffect, useRef, useSyncExternalStore, type RefObject } from "react";
 import { basicSetup } from "codemirror";
-import { Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
 import { PostgreSQL, sql } from "@codemirror/lang-sql";
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
@@ -11,6 +11,8 @@ import type { SchemaNode } from "../../bindings/SchemaNode";
 import { completionNamespace } from "../../lib/sqlResult";
 import { columnCompletion, type ColumnIndex } from "../../lib/sqlColumns";
 import { statementAt } from "../../lib/sqlSplit";
+import { formatSql } from "../../lib/sqlFormat";
+import { appStore } from "../../store/app";
 
 export type RunMode = "cursor" | "all";
 
@@ -41,6 +43,32 @@ export function markSqlError(view: EditorView, from: number, to: number) {
 
 export function clearSqlError(view: EditorView) {
   view.dispatch({ effects: setErrorMark.of(null) });
+}
+
+/**
+ * Formats every non-empty selection range, or the whole document when nothing is selected, in one
+ * undoable transaction. On a parse error the text is left alone and a toast explains why.
+ */
+export function formatSqlInEditor(view: EditorView): boolean {
+  const { state } = view;
+  const ranges = state.selection.ranges.filter((r) => !r.empty);
+  const targets = ranges.length > 0 ? ranges.map((r) => ({ from: r.from, to: r.to })) : [{ from: 0, to: state.doc.length }];
+  let changes: { from: number; to: number; insert: string }[];
+  try {
+    changes = targets.map((r) => ({ ...r, insert: formatSql(state.sliceDoc(r.from, r.to)) }));
+  } catch (e) {
+    const message = (e instanceof Error ? e.message : String(e)).split("\n")[0];
+    appStore.getState().pushToast("error", `Couldn't format: ${message}`);
+    return true;
+  }
+  const changeSet = state.changes(changes);
+  const selection =
+    ranges.length > 0
+      ? EditorSelection.create(changes.map((c) => EditorSelection.range(changeSet.mapPos(c.from, -1), changeSet.mapPos(c.to, 1))))
+      : EditorSelection.cursor(Math.min(state.selection.main.head, changeSet.newLength));
+  view.dispatch({ changes: changeSet, selection, userEvent: "format", scrollIntoView: true });
+  view.focus();
+  return true;
 }
 
 // Brand editor theme (brand guidelines §11.2). Every colour is a CSS token from src/styles/tokens.css,
@@ -179,6 +207,15 @@ export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, on
               { key: "Mod-e", run: () => (handlers.current.onExplain(), true) },
             ]),
           ),
+          // ⌥⇧F: on macOS Option+letter types a character (Ï), so CodeMirror's keymap never sees
+          // "Shift-Alt-f" there. Match the physical key instead, before the character is inserted.
+          EditorView.domEventHandlers({
+            keydown: (e, v) => {
+              if (e.code !== "KeyF" || !e.altKey || !e.shiftKey || e.metaKey || e.ctrlKey) return false;
+              e.preventDefault();
+              return formatSqlInEditor(v);
+            },
+          }),
           basicSetup,
           language.current.of(languageFor(initial.current.schema)),
           PostgreSQL.language.data.of({ autocomplete: columnSource(columnsRef) }),
