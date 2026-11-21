@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Slonview identity asset gallery (render check)</title>
+<style>
+@font-face{font-family:'Hanken Grotesk';src:url('../fonts/HankenGrotesk[wght].ttf') format('truetype');font-weight:100 900}
+body{margin:0;font:14px/1.4 'Hanken Grotesk',system-ui,sans-serif;color:#16181D;background:#fff}
+section{padding:24px 32px;border-bottom:1px solid #E1E4E8}
+h2{font-size:15px;font-weight:650;margin:0 0 12px}
+.row{display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+.tile{padding:16px;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.light{background:#F4F5F8}.dark{background:#1B1D21}.mono{background:#fff;box-shadow:0 0 0 1px #E1E4E8}.reversed{background:#6E2366}
+.dockwrap{padding:48px 60px 20px;background:linear-gradient(160deg,#C9CED8,#9EA7B6);display:inline-block}
+.dockwrap.d{background:linear-gradient(160deg,#2B2F3A,#14161B)}
+.dock{display:flex;align-items:flex-end;gap:10px;padding:10px 14px 8px;border-radius:22px;background:rgba(246,246,248,.72);box-shadow:0 0 0 .5px rgba(0,0,0,.2),0 10px 30px rgba(0,0,0,.18)}
+.d .dock{background:rgba(40,42,48,.72);box-shadow:0 0 0 .5px rgba(255,255,255,.18),0 10px 30px rgba(0,0,0,.4)}
+.dock img{width:64px;height:64px;display:block;filter:drop-shadow(0 4px 5px rgba(0,0,0,.28))}
+.ph{width:52px;height:52px;margin:6px;border-radius:12px}
+.finder{display:grid;grid-template-columns:16px 1fr;gap:6px 8px;align-items:center;padding:10px 14px;width:260px;font:13px -apple-system,system-ui,sans-serif;border-radius:8px}
+.finder.d{background:#1E1E20;color:#DFE2E7}.finder.l{background:#fff;box-shadow:0 0 0 1px #E1E4E8}
+.spot{display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:10px;font:15px -apple-system,system-ui,sans-serif;width:320px}
+.spot.l{background:#E5E7EB}.spot.d{background:#2A2C31;color:#F4F5F8}
+img.px{image-rendering:pixelated}
+</style></head><body>
+<section id="symbols"><h2>Symbol, wordmark, lockup (outlined SVG)</h2>
+<div class="row" id="marks"></div></section>
+<section id="small"><h2>Hand-tuned 16 / 32 px symbol (1:1 and 4×)</h2><div class="row" id="smalls"></div></section>
+<section id="dock"><h2>Dock simulation, light and dark</h2>
+<div class="row">
+<div class="dockwrap"><div class="dock"><div class="ph" style="background:linear-gradient(#9FB4C8,#6F86A0)"></div><div class="ph" style="background:linear-gradient(#C7CBD2,#9AA0AA)"></div><img src="../appicon/icon-light-1024.svg" alt="Slonview light"><img src="../appicon/icon-dark-1024.svg" alt="Slonview dark"><div class="ph" style="background:linear-gradient(#4A4F57,#2A2D33)"></div></div></div>
+<div class="dockwrap d"><div class="dock"><div class="ph" style="background:linear-gradient(#9FB4C8,#6F86A0)"></div><div class="ph" style="background:linear-gradient(#C7CBD2,#9AA0AA)"></div><img src="../appicon/icon-light-1024.svg" alt="Slonview light"><img src="../appicon/icon-dark-1024.svg" alt="Slonview dark"><div class="ph" style="background:linear-gradient(#4A4F57,#2A2D33)"></div></div></div>
+</div></section>
+<section id="finder"><h2>Finder list (16 px) and Spotlight (32 px)</h2><div class="row">
+<div class="finder l"><img src="../appicon/icon-light-16.png" width="16" height="16"><span>Slonview.app</span></div>
+<div class="finder d"><img src="../appicon/icon-dark-16.png" width="16" height="16"><span>Slonview.app</span></div>
+<div class="spot l"><img src="../appicon/icon-light-32.png" width="32" height="32"><span>Slonview</span></div>
+<div class="spot d"><img src="../appicon/icon-dark-32.png" width="32" height="32"><span>Slonview</span></div>
+<div class="tile light"><img src="../favicon/favicon.svg" width="16" height="16"> <img src="../favicon/favicon-32.png" width="32"> <img src="../favicon/favicon-48.png" width="48"></div>
+</div></section>
+<section id="motion"><h2>Motion: 2 s loop; static under prefers-reduced-motion</h2><div class="row"><div class="tile light"><img src="../motion/symbol-motion-light.svg" width="200" height="200"></div></div></section>
+<section id="apps"><h2>README header (light, dark) and social card</h2>
+<img src="../readme/readme-header-light.svg" width="1280"><br><img src="../readme/readme-header-dark.svg" width="1280"><br><img src="../social/social-card.svg" width="1280"></section>
+<script>
+const modes=['light','dark','mono','reversed'];
+const m=document.getElementById('marks');
+for(const k of modes){m.insertAdjacentHTML('beforeend',`<div class="tile ${k}"><img src="../symbol/symbol-${k}.svg" width="96"></div><div class="tile ${k}"><img src="../wordmark/wordmark-${k}.svg" height="64"></div><div class="tile ${k}"><img src="../lockup/lockup-horizontal-${k}.svg" height="64"></div>`)}
+const s=document.getElementById('smalls');
+for(const n of [16,32])for(const k of modes){s.insertAdjacentHTML('beforeend',`<div class="tile ${k}"><img src="../symbol/symbol-${n}px-${k}.svg" width="${n}"> &nbsp; <img class="px" src="../symbol/symbol-${n}px-${k}.png" width="${n*4}"></div>`)}
+</script>
+</body></html>

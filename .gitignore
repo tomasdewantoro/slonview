@@ -6,3 +6,12 @@ src-tauri/gen/schemas/
 .env*
 .DS_Store
 *.log
+__pycache__/
+
+# Brand: only the identity system, guidelines and verbal identity are published.
+# Research, strategy, reviews, Stage 2 concepts and competitor audit stay local.
+docs/brand/*
+!docs/brand/identity/
+!docs/brand/slonview-brand-guidelines.md
+!docs/brand/slonview-brand-guidelines.html
+!docs/brand/slonview-verbal-identity.md

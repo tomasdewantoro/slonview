@@ -1,17 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- macOS icon grid: 824x824 rounded square centred on a 1024 canvas. -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#273445"/>
-      <stop offset="1" stop-color="#1f2937"/>
-    </linearGradient>
-  </defs>
-  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#bg)"/>
-  <!-- Table-grid glyph: solid header row, outlined body, one selected cell. -->
-  <g transform="translate(232 262)">
-    <rect x="0" y="0" width="560" height="500" rx="56" fill="none" stroke="#2dd4bf" stroke-width="40"/>
-    <path d="M56 0 H504 A56 56 0 0 1 560 56 V130 H0 V56 A56 56 0 0 1 56 0 Z" fill="#2dd4bf"/>
-    <path d="M0 253 H560 M0 376 H560 M187 130 V500 M373 130 V500" stroke="#2dd4bf" stroke-width="28" stroke-opacity="0.55" fill="none"/>
-    <rect x="187" y="253" width="186" height="123" fill="#2dd4bf"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><title>Slonview app icon, light (layered: #background, #foreground)</title><g id="background"><defs><linearGradient id="tile-light" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7A2A71"/><stop offset="1" stop-color="#5A1C54"/></linearGradient></defs><path d="M285.4 100L738.6 100C840.99 100 924 183.01 924 285.4L924 738.6C924 840.99 840.99 924 738.6 924L285.4 924C183.01 924 100 840.99 100 738.6L100 285.4C100 183.01 183.01 100 285.4 100Z" fill="url(#tile-light)"/></g><g id="foreground" transform="translate(207.120,207.120) scale(9.52750)"><path fill="#F4F5F8" d="M13 12L39 12C43.97 12 48 16.03 48 21L48 26.4L42.5 26.4L42.5 22.65C42.5 19.81 40.19 17.5 37.35 17.5L14.65 17.5C11.81 17.5 9.5 19.81 9.5 22.65L9.5 41.35C9.5 44.19 11.81 46.5 14.65 46.5L37.35 46.5C40.19 46.5 42.5 44.19 42.5 41.35L42.5 37.6L48 37.6L48 43C48 47.97 43.97 52 39 52L13 52C8.03 52 4 47.97 4 43L4 21C4 16.03 8.03 12 13 12Z"/><path fill="#B8BEC8" d="M14.8 39.8L35.2 39.8C36.19 39.8 37 40.61 37 41.6C37 42.59 36.19 43.4 35.2 43.4L14.8 43.4C13.81 43.4 13 42.59 13 41.6C13 40.61 13.81 39.8 14.8 39.8ZM14.8 20.6L35.2 20.6C36.19 20.6 37 21.41 37 22.4C37 23.39 36.19 24.2 35.2 24.2L14.8 24.2C13.81 24.2 13 23.39 13 22.4C13 21.41 13.81 20.6 14.8 20.6Z"/><path fill="#D9A8FA" d="M17 28L57 28C59.21 28 61 29.79 61 32L61 32C61 34.21 59.21 36 57 36L17 36C14.79 36 13 34.21 13 32L13 32C13 29.79 14.79 28 17 28Z"/></g></svg>

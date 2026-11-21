@@ -1,0 +1,1195 @@
+{
+  "total": 128,
+  "unmapped": [],
+  "literals": [
+    {
+      "literal": "#1b1d21",
+      "where": [
+        "src/components/ResultGrid.tsx:117",
+        "src/index.css:43"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#1c1f24",
+      "where": [
+        "src/components/ResultGrid.tsx:108",
+        "src/index.css:30"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#1f8a4c",
+      "where": [
+        "src/index.css:37"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#202227",
+      "where": [
+        "src/components/ResultGrid.tsx:118"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#212328",
+      "where": [
+        "src/index.css:44"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#24272c",
+      "where": [
+        "src/components/ResultGrid.tsx:119"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#2563eb",
+      "where": [
+        "src/components/ResultGrid.tsx:112",
+        "src/index.css:33"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#2a2d33",
+      "where": [
+        "src/index.css:45"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#2e3137",
+      "where": [
+        "src/index.css:46"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#30343a",
+      "where": [
+        "src/components/ResultGrid.tsx:123"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#33373e",
+      "where": [
+        "src/index.css:47"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#4cc38a",
+      "where": [
+        "src/index.css:55"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#5b8def",
+      "where": [
+        "src/components/ResultGrid.tsx:124",
+        "src/index.css:51"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#5e6570",
+      "where": [
+        "src/components/ResultGrid.tsx:109",
+        "src/index.css:31"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#5f6670",
+      "where": [
+        "src/components/ResultGrid.tsx:122"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#626973",
+      "where": [
+        "src/index.css:50"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#9198a3",
+      "where": [
+        "src/components/ResultGrid.tsx:121",
+        "src/index.css:49"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#9aa1ab",
+      "where": [
+        "src/index.css:32"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#a0a6b0",
+      "where": [
+        "src/components/ResultGrid.tsx:110"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#b7791f",
+      "where": [
+        "src/components/ResultGrid.tsx:114",
+        "src/index.css:38"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#d1343b",
+      "where": [
+        "src/index.css:35"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#dfe2e7",
+      "where": [
+        "src/components/ResultGrid.tsx:120",
+        "src/index.css:48"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#e0b45c",
+      "where": [
+        "src/components/ResultGrid.tsx:126",
+        "src/index.css:56"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#e1e4e8",
+      "where": [
+        "src/index.css:29"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#e3e5e9",
+      "where": [
+        "src/components/ResultGrid.tsx:111"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#e8eaee",
+      "where": [
+        "src/index.css:28"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#ef4444",
+      "where": [
+        "src/components/sql/SqlEditor.tsx:48"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#f1f2f4",
+      "where": [
+        "src/components/ResultGrid.tsx:107"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#f2656b",
+      "where": [
+        "src/index.css:53"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#f3f4f6",
+      "where": [
+        "src/index.css:26"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#f6f7f9",
+      "where": [
+        "src/components/ResultGrid.tsx:106"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#fff",
+      "where": [
+        "src/index.css:139",
+        "src/index.css:148"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "#ffffff",
+      "where": [
+        "src/components/ResultGrid.tsx:105",
+        "src/components/ResultGrid.tsx:134",
+        "src/components/ResultGrid.tsx:139",
+        "src/components/ResultGrid.tsx:269",
+        "src/components/ResultGrid.tsx:280",
+        "src/components/ResultGrid.tsx:303",
+        "src/index.css:25",
+        "src/index.css:27"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "backdrop:bg-black/30",
+      "where": [
+        "src/components/Dialog.tsx:31"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-accent",
+      "where": [
+        "src/components/TableTab.tsx:85"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-accent-soft",
+      "where": [
+        "src/components/ConnectionList.tsx:82",
+        "src/components/Sidebar.tsx:172"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-app",
+      "where": [
+        "src/components/TabBar.tsx:32",
+        "src/components/TabBar.tsx:35"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-danger",
+      "where": [
+        "src/components/ConnectionList.tsx:89",
+        "src/components/Sidebar.tsx:68",
+        "src/components/StatusBar.tsx:20"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-danger-soft",
+      "where": [
+        "src/components/CellInspector.tsx:107",
+        "src/components/CellInspector.tsx:112",
+        "src/components/ErrorPanel.tsx:20"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-faint",
+      "where": [
+        "src/components/StatusBar.tsx:13"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-hover",
+      "where": [
+        "src/components/TableTab.tsx:79",
+        "src/components/TableTab.tsx:130"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-line",
+      "where": [
+        "src/components/ConnectionDialog.tsx:278",
+        "src/components/ContextMenu.tsx:70"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-neutral-100",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:63",
+        "src/components/sql/SqlTab.tsx:259"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-neutral-200",
+      "where": [
+        "src/components/sql/SqlTab.tsx:235"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-neutral-50",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:65",
+        "src/components/sql/ResultsPanel.tsx:96",
+        "src/components/sql/SqlTab.tsx:181"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-ok",
+      "where": [
+        "src/components/StatusBar.tsx:23"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-raised",
+      "where": [
+        "src/components/ContextMenu.tsx:65",
+        "src/components/Dialog.tsx:31",
+        "src/components/Toasts.tsx:15"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-red-100",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:128"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-red-50",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:157"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-side",
+      "where": [
+        "src/components/CellInspector.tsx:75",
+        "src/components/FilterBar.tsx:40",
+        "src/components/Sidebar.tsx:51",
+        "src/components/Sidebar.tsx:57",
+        "src/components/StatusBar.tsx:29",
+        "src/components/StructureTab.tsx:102",
+        "src/components/TabBar.tsx:13",
+        "src/components/TableTab.tsx:180"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-warn",
+      "where": [
+        "src/components/StatusBar.tsx:17"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-warn/15",
+      "where": [
+        "src/components/StructureTab.tsx:88"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "bg-white",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:87",
+        "src/components/sql/ResultsPanel.tsx:77",
+        "src/components/sql/SqlEditor.tsx:135",
+        "src/components/sql/SqlTab.tsx:179",
+        "src/components/sql/SqlTab.tsx:224"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "border-danger/40",
+      "where": [
+        "src/components/ErrorPanel.tsx:20"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "border-faint",
+      "where": [
+        "src/components/ConnectionDialog.tsx:435",
+        "src/components/ConnectionList.tsx:14"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "border-line",
+      "where": [
+        "src/App.tsx:100",
+        "src/components/CellInspector.tsx:75",
+        "src/components/CellInspector.tsx:76",
+        "src/components/CellInspector.tsx:96",
+        "src/components/CellInspector.tsx:107",
+        "src/components/CellInspector.tsx:112",
+        "src/components/ConnectionDialog.tsx:251",
+        "src/components/ConnectionDialog.tsx:252",
+        "src/components/ConnectionList.tsx:40",
+        "src/components/ContextMenu.tsx:65",
+        "src/components/Dialog.tsx:31",
+        "src/components/Dialog.tsx:34",
+        "src/components/Dialog.tsx:36",
+        "src/components/FilterBar.tsx:40",
+        "src/components/Sidebar.tsx:58",
+        "src/components/Sidebar.tsx:64",
+        "src/components/Sidebar.tsx:114",
+        "src/components/StatusBar.tsx:29",
+        "src/components/StructureTab.tsx:31",
+        "src/components/StructureTab.tsx:32",
+        "src/components/StructureTab.tsx:71",
+        "src/components/StructureTab.tsx:102",
+        "src/components/StructureTab.tsx:111",
+        "src/components/StructureTab.tsx:137",
+        "src/components/TabBar.tsx:13",
+        "src/components/TabBar.tsx:31",
+        "src/components/TableTab.tsx:77",
+        "src/components/TableTab.tsx:180",
+        "src/components/Toasts.tsx:15"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "border-neutral-200",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:65",
+        "src/components/sql/HistoryPanel.tsx:66",
+        "src/components/sql/HistoryPanel.tsx:86",
+        "src/components/sql/HistoryPanel.tsx:119",
+        "src/components/sql/HistoryPanel.tsx:135",
+        "src/components/sql/ResultsPanel.tsx:63",
+        "src/components/sql/ResultsPanel.tsx:77",
+        "src/components/sql/ResultsPanel.tsx:96",
+        "src/components/sql/SqlTab.tsx:181",
+        "src/components/sql/SqlTab.tsx:259"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "border-neutral-300",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:87",
+        "src/components/sql/SqlTab.tsx:224"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "border-red-300",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:157"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:bg-[#282c34]",
+      "where": [
+        "src/components/sql/SqlEditor.tsx:135"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:bg-neutral-800",
+      "where": [
+        "src/components/sql/SqlTab.tsx:235"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:bg-neutral-900",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:65",
+        "src/components/sql/ResultsPanel.tsx:63",
+        "src/components/sql/ResultsPanel.tsx:96",
+        "src/components/sql/SqlTab.tsx:181",
+        "src/components/sql/SqlTab.tsx:259"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:bg-neutral-950",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:87",
+        "src/components/sql/ResultsPanel.tsx:77",
+        "src/components/sql/SqlTab.tsx:179",
+        "src/components/sql/SqlTab.tsx:224"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:bg-red-950",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:128"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:bg-red-950/50",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:157"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:border-neutral-700",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:87",
+        "src/components/sql/SqlTab.tsx:224"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:border-neutral-800",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:65",
+        "src/components/sql/HistoryPanel.tsx:66",
+        "src/components/sql/HistoryPanel.tsx:86",
+        "src/components/sql/HistoryPanel.tsx:119",
+        "src/components/sql/HistoryPanel.tsx:135",
+        "src/components/sql/ResultsPanel.tsx:63",
+        "src/components/sql/ResultsPanel.tsx:77",
+        "src/components/sql/ResultsPanel.tsx:96",
+        "src/components/sql/SqlTab.tsx:181",
+        "src/components/sql/SqlTab.tsx:259"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:border-red-900",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:157"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:hover:bg-neutral-800",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:72",
+        "src/components/sql/HistoryPanel.tsx:81",
+        "src/components/sql/ResultsPanel.tsx:117",
+        "src/components/sql/SqlTab.tsx:176"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:hover:bg-neutral-800/60",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:119"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:hover:text-neutral-100",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:78"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-amber-400",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:103"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-emerald-400",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:136",
+        "src/components/sql/SqlTab.tsx:189"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-neutral-100",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:121",
+        "src/components/sql/ResultsPanel.tsx:77",
+        "src/components/sql/SqlTab.tsx:179",
+        "src/components/sql/SqlTab.tsx:224"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-neutral-200",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:91"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-neutral-300",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:117"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-neutral-400",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:72",
+        "src/components/sql/HistoryPanel.tsx:81",
+        "src/components/sql/ResultsPanel.tsx:96",
+        "src/components/sql/SqlTab.tsx:215"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-red-200",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:157"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-red-300",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:128"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-red-300/70",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:164",
+        "src/components/sql/ResultsPanel.tsx:169"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "dark:text-red-400",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:99",
+        "src/components/sql/ResultsPanel.tsx:142",
+        "src/components/sql/ResultsPanel.tsx:158",
+        "src/components/sql/SqlTab.tsx:204"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "focus-visible:bg-accent",
+      "where": [
+        "src/components/ContextMenu.tsx:80"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "focus-visible:bg-blue-500/10",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:119"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "focus-visible:outline-blue-500",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:72",
+        "src/components/sql/HistoryPanel.tsx:81",
+        "src/components/sql/ResultsPanel.tsx:75",
+        "src/components/sql/ResultsPanel.tsx:117",
+        "src/components/sql/SqlTab.tsx:176",
+        "src/components/sql/SqlTab.tsx:224"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "focus-visible:ring-accent",
+      "where": [
+        "src/components/ConnectionList.tsx:83"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "focus-visible:text-white",
+      "where": [
+        "src/components/ContextMenu.tsx:80"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "focus-within:border-blue-500",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:87"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "hover:bg-accent",
+      "where": [
+        "src/components/ContextMenu.tsx:80"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "hover:bg-blue-500/40",
+      "where": [
+        "src/components/sql/SqlTab.tsx:259"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "hover:bg-hover",
+      "where": [
+        "src/components/ConnectionDialog.tsx:263",
+        "src/components/ConnectionList.tsx:82",
+        "src/components/Sidebar.tsx:154",
+        "src/components/Sidebar.tsx:172",
+        "src/components/StructureTab.tsx:84",
+        "src/components/StructureTab.tsx:114",
+        "src/components/StructureTab.tsx:140",
+        "src/components/TabBar.tsx:32"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "hover:bg-neutral-200",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:72",
+        "src/components/sql/HistoryPanel.tsx:81",
+        "src/components/sql/ResultsPanel.tsx:117",
+        "src/components/sql/SqlTab.tsx:176"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "hover:bg-neutral-200/60",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:119"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "hover:text-fg",
+      "where": [
+        "src/components/Sidebar.tsx:134"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "hover:text-neutral-900",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:78"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "hover:text-white",
+      "where": [
+        "src/components/ContextMenu.tsx:80"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "oneDark",
+      "where": [
+        "src/components/sql/SqlEditor.tsx:7",
+        "src/components/sql/SqlEditor.tsx:106",
+        "src/components/sql/SqlEditor.tsx:132"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "placeholder:text-neutral-400",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:95"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "rgba(209, 52, 59, 0.08)",
+      "where": [
+        "src/index.css:36"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "rgba(239, 68, 68, 0.12)",
+      "where": [
+        "src/components/sql/SqlEditor.tsx:51"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "rgba(242, 101, 107, 0.1)",
+      "where": [
+        "src/index.css:54"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "rgba(255,255,255,0.75)",
+      "where": [
+        "src/components/ResultGrid.tsx:290"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "rgba(37, 99, 235, 0.12)",
+      "where": [
+        "src/index.css:34"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "rgba(37, 99, 235, 0.14)",
+      "where": [
+        "src/components/ResultGrid.tsx:113"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "rgba(91, 141, 239, 0.18)",
+      "where": [
+        "src/index.css:52"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "rgba(91, 141, 239, 0.22)",
+      "where": [
+        "src/components/ResultGrid.tsx:125"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "ring-accent",
+      "where": [
+        "src/components/ConnectionDialog.tsx:435",
+        "src/components/ConnectionDialog.tsx:445"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "ring-offset-raised",
+      "where": [
+        "src/components/ConnectionDialog.tsx:435",
+        "src/components/ConnectionDialog.tsx:445"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-accent",
+      "where": [
+        "src/components/ConnectionDialog.tsx:254",
+        "src/components/Sidebar.tsx:180",
+        "src/components/TabBar.tsx:36",
+        "src/components/TableTab.tsx:182"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-amber-700",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:103"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-danger",
+      "where": [
+        "src/components/CellInspector.tsx:112",
+        "src/components/ConnectionDialog.tsx:176",
+        "src/components/ConnectionDialog.tsx:180",
+        "src/components/ConnectionDialog.tsx:244",
+        "src/components/ConnectionDialog.tsx:245",
+        "src/components/ConnectionList.tsx:96",
+        "src/components/ErrorPanel.tsx:21",
+        "src/components/ErrorPanel.tsx:24",
+        "src/components/TableTab.tsx:99",
+        "src/components/Toasts.tsx:17"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-emerald-600",
+      "where": [
+        "src/components/sql/SqlTab.tsx:189"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-emerald-700",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:136"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-faint",
+      "where": [
+        "src/App.tsx:67",
+        "src/components/CellInspector.tsx:78",
+        "src/components/CellInspector.tsx:116",
+        "src/components/FilterBar.tsx:93",
+        "src/components/Sidebar.tsx:116",
+        "src/components/Sidebar.tsx:134",
+        "src/components/Sidebar.tsx:159",
+        "src/components/Sidebar.tsx:180",
+        "src/components/Sidebar.tsx:182",
+        "src/components/StructureTab.tsx:24",
+        "src/components/StructureTab.tsx:85",
+        "src/components/TabBar.tsx:39"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-fg",
+      "where": [
+        "src/components/ContextMenu.tsx:80",
+        "src/components/Dialog.tsx:31",
+        "src/components/ErrorPanel.tsx:20",
+        "src/components/Sidebar.tsx:158",
+        "src/components/TabBar.tsx:32",
+        "src/components/TableTab.tsx:130"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-muted",
+      "where": [
+        "src/App.tsx:52",
+        "src/App.tsx:64",
+        "src/components/CellInspector.tsx:96",
+        "src/components/ConnectionDialog.tsx:169",
+        "src/components/ConnectionDialog.tsx:202",
+        "src/components/ConnectionDialog.tsx:252",
+        "src/components/ConnectionDialog.tsx:280",
+        "src/components/ConnectionDialog.tsx:292",
+        "src/components/ConnectionDialog.tsx:315",
+        "src/components/ConnectionDialog.tsx:326",
+        "src/components/ConnectionDialog.tsx:338",
+        "src/components/ConnectionDialog.tsx:365",
+        "src/components/ConnectionDialog.tsx:374",
+        "src/components/ConnectionDialog.tsx:385",
+        "src/components/ConnectionDialog.tsx:388",
+        "src/components/ConnectionDialog.tsx:415",
+        "src/components/ConnectionDialog.tsx:420",
+        "src/components/ConnectionDialog.tsx:424",
+        "src/components/ConnectionDialog.tsx:427",
+        "src/components/ConnectionList.tsx:41",
+        "src/components/ConnectionList.tsx:91",
+        "src/components/ConnectionList.tsx:95",
+        "src/components/ConnectionList.tsx:110",
+        "src/components/ErrorPanel.tsx:25",
+        "src/components/ErrorPanel.tsx:26",
+        "src/components/Sidebar.tsx:64",
+        "src/components/Sidebar.tsx:77",
+        "src/components/Sidebar.tsx:145",
+        "src/components/Sidebar.tsx:147",
+        "src/components/Sidebar.tsx:154",
+        "src/components/StatusBar.tsx:29",
+        "src/components/StructureTab.tsx:22",
+        "src/components/StructureTab.tsx:31",
+        "src/components/StructureTab.tsx:52",
+        "src/components/StructureTab.tsx:65",
+        "src/components/StructureTab.tsx:66",
+        "src/components/StructureTab.tsx:67",
+        "src/components/StructureTab.tsx:90",
+        "src/components/StructureTab.tsx:91",
+        "src/components/StructureTab.tsx:92",
+        "src/components/StructureTab.tsx:93",
+        "src/components/StructureTab.tsx:109",
+        "src/components/StructureTab.tsx:120",
+        "src/components/StructureTab.tsx:123",
+        "src/components/StructureTab.tsx:135",
+        "src/components/StructureTab.tsx:142",
+        "src/components/TabBar.tsx:32",
+        "src/components/TableTab.tsx:91",
+        "src/components/TableTab.tsx:169",
+        "src/components/TableTab.tsx:175",
+        "src/components/TableTab.tsx:180"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-neutral-400",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:88"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-neutral-500",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:102",
+        "src/components/sql/HistoryPanel.tsx:124",
+        "src/components/sql/HistoryPanel.tsx:135",
+        "src/components/sql/ResultsPanel.tsx:31",
+        "src/components/sql/ResultsPanel.tsx:38",
+        "src/components/sql/ResultsPanel.tsx:78",
+        "src/components/sql/ResultsPanel.tsx:92",
+        "src/components/sql/ResultsPanel.tsx:151",
+        "src/components/sql/SqlTab.tsx:208"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-neutral-600",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:72",
+        "src/components/sql/HistoryPanel.tsx:81",
+        "src/components/sql/ResultsPanel.tsx:96",
+        "src/components/sql/SqlTab.tsx:215"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-neutral-700",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:117"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-neutral-800",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:91"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-neutral-900",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:121",
+        "src/components/sql/ResultsPanel.tsx:77",
+        "src/components/sql/SqlTab.tsx:179",
+        "src/components/sql/SqlTab.tsx:224"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-ok",
+      "where": [
+        "src/components/CellInspector.tsx:90",
+        "src/components/ConnectionDialog.tsx:171"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-red-600",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:99",
+        "src/components/sql/ResultsPanel.tsx:142",
+        "src/components/sql/ResultsPanel.tsx:158",
+        "src/components/sql/SqlTab.tsx:204"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-red-700",
+      "where": [
+        "src/components/sql/HistoryPanel.tsx:128"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-red-700/80",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:164",
+        "src/components/sql/ResultsPanel.tsx:169"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-red-900",
+      "where": [
+        "src/components/sql/ResultsPanel.tsx:157"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-warn",
+      "where": [
+        "src/components/StructureTab.tsx:88",
+        "src/components/StructureTab.tsx:118"
+      ],
+      "mapped": true
+    },
+    {
+      "literal": "text-white",
+      "where": [
+        "src/components/ConnectionList.tsx:89",
+        "src/components/Sidebar.tsx:68",
+        "src/components/TableTab.tsx:85"
+      ],
+      "mapped": true
+    }
+  ],
+  "alpha_text": [
+    {
+      "where": "src/components/ContextMenu.tsx:80",
+      "hit": "disabled:opacity-40",
+      "status": "exempt (disabled state)"
+    },
+    {
+      "where": "src/components/ContextMenu.tsx:83",
+      "hit": "opacity-60",
+      "status": "mapped"
+    },
+    {
+      "where": "src/components/TabBar.tsx:42",
+      "hit": "opacity-0",
+      "status": "exempt (show/hide toggle)"
+    },
+    {
+      "where": "src/components/TabBar.tsx:42",
+      "hit": "group-hover:opacity-100",
+      "status": "exempt (show/hide toggle)"
+    },
+    {
+      "where": "src/components/sql/ResultsPanel.tsx:117",
+      "hit": "disabled:opacity-50",
+      "status": "exempt (disabled state)"
+    },
+    {
+      "where": "src/components/sql/ResultsPanel.tsx:164",
+      "hit": "text-red-700/80",
+      "status": "mapped"
+    },
+    {
+      "where": "src/components/sql/ResultsPanel.tsx:164",
+      "hit": "dark:text-red-300/70",
+      "status": "mapped"
+    },
+    {
+      "where": "src/components/sql/ResultsPanel.tsx:169",
+      "hit": "text-red-700/80",
+      "status": "mapped"
+    },
+    {
+      "where": "src/components/sql/ResultsPanel.tsx:169",
+      "hit": "dark:text-red-300/70",
+      "status": "mapped"
+    },
+    {
+      "where": "src/components/sql/SqlTab.tsx:176",
+      "hit": "disabled:opacity-40",
+      "status": "exempt (disabled state)"
+    },
+    {
+      "where": "src/index.css:134",
+      "hit": "opacity: 0.45",
+      "status": "exempt (disabled state)"
+    },
+    {
+      "where": "src/index.css:169",
+      "hit": "opacity: 0.4",
+      "status": "exempt (disabled state)"
+    }
+  ],
+  "alpha_text_unmapped": []
+}

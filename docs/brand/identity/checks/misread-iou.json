@@ -1,0 +1,24 @@
+{
+  "Slonview 16 px (Stage 3)": {
+    "log-out (Lucide)": 0.33,
+    "square-arrow-right-exit (Lucide; SF rectangle…arrow.right family)": 0.23,
+    "battery (Lucide)": 0.32,
+    "app-window (Lucide)": 0.26,
+    "menu (Lucide)": 0.46,
+    "scrollbar": 0.19,
+    "progress bar": 0.43,
+    "\"C\" (Hanken 640)": 0.32,
+    "\"€\" (Hanken 640)": 0.34
+  },
+  "Concept A 16 px (Stage 2)": {
+    "log-out (Lucide)": 0.52,
+    "square-arrow-right-exit (Lucide; SF rectangle…arrow.right family)": 0.42,
+    "battery (Lucide)": 0.35,
+    "app-window (Lucide)": 0.39,
+    "menu (Lucide)": 0.61,
+    "scrollbar": 0.27,
+    "progress bar": 0.39,
+    "\"C\" (Hanken 640)": 0.45,
+    "\"€\" (Hanken 640)": 0.4
+  }
+}
