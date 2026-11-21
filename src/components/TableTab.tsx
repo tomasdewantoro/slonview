@@ -15,7 +15,7 @@ const EMPTY = emptyTableData();
 
 export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string }) {
   const data = useApp((s) => s.tableData[tab.id]) ?? EMPTY;
-  const { ensureLoaded, loadMore, setTableQuery, cancelTable, countRows, refreshTab, openStructure } = appStore.getState();
+  const { ensureLoaded, loadMore, setTableQuery, cancelTable, countRows, refreshTab, openStructure, pinTab } = appStore.getState();
   const [showFilters, setShowFilters] = useState(tab.query.filters.length > 0 || tab.query.rawWhere !== "");
   const [selected, setSelected] = useState<CellRef | null>(null);
   const [inspecting, setInspecting] = useState<CellRef | null>(null);
@@ -27,6 +27,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
 
   // Streams the whole relation (current filters and sort) to disk in Rust; the grid's loaded rows don't matter.
   const exportCsv = async () => {
+    pinTab(tab.id);
     const q = tab.query;
     const path = await save({ defaultPath: `${q.table}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] });
     if (!path) return;
@@ -81,8 +82,8 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
     >
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
         {!readOnly && <>
-          <button className="btn h-6 px-2 text-xs" disabled={!!edits.reason || edits.busy || data.loading} title={edits.reason ?? "Add a row; database defaults are preserved"} onClick={edits.openAdd}>Add row</button>
-          <button className="btn h-6 px-2 text-xs" disabled={!!edits.reason || edits.busy || data.loading || !selectedRows.length} title={edits.reason ?? "Stage deletion of selected rows"} onClick={() => void edits.remove(selectedRows)}>Delete rows</button>
+          <button className="btn h-6 px-2 text-xs" disabled={!!edits.reason || edits.busy || data.loading} title={edits.reason ?? "Add a row; database defaults are preserved"} onClick={() => { pinTab(tab.id); edits.openAdd(); }}>Add row</button>
+          <button className="btn h-6 px-2 text-xs" disabled={!!edits.reason || edits.busy || data.loading || !selectedRows.length} title={edits.reason ?? "Stage deletion of selected rows"} onClick={() => { pinTab(tab.id); void edits.remove(selectedRows); }}>Delete rows</button>
         </>}
         <button
           className={`btn h-6 px-2 text-xs ${showFilters ? "bg-surface-2" : ""}`}
@@ -180,7 +181,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
               copyPage={buildPageRequest(connId, tab.query, null)}
               rowChanges={edits.rowChanges}
               onSelectedRows={setSelectedRows}
-              onEditCell={!readOnly && !edits.reason && !data.loading ? c => void edits.start(c) : undefined}
+              onEditCell={!readOnly && !edits.reason && !data.loading ? (c) => { pinTab(tab.id); void edits.start(c); } : undefined}
             />
           ) : (
             data.loading && (

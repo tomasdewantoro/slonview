@@ -34,13 +34,13 @@ import type { Relation } from "../bindings/Relation";
 import type { RelationKind } from "../bindings/RelationKind";
 import type { SchemaNode } from "../bindings/SchemaNode";
 import type { TypeKind } from "../bindings/TypeKind";
-import { appStore, relationTitle, useApp } from "../store/app";
+import { appStore, relationTitle, useApp, type OpenMode } from "../store/app";
 import { formatBytes, formatCount, quoteIdent, selectSql } from "../store/queries";
 import { ColorDot, ConnectionList } from "./ConnectionList";
 import { ContextMenu } from "./ContextMenu";
 import { ErrorPanel } from "./ErrorPanel";
-import { filterExtensions, openObject, sequenceValue, triggerSummary } from "./sidebar/objects";
-import { ObjectRow, TreeGroup } from "./sidebar/TreeGroup";
+import { filterExtensions, sequenceValue, triggerSummary } from "./sidebar/objects";
+import { clickMode, ObjectRow, TreeGroup } from "./sidebar/TreeGroup";
 
 const KIND: Record<RelationKind, { icon: LucideIcon; label: string }> = {
   table: { icon: Table2, label: "table" },
@@ -160,7 +160,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
   const [menu, setMenu] = useState<Menu | null>(null);
   const filtered = useMemo(() => filterTree(tree, query), [tree, query]);
   const shownExtensions = useMemo(() => filterExtensions(extensions, query), [extensions, query]);
-  const { openTable, openStructure, openSql, openFunction, loadTree } = appStore.getState();
+  const { openTable, openStructure, openSql, openFunction, openObject, loadTree } = appStore.getState();
   const searching = query.trim() !== "";
 
   const toggleIn = (set: typeof setCollapsed, name: string) =>
@@ -172,7 +172,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
     });
   const groupOpen = (key: string) => searching || groupsOpen.has(key);
   const menuAt = (e: MouseEvent, target: MenuTarget) => setMenu({ x: e.clientX, y: e.clientY, ...target });
-  const open = (o: Openable) => void openObject(o.kind, o.oid, o.name, o.title);
+  const open = (o: Openable, mode?: OpenMode) => void openObject(o.kind, o.oid, o.name, o.title, mode);
 
   const openFirstMatch = () => {
     for (const s of filtered) {
@@ -244,7 +244,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                   value={x.version}
                   title={`extension · version ${x.version} · schema ${x.schema}`}
                   depth={0}
-                  onOpen={() => open(target)}
+                  onOpen={(mode) => open(target, mode)}
                   onMenu={(e) => menuAt(e, { obj: target, label: "Show definition" })}
                 />
               );
@@ -277,7 +277,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                         aria-selected={active}
                         className={`flex w-full items-center gap-1.5 py-[3px] pr-2 pl-6 text-left ${active ? "bg-accent-soft" : "hover:bg-surface-2"}`}
                         title={`${k.label} · ${formatBytes(r.sizeBytes)} · ~${r.estRows < 0 ? "never analyzed" : r.estRows.toLocaleString()} rows`}
-                        onClick={() => openTable(r.schema, r.name)}
+                        onClick={(e) => openTable(r.schema, r.name, clickMode(e))}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           setMenu({ x: e.clientX, y: e.clientY, rel: r });
@@ -311,7 +311,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                             detail={`(${f.args})`}
                             title={`${k.label} · ${functionSignature(f)}${returns} · ${f.language}`}
                             depth={1}
-                            onOpen={() => void openFunction(f)}
+                            onOpen={(mode) => void openFunction(f, mode)}
                             onMenu={(e) => menuAt(e, { fn: f })}
                           />
                         );
@@ -339,7 +339,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                             value={sequenceValue(x)}
                             title={`sequence · ${x.dataType} · last value ${last}`}
                             depth={1}
-                            onOpen={() => open(target)}
+                            onOpen={(mode) => open(target, mode)}
                             onMenu={(e) => menuAt(e, { obj: target, label: "Open query" })}
                           />
                         );
@@ -368,7 +368,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                             detail={t.detail}
                             title={`${k.label} · ${t.detail}`}
                             depth={1}
-                            onOpen={() => open(target)}
+                            onOpen={(mode) => open(target, mode)}
                             onMenu={(e) => menuAt(e, { obj: target, label: "Show definition" })}
                           />
                         );
@@ -396,7 +396,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                             detail={summary}
                             title={`trigger on ${t.table} · ${summary} · executes ${t.function}()`}
                             depth={1}
-                            onOpen={() => open(target)}
+                            onOpen={(mode) => open(target, mode)}
                             onMenu={(e) => menuAt(e, { obj: target, label: "Show definition" })}
                           />
                         );
