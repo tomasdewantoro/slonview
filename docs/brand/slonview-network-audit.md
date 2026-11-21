@@ -2,7 +2,7 @@
 
 Claim under test: **"No telemetry; the app makes no network connections except to the PostgreSQL servers you configure."**
 
-Scope: shipped macOS release build (`pnpm tauri build`) of the repository (branch `main`, merged from `rename/slonview`). The source was read statically. No code was edited and no app window was launched.
+Scope: shipped macOS release build (`pnpm tauri build`) of this repository (branch `main`). The source was read statically. No code was edited and no app window was launched.
 
 ## VERDICT: TRUE WITH CAVEATS
 
