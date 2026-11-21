@@ -627,6 +627,9 @@ try {
       await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Add row" && !b.disabled), 10000);
       const y = await gridTop();
       await page.mouse.click(330, y + HEADER + 12);
+      // The grid can keep a horizontal scroll offset, so the click may land on any column.
+      // Walk to column 0 (ArrowLeft stops there), then to `note` (id, customer_id, status, amount, note).
+      for (let i = 0; i < 8; i++) await page.keyboard.press("ArrowLeft");
       for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
       await page.keyboard.press("Enter");
       await page.waitForSelector('[aria-label="Edit note"]');
