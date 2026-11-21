@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+### New
+
+- **Quick open.** ⌘P finds any table, view, function, sequence, type, trigger or extension of the active connection by name and opens it; ⌘Enter opens a table's structure. It searches the loaded schema tree, with no server round trip.
+- **Record view.** A toolbar toggle shows the selected row as a form: every column with its type, copy buttons, links for foreign-key values, and the rows that reference it. ⌥↑/⌥↓ step through loaded rows.
+- **Referenced by.** The Structure tab lists the foreign keys that point at a table. Right-click a row and choose **Rows in <table> (<column>)** to open the rows that reference it.
+- **Search a table.** **Search all text columns…** in the table toolbar matches a term in every text-like column, server-side, with `%` and `_` taken literally. Count rows and Export CSV honour it, and it is saved with the tab.
+
 ## 0.2.0 (2026-11-22)
 
 ### New
