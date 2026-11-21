@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    # Service containers only run on Linux runners; the integration tests need the seeded
+    # fixture, so macOS and Windows run unit tests only. Trust auth mirrors local dev: some
+    # tests connect without passing the URL password.
+    services:
+      postgres:
+        image: ${{ matrix.os == 'ubuntu-24.04' && 'postgres:18' || '' }}
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies (Tauri 2, Secret Service, psql)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config \
+            postgresql-client
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm via corepack
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.21.0 --activate
+          pnpm --version
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm typecheck
+        run: pnpm typecheck
+
+      - name: pnpm test
+        run: pnpm test
+
+      # Also produces dist/, which tauri::generate_context! embeds when compiling src-tauri.
+      - name: pnpm build
+        run: pnpm build
+
+      # Formatting is reported but not enforced yet: several feature branches are in flight and
+      # a repo-wide `cargo fmt` lands in one commit after they are integrated. Then drop
+      # continue-on-error.
+      - name: cargo fmt --check
+        continue-on-error: true
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # seed.sql builds timestamptz values from literals without a zone, so the stored instants
+      # depend on the session TimeZone; the tests expect the fixture as seeded in Asia/Jakarta.
+      - name: Seed fixture database
+        if: runner.os == 'Linux'
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGTZ: Asia/Jakarta
+        run: |
+          createdb slonview_fixture
+          psql -q -v ON_ERROR_STOP=1 -d slonview_fixture -f tests/fixtures/seed.sql
+
+      - name: cargo test (unit + integration)
+        if: runner.os == 'Linux'
+        env:
+          SLONVIEW_TEST_URL: postgres://postgres@localhost:5432/slonview_fixture
+        run: cargo test --workspace
+
+      # src-tauri's lib tests include one fixture-backed test, skipped here; everything else in
+      # --lib/--bins is DB-free.
+      - name: cargo test (unit only)
+        if: runner.os != 'Linux'
+        run: cargo test --workspace --lib --bins -- --skip ops::tests::commands_against_fixture

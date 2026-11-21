@@ -17,12 +17,25 @@ tokio-postgres = "0.7"
 deadpool-postgres = "0.14"
 tokio-postgres-rustls = "0.14"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-keyring = { version = "3", features = ["apple-native"] }
+# OS credential store per platform (target-specific features; the resolver only enables a
+# backend on its own OS). Without a backend feature keyring silently uses an in-memory mock.
+keyring = "3"
 directories = "6"
 toml = "0.9"
 futures-util = "0.3"
 url = "2"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+# Secret Service over D-Bus (GNOME Keyring, KWallet, KeePassXC). Links libdbus-1 at runtime;
+# building needs libdbus-1-dev + pkg-config. crypto-rust avoids an OpenSSL dependency.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

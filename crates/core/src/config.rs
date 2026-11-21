@@ -156,10 +156,12 @@ mod tests {
     }
 
     #[test]
-    fn app_data_dir_is_application_support_slonview() {
+    fn app_data_dir_is_platform_data_dir_slonview() {
         let dir = app_data_dir().unwrap();
-        let home = std::env::var("HOME").unwrap();
-        assert_eq!(dir, Path::new(&home).join("Library/Application Support/slonview"));
+        let base = directories::BaseDirs::new().unwrap();
+        assert_eq!(dir, base.data_dir().join("slonview"));
+        #[cfg(target_os = "macos")]
+        assert_eq!(dir, base.home_dir().join("Library/Application Support/slonview"));
         assert!(dir.is_dir());
     }
 
