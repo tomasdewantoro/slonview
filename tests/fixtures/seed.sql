@@ -81,6 +81,17 @@ INSERT INTO no_pk SELECT g % 50, 'row ' || g FROM generate_series(1, 1200) g;
 CREATE TABLE composite_pk (tenant int, item int, label text, PRIMARY KEY (tenant, item));
 INSERT INTO composite_pk SELECT t, i, 't' || t || 'i' || i FROM generate_series(1, 30) t, generate_series(1, 40) i;
 
+-- Foreign keys beyond orders.customer_id: one across a quoted schema (single column, so the
+-- grid can follow it) and one on two columns (the grid must not offer to follow it).
+CREATE TABLE fk_links (
+  id integer PRIMARY KEY,
+  weird_id integer REFERENCES "Sales Data"."Weird ""Name"" Table"("Id"),
+  tenant int,
+  item int,
+  FOREIGN KEY (tenant, item) REFERENCES composite_pk (tenant, item)
+);
+INSERT INTO fk_links SELECT g, g, 1 + g % 30, 1 + g % 40 FROM generate_series(1, 20) g;
+
 CREATE VIEW paid_orders AS SELECT id, customer_id, amount, created_at FROM orders WHERE status = 'paid';
 CREATE MATERIALIZED VIEW order_totals AS SELECT customer_id, count(*) AS n, sum(amount) AS total FROM orders GROUP BY customer_id;
 

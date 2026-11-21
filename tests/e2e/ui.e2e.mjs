@@ -138,6 +138,24 @@ const selectRows = async (from, to) => {
   await page.mouse.click(MARKER_X, y + HEADER + ROW * to + 12);
   await page.keyboard.up("Shift");
 };
+/** Viewport point of row `row` in the column named `columnName`, with the cell inspector left open.
+ *  Glide draws on a canvas, so the x is found by hit-testing: click along the row until the inspector
+ *  header names the column. The inspector narrows the grid, so callers click while it stays open. */
+const cellPoint = async (columnName, row) => {
+  const top = await gridTop();
+  const y = top + HEADER + ROW * row + 12;
+  const inspected = () => page.evaluate(() => document.querySelector('aside[aria-label="Cell inspector"] .font-semibold')?.textContent ?? null);
+  const box = await page.evaluate(() => document.querySelector(".dvn-scroller").getBoundingClientRect().toJSON());
+  await page.mouse.click(box.x + 60, y);
+  if ((await inspected()) === null) await page.click('[aria-label="Toggle cell inspector"]');
+  await until(() => !!document.querySelector('aside[aria-label="Cell inspector"]'), 5000);
+  const narrowed = await page.evaluate(() => document.querySelector(".dvn-scroller").getBoundingClientRect().toJSON());
+  for (let x = narrowed.x + 60; x < narrowed.x + narrowed.width; x += 12) {
+    await page.mouse.click(x, y);
+    if ((await inspected()) === columnName) return { x, y };
+  }
+  throw new Error(`could not locate ${columnName} row ${row}`);
+};
 const setSql = async (sql) => {
   await page.click(".cm-content");
   await page.keyboard.down("Meta");
@@ -259,6 +277,53 @@ try {
     }
     await until(() => document.querySelectorAll('[role="tab"]').length === 0, 5000);
     return `orders then customers: [customers*]; double-click: [customers]; no_pk: [customers, no_pk*]; filter: [customers, no_pk]; shots in ${PREVIEW_SHOTS}`;
+  });
+
+  await check("V2-01 row estimate in the footer before any count", async () => {
+    await openRel("orders", "public", { keep: true });
+    const label = await loadedLabel();
+    assert(/^500\+ rows loaded of ~1(\.0)?M$/.test(label), `footer: ${label}`);
+    return `unfiltered orders footer: "${label}"`;
+  });
+
+  await check("V2-02 foreign key: menu and Cmd-click open the referenced row", async () => {
+    await activateTab("orders");
+    const want = psql("SELECT customer_id FROM orders ORDER BY id LIMIT 1");
+    const p = await cellPoint("customer_id", 0);
+    await page.mouse.click(p.x, p.y, { button: "right" });
+    await until(() => [...document.querySelectorAll('[role="menuitem"]')].some((m) => m.innerText.startsWith("Open referenced row")), 5000);
+    const label = await page.evaluate(() => [...document.querySelectorAll('[role="menuitem"]')].find((m) => m.innerText.startsWith("Open referenced row")).innerText);
+    assert(label.includes("customers"), `menu item: ${label}`);
+    await page.evaluate(() => [...document.querySelectorAll('[role="menuitem"]')].find((m) => m.innerText.startsWith("Open referenced row")).click());
+    await until(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === "customers", 10000);
+    await until((w) => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes(`"id" = '${w}'`), 10000, want);
+    await until(() => document.querySelector("footer span")?.innerText === "1 row loaded", 10000);
+    await page.screenshot({ path: `${SHOTS}/v2-02-fk-followed.png` });
+
+    // Cmd-click the same cell: the tab already showing that row is reused.
+    await activateTab("orders");
+    const before = (await tabStrip()).length;
+    await page.keyboard.down("Meta");
+    await page.mouse.click(p.x, p.y);
+    await page.keyboard.up("Meta");
+    await until(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === "customers", 10000);
+    eq((await tabStrip()).length, before, "tab count after Cmd-click");
+
+    // Composite foreign key: not offered. Single-column key into a quoted schema: offered.
+    await openRel("fk_links", "public", { keep: true });
+    const menuFor = async (column) => {
+      const c = await cellPoint(column, 0);
+      await page.mouse.click(c.x, c.y, { button: "right" });
+      await until(() => document.querySelectorAll('[role="menuitem"]').length > 0, 5000);
+      const items = await page.evaluate(() => [...document.querySelectorAll('[role="menuitem"]')].map((m) => m.innerText));
+      await page.keyboard.press("Escape");
+      return items;
+    };
+    const tenant = await menuFor("tenant");
+    assert(!tenant.some((t) => t.startsWith("Open referenced row")), `composite FK offered: ${tenant.join(" | ")}`);
+    const weird = await menuFor("weird_id");
+    assert(weird.some((t) => t.includes('Sales Data.Weird "Name" Table')), `quoted target: ${weird.join(" | ")}`);
+    return `orders.customer_id ${want} -> customers (id = ${want}, 1 row); Cmd-click reused the tab (${before} tabs); fk_links.tenant not offered; weird_id -> "Sales Data"`;
   });
 
   await check("E2E-03 scroll orders to 200k", async () => {
@@ -648,6 +713,36 @@ try {
     await page.screenshot({ path: `${SHOTS}/A-history.png` });
     await page.click('[aria-label="Close history"]');
     return "3 runs listed (with error flags); search filters";
+  });
+
+  await check("V2-03 Format SQL: shortcut formats, one undo restores, bad SQL left alone", async () => {
+    const doc = () => page.evaluate(() => document.querySelector(".cm-content").innerText);
+    await setSql("select id,amount from orders where status='paid' and amount>100 order by id limit 3");
+    await page.click(".cm-content");
+    await page.keyboard.down("Alt");
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("KeyF");
+    await page.keyboard.up("Shift");
+    await page.keyboard.up("Alt");
+    await until(() => document.querySelector(".cm-content").innerText.includes("\nFROM"), 5000);
+    const formatted = await doc();
+    for (const k of ["SELECT", "FROM", "WHERE", "ORDER BY", "LIMIT"]) assert(formatted.includes(k), `missing ${k}: ${formatted}`);
+    assert(formatted.includes("status = 'paid'"), `literal mangled: ${formatted}`);
+    // Formatted SQL still runs and returns the same rows.
+    await runAll();
+    await until(() => /3 rows/.test(document.body.innerText), 15000);
+    // One undo restores the original text exactly.
+    await page.click(".cm-content");
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("z");
+    await page.keyboard.up("Meta");
+    eq((await doc()).trim(), "select id,amount from orders where status='paid' and amount>100 order by id limit 3", "after one undo");
+    // Unparseable text: unchanged, toast shown.
+    await setSql("select ((( from");
+    await clickText("Format");
+    await until(() => document.body.innerText.includes("Couldn't format"), 5000);
+    eq((await doc()).trim(), "select ((( from", "bad SQL unchanged");
+    return `formatted to ${formatted.split("\n").length} lines; ran 3 rows; one ⌘Z restores; parse error toast, text kept`;
   });
 
   await check("A allow writes, then UPDATE scratch_insert_target", async () => {

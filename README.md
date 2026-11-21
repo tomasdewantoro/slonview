@@ -43,8 +43,10 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 
 - **Read-only by default.** New connections run with `default_transaction_read_only = on`. In read-only mode, everything you run from the SQL editor or type into a filter or Raw WHERE runs inside a read-only transaction, and commands that could leave it (`BEGIN`, `COMMIT`, `SET TRANSACTION`, `LOCK`, `VACUUM`, …) are refused before anything runs. To write, turn on **Allow writes** for that connection.
 - **Large tables.** Pages arrive 500 rows at a time. Tables with a primary key use keyset paging in primary-key order or user-selected sort order, with NULL-aware mixed-direction comparisons and primary-key tie-breakers. Relations without a primary key use offset paging. The grid is canvas-rendered.
+- **Row counts without waiting.** The status bar shows an estimate as soon as the first page loads, such as `500+ rows loaded of ~1.0M`: the catalog's estimate for a whole table, or the planner's estimate (`EXPLAIN`, never executed) when filters are on. **Count rows** runs an exact `count(*)` when you need the real number. No estimate is shown with a raw `WHERE`.
+- **Follow foreign keys.** Columns that are a single-column foreign key show `→` in their header. Right-click a cell and choose **Open referenced row**, or ⌘/Ctrl-click it, to open the referenced table filtered to that row. Multi-column foreign keys are listed in the Structure tab but can't be followed from one cell.
 - **Filters and sorting** built server-side with properly quoted identifiers and parameters, plus an optional raw `WHERE` expression.
-- **SQL editor** with autocomplete, multiple statements, per-query history, a row limit, and cancel (`Esc`) that stops the query on the server. Results show each column's type, and numbers are right-aligned.
+- **SQL editor** with autocomplete, multiple statements, per-query history, a row limit, and cancel (`Esc`) that stops the query on the server. Results show each column's type, and numbers are right-aligned. Format SQL (⌥⇧F) tidies the selection or the whole editor.
 - **Column autocomplete:** after `o.` the editor lists the columns of the table aliased `o` in that statement (FROM, JOIN, UPDATE, INSERT INTO), and after `schema.table.` that table's columns. Columns load once per connection and reload when you refresh the sidebar.
 - **Explain plans:** **Explain** (`⌘E`) shows the plan of the selection or the statement at the cursor as a tree: estimated and actual rows, time, loops and buffers. The slowest node and row estimates off by more than 10× are marked, and you can switch to the raw JSON. With **Analyze** on, the statement really runs inside a transaction that is always rolled back (read-only on read-only connections). On writable connections Slonview asks first before analyzing an `INSERT`, `UPDATE`, `DELETE` or `MERGE`, because triggers with effects outside the database still fire.
 - **Functions in the sidebar:** each schema has a collapsible **Functions** group listing functions, procedures, aggregates and window functions (extension functions such as `uuid-ossp` included), with argument lists so overloads stay distinct. Click one to open its `CREATE OR REPLACE` definition in a new SQL tab; right-click to copy its name or signature.
@@ -70,7 +72,7 @@ Saved passwords go to the operating system's credential store: the macOS Keychai
 
 ## Install from source
 
-Requirements: [rustup](https://rustup.rs) (stable Rust), Node.js 20+, and [pnpm](https://pnpm.io). On Linux also install the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux) and `libdbus-1-dev`; on Debian/Ubuntu:
+Requirements: [rustup](https://rustup.rs) (stable Rust), Node.js 24 (see `.nvmrc`), and [pnpm](https://pnpm.io). On Linux also install the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux) and `libdbus-1-dev`; on Debian/Ubuntu:
 
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev \

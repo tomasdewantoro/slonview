@@ -182,6 +182,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
               rowChanges={edits.rowChanges}
               onSelectedRows={setSelectedRows}
               onEditCell={!readOnly && !edits.reason && !data.loading ? (c) => { pinTab(tab.id); void edits.start(c); } : undefined}
+              onFollowReference={edits.count ? undefined : (target, value) => appStore.getState().openReferenced(connId, target, value)}
             />
           ) : (
             data.loading && (

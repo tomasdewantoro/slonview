@@ -16,6 +16,7 @@ import {
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Column } from "../bindings/Column";
+import type { ForeignKeyTarget } from "../bindings/ForeignKeyTarget";
 import { serializeRows, type CopyFormat } from "../lib/format";
 import { useColorScheme } from "./useColorScheme";
 import type { PageRequest } from "../bindings/PageRequest";
@@ -52,6 +53,8 @@ export interface ResultGridProps {
   onEditCell?: (cell: CellRef) => void;
   onSelectedRows?: (rows: number[]) => void;
   rowChanges?: ReadonlyMap<number, "modified" | "new" | "deleted">;
+  /** Opens the row a foreign-key cell points at; enables the menu item, ⌘-click and the header mark. */
+  onFollowReference?: (target: ForeignKeyTarget, value: string) => void;
 }
 
 const NEAR_END_ROWS = 100;
@@ -180,6 +183,7 @@ export function ResultGrid({
   onEditCell,
   onSelectedRows,
   rowChanges,
+  onFollowReference,
 }: ResultGridProps) {
   const scheme = useColorScheme();
   // Re-read on appearance change; the token values themselves switch in CSS.
@@ -280,6 +284,12 @@ export function ResultGrid({
         ctx.fillText("PK", x, midY);
         x += ctx.measureText("PK").width + 6;
       }
+      if (c.references && onFollowReference) {
+        ctx.fillStyle = isSelected ? palette.accentFg : palette.accent;
+        ctx.font = `600 11px ${palette.mono}`;
+        ctx.fillText("→", x, midY);
+        x += ctx.measureText("→").width + 6;
+      }
       const s = sortIndex.get(c.name);
       let sortLabel = "";
       if (s) sortLabel = (s.desc ? "▼" : "▲") + ((sort?.length ?? 0) > 1 ? String(s.order) : "");
@@ -315,7 +325,7 @@ export function ResultGrid({
       }
       ctx.restore();
     },
-    [columns, palette, sortIndex, sort],
+    [columns, palette, sortIndex, sort, onFollowReference],
   );
 
   // NULL cells inside a selection switch to selection-fg-muted (null-fg is too faint on the selection fill).
@@ -475,6 +485,16 @@ export function ResultGrid({
     menuItems.push({ separator: true }, { label: "Inspect cell", shortcut: "↵", onSelect: () => onOpenCell({ col, row }) });
     if (onEditCell) menuItems.push({ label: "Edit cell", onSelect: () => onEditCell({ col, row }) });
   }
+  if (onFollowReference && selection.current) {
+    const [col, row] = selection.current.cell;
+    const target = columns[col]?.references;
+    const value = rows[row]?.[col];
+    // A server-truncated value is not the real key; it would match nothing.
+    if (target && value != null && !truncatedSet.has(row * colCount + col)) {
+      const where = target.schema === "public" ? target.table : `${target.schema}.${target.table}`;
+      menuItems.push({ separator: true }, { label: `Open referenced row → ${where}`, shortcut: "⌘-click", onSelect: () => onFollowReference(target, value) });
+    }
+  }
 
   const containerStyle = { "--gdg-font-family": "var(--sv-font-mono)" } as CSSProperties;
 
@@ -510,6 +530,13 @@ export function ResultGrid({
         drawHeader={drawHeader}
         drawCell={drawCell}
         onCellActivated={([col, row]) => (onEditCell ?? onOpenCell)?.({ col, row })}
+        onCellClicked={([col, row], e) => {
+          const target = columns[col]?.references;
+          const value = rows[row]?.[col];
+          if (!onFollowReference || !target || value == null || truncatedSet.has(row * colCount + col) || !(e.metaKey || e.ctrlKey)) return;
+          e.preventDefault();
+          onFollowReference(target, value);
+        }}
         onCellContextMenu={onCellContextMenu}
         onKeyDown={onKeyDown}
         onColumnResize={(_c, size, i) => setWidths((w) => ({ ...w, [columns[i].name]: size }))}

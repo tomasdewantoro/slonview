@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Column } from "../bindings/Column";
 import { quoteLiteral, serializeRows } from "./format";
 
-const col = (name: string): Column => ({ name, typeName: "text", nullable: true, isPk: false });
+const col = (name: string): Column => ({ name, typeName: "text", nullable: true, isPk: false, references: null });
 const cols = [col("id"), col("note")];
 
 describe("serializeRows tsv", () => {

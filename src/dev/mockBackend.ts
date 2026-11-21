@@ -3,6 +3,7 @@
 import { mockIPC } from "@tauri-apps/api/mocks";
 import type { AppError } from "../bindings/AppError";
 import type { Column } from "../bindings/Column";
+import type { ForeignKeyTarget } from "../bindings/ForeignKeyTarget";
 import type { ColumnDetail } from "../bindings/ColumnDetail";
 import type { ConnProfile } from "../bindings/ConnProfile";
 import type { Filter } from "../bindings/Filter";
@@ -40,6 +41,8 @@ interface MockTable {
   row(i: number): (string | null)[];
   indexes?: TableDescription["indexes"];
   foreignKeys?: TableDescription["foreignKeys"];
+  /** Single-column foreign keys by column name (what `fetch_page` reports per column). */
+  references?: Record<string, ForeignKeyTarget>;
   viewDefinition?: string;
   broken?: boolean;
 }
@@ -93,6 +96,7 @@ const tables: MockTable[] = [
       { name: "orders_created_at_idx", definition: "CREATE INDEX orders_created_at_idx ON public.orders USING btree (created_at DESC)", isUnique: false, isPrimary: false },
     ],
     foreignKeys: [{ name: "orders_customer_id_fkey", definition: "FOREIGN KEY (customer_id) REFERENCES customers(id)" }],
+    references: { customer_id: { schema: "public", table: "customers", column: "id" } },
   },
   {
     schema: "public",
@@ -422,7 +426,7 @@ async function fetchPage(requestId: string, req: PageRequest): Promise<Page> {
     (order ? ` ORDER BY ${order}` : "") +
     ` LIMIT ${req.limit}` +
     (!keyset && offset ? ` OFFSET ${offset}` : "");
-  const columns: Column[] = t.columns.map(({ name, typeName, nullable, isPk }) => ({ name, typeName, nullable, isPk }));
+  const columns: Column[] = t.columns.map(({ name, typeName, nullable, isPk }) => ({ name, typeName, nullable, isPk, references: t.references?.[name] ?? null }));
   return {
     columns,
     rows,
@@ -430,6 +434,7 @@ async function fetchPage(requestId: string, req: PageRequest): Promise<Page> {
     nextCursor: end < total ? (keyset ? { kind: "keyset", values: [String(end)] } : { kind: "offset", offset: end }) : null,
     sql,
     elapsedMs: Math.round(3 + Math.random() * 40),
+    estRows: offset === 0 && end < total && !req.rawWhere ? total : null,
   };
 }
 
@@ -634,13 +639,13 @@ async function runSql(requestId: string, connId: string, sql: string, maxRows: n
     }
     return [{ statement: sql, columns: [], rows: [], rowsAffected: 3, truncated: false, elapsedMs: 4 }];
   }
-  if (!t) return [{ statement: sql, columns: [{ name: "?column?", typeName: "integer", nullable: true, isPk: false }], rows: [["1"]], rowsAffected: null, truncated: false, elapsedMs: 1 }];
+  if (!t) return [{ statement: sql, columns: [{ name: "?column?", typeName: "integer", nullable: true, isPk: false, references: null }], rows: [["1"]], rowsAffected: null, truncated: false, elapsedMs: 1 }];
   const limit = Math.min(t.rowCount, maxRows ?? 10000, 100);
   const rows = Array.from({ length: limit }, (_, i) => t.row(i));
   return [
     {
       statement: sql,
-      columns: t.columns.map(({ name, typeName, nullable, isPk }) => ({ name, typeName, nullable, isPk })),
+      columns: t.columns.map(({ name, typeName, nullable, isPk }) => ({ name, typeName, nullable, isPk, references: null })),
       rows,
       rowsAffected: null,
       truncated: false,

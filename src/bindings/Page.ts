@@ -14,4 +14,11 @@ nextCursor: Cursor | null,
 /**
  * The SQL actually executed (shown in the status bar for transparency).
  */
-sql: string, elapsedMs: number, };
+sql: string, elapsedMs: number, 
+/**
+ * First page only, and only when more rows follow: estimated rows matching the request.
+ * `pg_class.reltuples` when unfiltered, otherwise the planner's estimate (`EXPLAIN`,
+ * nothing is executed). None after the first page, with a raw WHERE, for foreign tables,
+ * or when no estimate is available.
+ */
+estRows: number | null, };

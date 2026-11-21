@@ -761,6 +761,153 @@ async fn orders_keyset_paging() {
 }
 
 #[tokio::test]
+async fn page_columns_report_single_column_foreign_keys() {
+    let f = fixture().await;
+    let orders = f
+        .engine
+        .fetch_page("fk1", &page_req(f.conn, "public", "orders"))
+        .await
+        .unwrap();
+    let by_name = |p: &Page, n: &str| p.columns.iter().find(|c| c.name == n).unwrap().clone();
+    assert_eq!(
+        by_name(&orders, "customer_id").references,
+        Some(ForeignKeyTarget {
+            schema: "public".into(),
+            table: "customers".into(),
+            column: "id".into(),
+        })
+    );
+    assert_eq!(by_name(&orders, "id").references, None);
+
+    let links = f
+        .engine
+        .fetch_page("fk2", &page_req(f.conn, "public", "fk_links"))
+        .await
+        .unwrap();
+    // Quoted schema/table/column names come back raw (unquoted), ready to use as a filter target.
+    assert_eq!(
+        by_name(&links, "weird_id").references,
+        Some(ForeignKeyTarget {
+            schema: "Sales Data".into(),
+            table: "Weird \"Name\" Table".into(),
+            column: "Id".into(),
+        })
+    );
+    // A two-column key can't be followed from one cell.
+    assert_eq!(by_name(&links, "tenant").references, None);
+    assert_eq!(by_name(&links, "item").references, None);
+
+    // Following the reference = filtering the target on the value: exactly one row.
+    let value = links.rows[4][1].clone().unwrap();
+    let mut target = page_req(f.conn, "Sales Data", "Weird \"Name\" Table");
+    target.filters = vec![Filter {
+        column: "Id".into(),
+        op: FilterOp::Eq,
+        value: Some(value.clone()),
+    }];
+    let hit = f.engine.fetch_page("fk3", &target).await.unwrap();
+    assert_eq!(hit.rows.len(), 1);
+    assert_eq!(hit.rows[0][0], Some(value));
+}
+
+#[tokio::test]
+async fn first_page_carries_row_estimate() {
+    let f = fixture().await;
+    // Unfiltered: reltuples, available instantly (seed.sql ends with ANALYZE).
+    let mut req = page_req(f.conn, "public", "orders");
+    let p1 = f.engine.fetch_page("e1", &req).await.unwrap();
+    let est = p1.est_rows.expect("estimate for a 1M-row table");
+    assert!((900_000..=1_100_000).contains(&est), "{est}");
+    // Later pages don't repeat it.
+    req.cursor = p1.next_cursor;
+    assert_eq!(
+        f.engine.fetch_page("e2", &req).await.unwrap().est_rows,
+        None
+    );
+
+    // Filtered: the planner's estimate, within a factor of two of the real count.
+    let mut filtered = page_req(f.conn, "public", "orders");
+    filtered.filters = vec![Filter {
+        column: "status".into(),
+        op: FilterOp::Eq,
+        value: Some("paid".into()),
+    }];
+    let est = f
+        .engine
+        .fetch_page("e3", &filtered)
+        .await
+        .unwrap()
+        .est_rows
+        .expect("planner estimate");
+    let real: i64 = psql_values(&f, "SELECT count(*) FROM orders WHERE status = 'paid'").await[0]
+        [0]
+    .as_deref()
+    .unwrap()
+    .parse()
+    .unwrap();
+    assert!(
+        est > real / 2 && est < real * 2,
+        "estimate {est}, real {real}"
+    );
+
+    // Raw WHERE: user text is never handed to EXPLAIN.
+    filtered.raw_where = Some("amount > 10".into());
+    assert_eq!(
+        f.engine.fetch_page("e4", &filtered).await.unwrap().est_rows,
+        None
+    );
+
+    // Fits in one page: nothing to estimate.
+    let small = f
+        .engine
+        .fetch_page("e5", &page_req(f.conn, "public", "fk_links"))
+        .await
+        .unwrap();
+    assert!(small.next_cursor.is_none() && small.est_rows.is_none());
+
+    // View: no reltuples, the planner estimates it.
+    let view = f
+        .engine
+        .fetch_page("e6", &page_req(f.conn, "public", "paid_orders"))
+        .await
+        .unwrap();
+    assert!(
+        view.est_rows.is_some_and(|n| n > 500),
+        "{:?}",
+        view.est_rows
+    );
+
+    // Partitioned parent: leaves summed.
+    let events = f
+        .engine
+        .fetch_page("e7", &page_req(f.conn, "public", "events"))
+        .await
+        .unwrap();
+    assert_eq!(events.est_rows, Some(5000));
+}
+
+#[tokio::test]
+async fn estimate_respects_read_only_and_leaves_no_trace() {
+    // EXPLAIN without ANALYZE never runs the statement; on a read-only session it must succeed.
+    let f = fixture().await;
+    let mut req = page_req(f.conn, "public", "orders");
+    req.filters = vec![Filter {
+        column: "amount".into(),
+        op: FilterOp::Gt,
+        value: Some("100".into()),
+    }];
+    let p = f.engine.fetch_page("ro", &req).await.unwrap();
+    assert!(p.est_rows.is_some());
+    // The session is still usable and still read-only afterwards.
+    let err = f
+        .engine
+        .run_sql("ro2", f.conn, "DELETE FROM orders WHERE id = -1", 10)
+        .await
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("25006"), "{err:?}");
+}
+
+#[tokio::test]
 async fn filter_and_sort_match_direct_sql() {
     let f = fixture().await;
     let mut req = page_req(f.conn, "public", "orders");

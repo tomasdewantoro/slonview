@@ -151,6 +151,7 @@ pub(crate) async fn run_statement(
                         },
                         nullable: true,
                         is_pk: false,
+                        references: None,
                     })
                     .collect();
             }

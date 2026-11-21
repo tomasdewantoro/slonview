@@ -7,8 +7,8 @@ use tokio_postgres::Client;
 use tokio_postgres::types::Oid;
 
 use crate::model::{
-    Column, ColumnDetail, ForeignKeyInfo, FunctionInfo, FunctionKind, IndexInfo, Relation,
-    RelationKind, SchemaNode, SchemaTree, TableDescription,
+    Column, ColumnDetail, ForeignKeyInfo, ForeignKeyTarget, FunctionInfo, FunctionKind, IndexInfo,
+    Relation, RelationKind, SchemaNode, SchemaTree, TableDescription,
 };
 use crate::objects;
 use crate::{AppError, AppResult};
@@ -239,6 +239,10 @@ pub(crate) struct TableMeta {
     pub columns: Vec<ColumnDetail>,
     /// Primary-key column names in key order; empty when there is none.
     pub pk: Vec<String>,
+    /// Single-column foreign keys by referencing column name.
+    pub references: HashMap<String, ForeignKeyTarget>,
+    /// `pg_class.reltuples` (partitioned parents: sum of leaves); -1 when never analyzed.
+    pub est_rows: i64,
 }
 
 impl TableMeta {
@@ -257,6 +261,7 @@ impl TableMeta {
                 type_name: c.type_name.clone(),
                 nullable: c.nullable,
                 is_pk: c.is_pk,
+                references: self.references.get(&c.name).cloned(),
             })
             .collect()
     }
@@ -329,11 +334,46 @@ async fn columns(client: &Client, oid: Oid) -> AppResult<(Vec<ColumnDetail>, Vec
 pub(crate) async fn table_meta(client: &Client, schema: &str, table: &str) -> AppResult<TableMeta> {
     let rel = resolve(client, schema, table).await?;
     let (columns, pk) = columns(client, rel.oid).await?;
+    let references = single_column_references(client, rel.oid).await?;
     Ok(TableMeta {
         kind: rel.kind,
         columns,
         pk,
+        references,
+        est_rows: rel.est_rows,
     })
+}
+
+/// Foreign keys of exactly one column, keyed by the referencing column. A column that is the
+/// sole member of several such keys keeps the first by constraint name, so the result is
+/// deterministic. Partitioned parents carry their own constraints, so this works for them too.
+async fn single_column_references(
+    client: &Client,
+    oid: Oid,
+) -> AppResult<HashMap<String, ForeignKeyTarget>> {
+    let rows = client
+        .query(
+            "SELECT a.attname::text, fn.nspname::text, fc.relname::text, fa.attname::text
+             FROM pg_constraint k
+             JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
+             JOIN pg_class fc ON fc.oid = k.confrelid
+             JOIN pg_namespace fn ON fn.oid = fc.relnamespace
+             JOIN pg_attribute fa ON fa.attrelid = k.confrelid AND fa.attnum = k.confkey[1]
+             WHERE k.conrelid = $1 AND k.contype = 'f' AND cardinality(k.conkey) = 1
+             ORDER BY k.conname",
+            &[&oid],
+        )
+        .await
+        .map_err(db_err)?;
+    let mut refs = HashMap::new();
+    for row in rows {
+        refs.entry(row.get(0)).or_insert_with(|| ForeignKeyTarget {
+            schema: row.get(1),
+            table: row.get(2),
+            column: row.get(3),
+        });
+    }
+    Ok(refs)
 }
 
 pub(crate) async fn describe(

@@ -6,7 +6,7 @@ import type { Column } from "../../bindings/Column";
 import { useRowEdits } from "./useRowEdits";
 vi.mock("../../api", () => ({ api: { editInfo: vi.fn(), getEditRow: vi.fn(), reviewEdits: vi.fn(), applyEdits: vi.fn() }, errorMessage: (e: unknown) => String(e), newRequestId: () => "request" }));
 vi.mock("../../store/app", () => ({ appStore: { getState: () => ({ pushToast: vi.fn() }) } }));
-const columns: Column[] = [{ name: "id", typeName: "integer", isPk: true, nullable: false }, { name: "note", typeName: "text", isPk: false, nullable: true }];
+const columns: Column[] = [{ name: "id", typeName: "integer", isPk: true, nullable: false, references: null }, { name: "note", typeName: "text", isPk: false, nullable: true, references: null }];
 const rows = [["1", "visible original"]];
 beforeEach(() => {
   vi.clearAllMocks();

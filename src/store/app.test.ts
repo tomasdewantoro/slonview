@@ -12,12 +12,13 @@ const CONN2 = "c2";
 
 function page(rows: string[][], more: boolean, sql = "SELECT 1"): Page {
   return {
-    columns: [{ name: "id", typeName: "integer", nullable: false, isPk: true }],
+    columns: [{ name: "id", typeName: "integer", nullable: false, isPk: true, references: null }],
     rows,
     truncated: [[0, 0]],
     nextCursor: more ? { kind: "offset", offset: rows.length } : null,
     sql,
     elapsedMs: 1,
+    estRows: null,
   };
 }
 

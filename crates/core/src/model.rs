@@ -293,6 +293,19 @@ pub struct Column {
     pub type_name: String,
     pub nullable: bool,
     pub is_pk: bool,
+    /// The row this column's value points at, when the column alone is a foreign key.
+    /// Multi-column foreign keys are not reported here (one value can't identify the row).
+    pub references: Option<ForeignKeyTarget>,
+}
+
+/// Target of a single-column foreign key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ForeignKeyTarget {
+    pub schema: String,
+    pub table: String,
+    pub column: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -438,6 +451,12 @@ pub struct Page {
     pub sql: String,
     #[ts(type = "number")]
     pub elapsed_ms: u64,
+    /// First page only, and only when more rows follow: estimated rows matching the request.
+    /// `pg_class.reltuples` when unfiltered, otherwise the planner's estimate (`EXPLAIN`,
+    /// nothing is executed). None after the first page, with a raw WHERE, for foreign tables,
+    /// or when no estimate is available.
+    #[ts(type = "number | null")]
+    pub est_rows: Option<i64>,
 }
 
 pub const CELL_TRUNCATE_CHARS: usize = 2048;

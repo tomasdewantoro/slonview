@@ -1,5 +1,5 @@
 import { LoaderCircle } from "lucide-react";
-import { activeTab, appStore, findRelation, statusConnId, tabConn, useApp } from "../store/app";
+import { activeTab, appStore, statusConnId, useApp } from "../store/app";
 import { formatCount } from "../store/queries";
 import { useEffect, useRef, useState } from "react";
 import { COMMON_TIME_ZONES } from "./ConnectionDialog";
@@ -13,7 +13,6 @@ export function StatusBar() {
   const profile = useApp((s) => s.profiles.find((p) => p.id === connId));
   const tab = useApp(activeTab);
   const data = useApp((s) => (s.activeTabId ? s.tableData[s.activeTabId] : undefined));
-  const rel = useApp((s) => (tab?.kind === "table" ? findRelation(tabConn(s, tab)?.tree ?? [], tab.query.schema, tab.query.table) : undefined));
 
   let connLabel = "Not connected";
   let dot = "bg-faint";
@@ -41,8 +40,8 @@ export function StatusBar() {
             {data.nextCursor ? "+" : ""} {data.rows.length === 1 && !data.nextCursor ? "row" : "rows"} loaded
             {data.exactCount !== null
               ? ` of ${data.exactCount.toLocaleString()}`
-              : rel && rel.estRows >= 0 && data.nextCursor && tab.query.filters.length === 0 && !tab.query.rawWhere.trim()
-                ? ` of ~${formatCount(rel.estRows)}`
+              : data.nextCursor && data.estRows !== null
+                ? ` of ~${formatCount(data.estRows)}`
                 : ""}
           </span>
           {data.sql && <span className="shrink-0">{data.elapsedMs} ms</span>}

@@ -177,20 +177,31 @@ impl Engine {
         let guard =
             self.cancels
                 .register(request_id, client.cancel_token(), session.transport.clone())?;
-        let messages = if q.raw_span.is_some() {
+        let (messages, est_rows) = if q.raw_span.is_some() {
             // User text: same protection as the SQL editor, then reset the pooled session.
+            // No estimate: the planner would have to parse the user's expression outside the guard.
             let result =
                 raw_where_query(&client, &session.profile, &q.sql, q.raw_span, &guard).await;
             drop(guard);
             restore_session(client, &session.profile).await;
-            result?
+            (result?, None)
         } else {
             let messages = client
                 .simple_query(&q.sql)
                 .await
                 .map_err(|e| guard.map_err(e))?;
             drop(guard);
-            messages
+            let row_count = messages
+                .iter()
+                .filter(|m| matches!(m, SimpleQueryMessage::Row(_)))
+                .count();
+            // Only the first page needs a total, and only when it doesn't already hold every row.
+            let est_rows = if req.cursor.is_none() && row_count > limit as usize {
+                estimate_rows(&client, req, &meta).await
+            } else {
+                None
+            };
+            (messages, est_rows)
         };
 
         let mut rows = Vec::with_capacity(limit as usize + 1);
@@ -243,6 +254,7 @@ impl Engine {
             next_cursor,
             sql: q.sql,
             elapsed_ms: started.elapsed().as_millis() as u64,
+            est_rows,
         })
     }
 
@@ -595,6 +607,30 @@ fn first_value(messages: &[SimpleQueryMessage]) -> Option<Option<String>> {
         SimpleQueryMessage::Row(row) => Some(row.get(0).map(str::to_owned)),
         _ => None,
     })
+}
+
+/// Rows the first page's request would match, without counting. Unfiltered: the catalog
+/// estimate (`reltuples`, partition leaves summed). Filtered: the planner's estimate from a plain
+/// `EXPLAIN`, which plans but never executes. Best effort: any failure means "no estimate".
+async fn estimate_rows(
+    client: &Client,
+    req: &PageRequest,
+    meta: &introspect::TableMeta,
+) -> Option<i64> {
+    if meta.kind == RelationKind::ForeignTable {
+        return None;
+    }
+    if req.filters.is_empty() {
+        // Views have no reltuples (always 0); fall through to the planner for them.
+        if !matches!(meta.kind, RelationKind::View) {
+            return (meta.est_rows >= 0).then_some(meta.est_rows);
+        }
+    }
+    let sql = paging::estimate_query(&req.schema, &req.table, meta, &req.filters).ok()?;
+    let messages = client.simple_query(&sql).await.ok()?;
+    let plan: serde_json::Value = serde_json::from_str(first_value(&messages)??.as_str()).ok()?;
+    let rows = plan.get(0)?.get("Plan")?.get("Plan Rows")?.as_f64()?;
+    Some(rows.round() as i64)
 }
 
 /// Cuts `s` to `max` chars; returns whether anything was removed.

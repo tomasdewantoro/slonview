@@ -445,6 +445,21 @@ pub(crate) fn count_query(
     Ok((sql, span))
 }
 
+/// `EXPLAIN` (never executed) of the rows a filtered page request would return; the plan's
+/// top-level "Plan Rows" is the estimate. Raw WHERE text is not accepted here.
+pub(crate) fn estimate_query(
+    schema: &str,
+    table: &str,
+    meta: &TableMeta,
+    filters: &[Filter],
+) -> AppResult<String> {
+    let (where_sql, _) = where_clause(meta, filters, None)?;
+    Ok(format!(
+        "EXPLAIN (FORMAT JSON) SELECT 1 FROM {}{where_sql}",
+        qualified(schema, table)
+    ))
+}
+
 /// Full-value export of a table: all columns, same filters, user sort (or PK order).
 pub(crate) fn export_query(
     schema: &str,
@@ -530,6 +545,8 @@ mod tests {
                 col("Note \"x\"", "text", false),
             ],
             pk: vec!["id".into()],
+            references: Default::default(),
+            est_rows: -1,
         }
     }
 
@@ -627,6 +644,8 @@ mod tests {
             kind: RelationKind::Table,
             columns: vec![col("a", "integer", false)],
             pk: vec![],
+            references: Default::default(),
+            est_rows: -1,
         };
         let q = page_query(&req("no_pk", &[], None, &[], None), &meta, 5).unwrap();
         assert!(

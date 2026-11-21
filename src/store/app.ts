@@ -9,8 +9,8 @@ import type { ConnProfile } from "../bindings/ConnProfile";
 import type { Cursor } from "../bindings/Cursor";
 import type { ExtensionInfo } from "../bindings/ExtensionInfo";
 import type { FunctionInfo } from "../bindings/FunctionInfo";
+import type { ForeignKeyTarget } from "../bindings/ForeignKeyTarget";
 import type { ObjectKind } from "../bindings/ObjectKind";
-import type { Relation } from "../bindings/Relation";
 import type { SchemaNode } from "../bindings/SchemaNode";
 import type { ServerInfo } from "../bindings/ServerInfo";
 import { buildPageRequest, filtersToRequest, normalizeRawWhere, type TableQuery } from "./queries";
@@ -77,6 +77,8 @@ export interface TableData {
   cancelled: boolean;
   sql: string;
   elapsedMs: number;
+  /** Estimated rows matching the current query, from the first page; null = unknown or all loaded. */
+  estRows: number | null;
   exactCount: number | null;
   countRequestId: string | null;
   counting: boolean;
@@ -126,6 +128,12 @@ export interface AppState {
 
   /** Sidebar opens (on the sidebar's connection) take a mode; explicit commands default to pinned. */
   openTable(schema: string, table: string, mode?: OpenMode): void;
+  /**
+   * Follows a foreign key from a cell: a pinned table tab of the referenced relation filtered to
+   * `column = value`, on `connId`. A tab already showing exactly that filter is reused; other
+   * tabs of the relation are left untouched.
+   */
+  openReferenced(connId: string, target: ForeignKeyTarget, value: string): void;
   openStructure(schema: string, table: string, mode?: OpenMode): void;
   /** New pinned SQL tab on the sidebar's connection; `title` defaults to "Query N". */
   openSql(initialSql?: string, title?: string): void;
@@ -180,6 +188,7 @@ export function emptyTableData(): TableData {
     cancelled: false,
     sql: "",
     elapsedMs: 0,
+    estRows: null,
     exactCount: null,
     countRequestId: null,
     counting: false,
@@ -255,10 +264,6 @@ export function functionTitle(fn: Pick<FunctionInfo, "schema" | "name" | "args">
 
 export function relationTitle(schema: string, table: string): string {
   return schema === "public" ? table : `${schema}.${table}`;
-}
-
-export function findRelation(tree: SchemaNode[], schema: string, table: string): Relation | undefined {
-  return tree.find((s) => s.name === schema)?.relations.find((r) => r.name === table);
 }
 
 /** Connection state of a tab, or undefined when the tab is gone or its connection closed. */
@@ -626,6 +631,36 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         );
       },
 
+      openReferenced(connId, target, value) {
+        if (!isConnected(connId)) return;
+        const { schema, table, column } = target;
+        // A tab already showing exactly this row is reused. Any other tab of the relation is left
+        // alone (it may hold the user's own filters or pending edits); a new one opens beside it.
+        const isThisRow = (t: Tab) =>
+          t.kind === "table" &&
+          t.query.schema === schema &&
+          t.query.table === table &&
+          !t.query.rawWhere.trim() &&
+          t.query.filters.length === 1 &&
+          t.query.filters[0].column === column &&
+          t.query.filters[0].op === "=" &&
+          t.query.filters[0].value === value;
+        openItem(
+          connId,
+          isThisRow,
+          (id) => ({
+            id,
+            kind: "table",
+            title: relationTitle(schema, table),
+            query: { schema, table, filters: [{ id: newRequestId(), column, op: "=", value }], rawWhere: "", sort: [] },
+            connId,
+            preview: false,
+          }),
+          "pinned",
+        );
+        persistTabs(connId);
+      },
+
       openStructure(schema, table, mode = "pinned") {
         const connId = sidebarConnId();
         if (!connId) return;
@@ -732,6 +767,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
             nextCursor: page.nextCursor,
             sql: page.sql,
             elapsedMs: page.elapsedMs,
+            estRows: page.estRows,
             loading: false,
           });
         } catch (e) {

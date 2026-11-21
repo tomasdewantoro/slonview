@@ -4,7 +4,7 @@ import { affectedMessage, completionNamespace, isExportable, leadingKeyword, res
 
 const result = (statement: string, withColumns: boolean, rowsAffected: number | null = null): QueryResult => ({
   statement,
-  columns: withColumns ? [{ name: "a", typeName: "int4", nullable: true, isPk: false }] : [],
+  columns: withColumns ? [{ name: "a", typeName: "int4", nullable: true, isPk: false, references: null }] : [],
   rows: [],
   rowsAffected,
   truncated: false,
