@@ -355,7 +355,7 @@ Rules:
 - One display face, used with restraint. Hanken carries both the UI and the headlines; only weight and size separate them.
 - Numbers are the brand's proof. Set measured figures in JetBrains Mono beside a Hanken headline (README header, social card).
 - Use sentence case everywhere, except the badges `READ-ONLY` and `WRITE`, which are verbatim UI strings.
-- **App implementation note:** the app currently uses the system font. Using Hanken and JetBrains Mono in the app means bundling both TTFs (about 320 KB together, OFL) in the frontend. The fallback stack is the safety net. Measure the effect on the "about 8 MB" claim before shipping.
+- **App implementation note:** the app bundles Hanken Grotesk and JetBrains Mono as WOFF2 (about 130 KB together, OFL) in the frontend. The fallback stack is the safety net.
 
 <!-- fig:type -->
 
@@ -365,8 +365,8 @@ Rules:
 
 | Asset | File | Copy and claim check |
 |---|---|---|
-| GitHub social card, 1280 × 640 | `identity/social/social-card.svg` / `.png` | Headline: the §9 standalone variant, "About 8 MB. A million rows to CSV in 0.44 s." Trust line: "Look first. Write on purpose." Footer: "Local benchmark: 1,000,000-row orders table · PostgreSQL® 18.4 over Unix socket · MacBook Air (Mac17,3, Apple M5)". This meets §6.2 rule 2: dataset, version, connection, machine. The machine is confirmed: QA read `sysctl -n hw.model` → `Mac17,3` (MacBook Air, Apple M5) and PostgreSQL 18.4 on the local socket `/tmp/.s.PGSQL.5432`. |
-| README header, 1280 × 320, light and dark | `identity/readme/readme-header-{light,dark}.svg` / `.png` / `@2x.png` | Tagline #1 "About 8 MB. Ready for a million rows." with the number directly under it: "1,000,000-row CSV export in ~0.44 s / local benchmark: PostgreSQL 18.4, Unix socket, MacBook Air (Mac17,3, Apple M5)", then line #3. This meets §9's "only next to the export number". Use a `<picture>` with `prefers-color-scheme` sources. |
+| GitHub social card, 1280 × 640 | `identity/social/social-card.svg` / `.png` | Headline: "A million rows to CSV in 0.44 s." (size claim removed 2026-11-22). Trust line: "Look first. Write on purpose." Footer: "Local benchmark: 1,000,000-row orders table · PostgreSQL® 18.4 over Unix socket · MacBook Air (Mac17,3, Apple M5)". This meets §6.2 rule 2: dataset, version, connection, machine. The machine is confirmed: QA read `sysctl -n hw.model` → `Mac17,3` (MacBook Air, Apple M5) and PostgreSQL 18.4 on the local socket `/tmp/.s.PGSQL.5432`. |
+| README header, 1280 × 320, light and dark | `identity/readme/readme-header-{light,dark}.svg` / `.png` / `@2x.png` | "Ready for a million rows." with the number directly under it: "1,000,000-row CSV export in ~0.44 s / local benchmark: PostgreSQL 18.4, Unix socket, MacBook Air (Mac17,3, Apple M5)", then line #3. Use a `<picture>` with `prefers-color-scheme` sources. |
 
 All text in these images is outlined (no `<text>`). Their `<title>` holds the words for screen readers. When placing them in the README, give the `<img>` an `alt` that repeats the headline and the benchmark label.
 
@@ -496,7 +496,7 @@ All 128 literals: `#1b1d21`, `#1c1f24`, `#1f8a4c`, `#202227`, `#212328`, `#24272
 
 1. **No FigCraft master** (review MINOR-7, QA MINOR-A). GUI apps were out of scope for this run. The layered SVGs are the editable source; the owner should accept this at Gate 3 or schedule a FigCraft import.
 2. **No macOS 26 `.icon` bundle.** Tinted and clear appearances are specified (§4.2) and the layers are supplied, but nothing was rendered in Icon Composer.
-3. **Bundling fonts in the app** adds about 320 KB. Re-check "about 8 MB on disk" on the signed build (strategy §9).
+3. **Size claim removed.** The signed v0.1.0 build installs at 9.9 MB, so the owner dropped "about 8 MB" everywhere on 2026-11-22. Don't reintroduce a size number.
 4. **Lilac is 37° from indigo by hue.** It is distinct today (ΔE 45). Hold the hue at 272° or more.
 5. **Editor numbers and error red under deuteranopia.** Amber `#E0B45C` vs error dark is ΔE 50.1, but only 29.9 under deuteranopia. The error mark is a wavy underline plus a tinted background, never a text colour, so the two don't compete for the same role.
 6. **Tokens are not wired into the app yet.** `src/index.css`, `ResultGrid.tsx` and `SqlEditor.tsx` still use the old colours until the UI/UX stage applies `tokens.css` and §11.2.

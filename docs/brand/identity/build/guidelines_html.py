@@ -141,7 +141,7 @@ def fig_swatches():
 def fig_type():
     return fig(
         '<div class="type">'
-        '<div class="t-row"><span class="t-tag">Display · Hanken Grotesk 680 · 48/52</span><p class="t-display">About 8 MB. A million rows to CSV in 0.44 s.</p></div>'
+        '<div class="t-row"><span class="t-tag">Display · Hanken Grotesk 680 · 48/52</span><p class="t-display">A million rows to CSV in 0.44 s.</p></div>'
         '<div class="t-row"><span class="t-tag">UI · Hanken Grotesk 400 / 500 / 600 · 13 px</span><p class="t-ui">Look first. Write on purpose. <b>Allow writes</b> · <span class="badge ro">READ-ONLY</span> <span class="badge w">WRITE</span></p></div>'
         '<div class="t-row"><span class="t-tag">Data · JetBrains Mono 400 / 600 · 12 px · tabular</span>'
         '<pre class="t-mono"><span class="k">SELECT</span> id, amount <span class="k">FROM</span> orders <span class="k">WHERE</span> status = <span class="s">\'paid\'</span> <span class="k">LIMIT</span> <span class="n">501</span>;\n'
@@ -153,9 +153,9 @@ def fig_type():
 
 def fig_applications():
     return fig(
-        f'<div class="apps">{img("readme/readme-header-light.svg", "README header, light: About 8 MB. Ready for a million rows. 1,000,000-row CSV export in ~0.44 s, local benchmark: PostgreSQL 18.4, Unix socket, MacBook Air (Mac17,3, Apple M5). Look first. Write on purpose.")}'
+        f'<div class="apps">{img("readme/readme-header-light.svg", "README header, light: Ready for a million rows. 1,000,000-row CSV export in ~0.44 s, local benchmark: PostgreSQL 18.4, Unix socket, MacBook Air (Mac17,3, Apple M5). Look first. Write on purpose.")}'
         f'{img("readme/readme-header-dark.svg", "README header, dark")}'
-        f'{img("social/social-card.svg", "GitHub social card: About 8 MB. A million rows to CSV in 0.44 s. Local benchmark: 1,000,000-row orders table, PostgreSQL 18.4 over Unix socket, MacBook Air (Mac17,3, Apple M5).")}</div>',
+        f'{img("social/social-card.svg", "GitHub social card: A million rows to CSV in 0.44 s. Local benchmark: 1,000,000-row orders table, PostgreSQL 18.4 over Unix socket, MacBook Air (Mac17,3, Apple M5).")}</div>',
         "README header (light and dark, 1280 × 320) and GitHub social card (1280 × 640). All text is outlined.",
     )
 

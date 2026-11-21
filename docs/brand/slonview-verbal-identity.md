@@ -45,10 +45,10 @@ All copy below is true today. Each line notes the status of what it claims.
 ```markdown
 # Slonview
 
-**About 8 MB. Ready for a million rows.**
+**Ready for a million rows.**
 
-A small, open-source viewer for PostgreSQL®: about 8 MB on disk, pages through
-million-row tables, and read-only by default.
+A small, open-source viewer for PostgreSQL®: pages through million-row tables, and
+read-only by default.
 
 On a local database, Slonview exports a 1,000,000-row table to CSV in about 0.44 s,
 byte-identical to `psql \copy`. Connections open read-only by default, enforced by the
@@ -63,8 +63,7 @@ Notes:
 
 ### 2.2 Three feature blurbs
 
-**Small, and quick on big tables.**
-- Slonview is about 8 MB on disk.
+**Quick on big tables.**
 - Tables load 500 rows at a time: in primary-key order it uses keyset paging, and sorted views use offset paging.
 - Exports stream straight to disk. In our tests, a 1,000,000-row table took about 0.44 s on a local PostgreSQL 18.4 and was byte-identical to `psql \copy`.
 - Esc cancels a running query on the server.
@@ -91,7 +90,7 @@ Notes:
 
 ### 2.3 GitHub repository description (≤ 350 characters)
 
-> A small, open-source desktop viewer for PostgreSQL®. About 8 MB on disk, pages through million-row tables, streams CSV exports, and opens connections read-only by default. No telemetry. macOS first. MIT OR Apache-2.0.
+> A small, open-source desktop viewer for PostgreSQL®. Pages through million-row tables, streams CSV exports, and opens connections read-only by default. No telemetry. MIT OR Apache-2.0.
 
 (217 characters.) Topics: `postgresql`, `database-viewer`, `tauri`, `rust`, `macos`, `csv-export`, `read-only`.
 
@@ -101,14 +100,14 @@ Notes:
 |---|---|---|
 | Homebrew cask `desc` (short, no article, no platform) | `Small read-only-by-default viewer for PostgreSQL` | Homebrew style rules. Publish through a **self-hosted tap**, named as such, until the build is notarized [STRAT §6.3]. |
 | Store / directory subtitle (≤ 30 chars) | `Read-only-by-default Postgres` | Use only where the subtitle sits under the name "Slonview". |
-| Store / directory short description | `A small, open-source viewer for PostgreSQL®. About 8 MB on disk. Opens connections read-only by default. No telemetry.` | Solo surface, so it leaves out the unlabelled export number. |
-| Social card (tagline used alone) | **About 8 MB. A million rows to CSV in 0.44 s.** with trust line *Look first. Write on purpose.* and footer *Local benchmark: 1,000,000-row orders table · PostgreSQL® 18.4 over Unix socket · MacBook Air (Mac17,3, Apple M5)* | The variant [STRAT §9] requires when #1 has no sub-line of its own. The footer carries the benchmark label, so the trust line uses tagline #3 instead of repeating it. Matches `docs/brand/identity/social/social-card.svg`. |
+| Store / directory short description | `A small, open-source viewer for PostgreSQL®. Opens connections read-only by default. No telemetry.` | Solo surface, so it leaves out the unlabelled export number. |
+| Social card (tagline used alone) | **A million rows to CSV in 0.44 s.** with trust line *Look first. Write on purpose.* and footer *Local benchmark: 1,000,000-row orders table · PostgreSQL® 18.4 over Unix socket · MacBook Air (Mac17,3, Apple M5)* | The footer carries the benchmark label, so the trust line uses tagline #3 instead of repeating it. Matches `docs/brand/identity/social/social-card.svg`. |
 
 ### 2.5 "Show HN" title options
 
 HN titles are plain and max 80 characters, with no superlatives. All three are true today.
 
-1. `Show HN: Slonview – an 8 MB PostgreSQL viewer, read-only by default`
+1. `Show HN: Slonview – a small PostgreSQL viewer, read-only by default`
 2. `Show HN: Slonview, a small open-source Postgres viewer (Tauri/Rust, MIT/Apache)`
 3. `Show HN: Slonview – read-only-by-default Postgres viewer, 1M-row CSV in 0.44s`
 
@@ -181,7 +180,7 @@ Errors say what happened and what to do next. They never apologise. Below are th
 
 | Topic | ✅ Say (true today) | ⛔ Never say | Unlocks when |
 |---|---|---|---|
-| Size | "About 8 MB on disk." | "Tiny", "lightweight" with no number; "8 MB download" | Re-measure on the signed build |
+| Size | Nothing. The owner removed the size claim on 2026-11-22: the signed build installs at 9.9 MB, and "about 8 MB" no longer held. | Any size number; "tiny", "lightweight" | Owner decision |
 | Export | "Exports a 1,000,000-row table to CSV in about 0.44 s on a local PostgreSQL 18.4, byte-identical to `psql \copy`." | Unlabelled "0.44 s"; implied remote speed | Remote benchmark → remote claims |
 | Big tables | "Pages through million-row tables 500 rows at a time." | "Handles / built for million-row tables", "loads the whole table", "smooth scrolling through millions of rows" | WKWebView scroll check |
 | Cancel | "Esc cancels the query on the server." 15–28 ms at the engine (local). | Unlabelled "54 ms" (that's headless Chromium UI) | — |
@@ -190,9 +189,9 @@ Errors say what happened and what to do next. They never apologise. Below are th
 | SQL-editor writes | Nothing yet. | "Read-only mode blocks writes from the SQL editor" | Hardening E2E passes (all four bypasses) |
 | Telemetry | "No telemetry. Slonview contains no analytics, crash reporting, or update checks. The only network connections it makes are to the PostgreSQL servers you configure (plus the DNS lookups needed to find them)." Short: "No telemetry. Slonview only talks to the PostgreSQL servers you configure." | "No network requests at all", "offline", "private" | — |
 | TLS | "Encrypted connections (`sslmode=require` behaviour)." | "Secure connection", "verified TLS", "safe on production" | `verify-full` ships and is tested |
-| Native | "About 8 MB", "feels at home on the Mac", "built with Tauri and Rust" | "Native" (unqualified), "No Electron. No subscription. No bloat." | — |
+| Native | "Feels at home on the Mac", "built with Tauri and Rust" | "Native" (unqualified), "No Electron. No subscription. No bloat." | — |
 | Comparisons | Describe the pain ("Java or Electron weight"). | "Faster than X", "unlike X, read-only is opt-in" | Same-machine benchmark / cited desk check |
-| Install | "Build from source"; "self-hosted Homebrew tap" | "Available on Homebrew", "signed" | Developer ID + notarization |
+| Install | "Signed and notarized for macOS"; "build from source" | "Available on Homebrew" (until a tap ships) | — |
 | Benchmarks | "Measured on <dataset, PG version, connection, machine>." | "Published benchmarks" | Benchmark page live |
 | Category | "viewer", "browse", "look at" | "IDE", "manage", "AI-powered", "official" | — |
 

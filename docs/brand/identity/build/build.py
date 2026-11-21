@@ -217,11 +217,11 @@ def text_svg(text, font, weight, size, x, y, fill, tracking=0.0):
     return f'<path fill="{fill}" d="{p}"/>', adv
 
 
-TAG1 = "About 8 MB. Ready for a million rows."
+TAG1 = "Ready for a million rows."
 TAG3 = "Look first. Write on purpose."
 MACHINE = "MacBook Air (Mac17,3, Apple M5)"
 NUMBER = ("1,000,000-row CSV export in ~0.44 s", f"local benchmark: PostgreSQL 18.4, Unix socket, {MACHINE}")
-CARD_HEAD = ("About 8 MB. A million", "rows to CSV in 0.44 s.")
+CARD_HEAD = ("A million rows to", "CSV in 0.44 s.")
 CARD_FOOT = f"Local benchmark: 1,000,000-row orders table · PostgreSQL® 18.4 over Unix socket · {MACHINE}"
 
 SCHEMES = {
@@ -264,7 +264,7 @@ def build_social():
     p, fadv = text_svg(CARD_FOOT, "jetbrains", 450, 15, 80, 584, sc["num"])
     parts.append(p)
     parts.append(big_symbol("light", 793, 14, 6.8, 76))
-    f = write(out / "social-card.svg", svg_doc(W, H, "".join(parts), "Slonview. About 8 MB. A million rows to CSV in 0.44 s."))
+    f = write(out / "social-card.svg", svg_doc(W, H, "".join(parts), "Slonview. A million rows to CSV in 0.44 s."))
     rsvg(f, out / "social-card.png", W, H)
     return fadv
 

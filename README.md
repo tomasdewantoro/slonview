@@ -1,15 +1,15 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/brand/identity/readme/readme-header-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/brand/identity/readme/readme-header-light.png">
-  <img src="docs/brand/identity/readme/readme-header-light.png" width="1280" alt="Slonview. About 8 MB. Ready for a million rows. 1,000,000-row CSV export in about 0.44 s (local benchmark: PostgreSQL 18.4, Unix socket, MacBook Air Mac17,3, Apple M5). Look first. Write on purpose.">
+  <img src="docs/brand/identity/readme/readme-header-light.png" width="1280" alt="Slonview. Ready for a million rows. 1,000,000-row CSV export in about 0.44 s (local benchmark: PostgreSQL 18.4, Unix socket, MacBook Air Mac17,3, Apple M5). Look first. Write on purpose.">
 </picture>
 
 # Slonview
 
-**About 8 MB. Ready for a million rows.**
+**Ready for a million rows.**
 
-A small, open-source viewer for PostgreSQL®: about 8 MB on disk, pages through
-million-row tables, and read-only by default.
+A small, open-source viewer for PostgreSQL®: pages through million-row tables, and
+read-only by default.
 
 On a local database, Slonview exports a 1,000,000-row table to CSV in about 0.44 s,
 byte-identical to `psql \copy`. Connections open read-only by default, enforced by the
@@ -19,8 +19,7 @@ Slonview (SLON-view; *slon*, as in elephant) is not related to Slony-I or the sl
 
 Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Windows later.
 
-**Small, and quick on big tables.**
-- Slonview is about 8 MB on disk.
+**Quick on big tables.**
 - Tables load 500 rows at a time with keyset paging, including user sorts, when a primary key exists. Keyless relations use offset paging.
 - Exports stream straight to disk. In our tests, a 1,000,000-row table took about 0.44 s on a local PostgreSQL 18.4 and was byte-identical to `psql \copy`.
 - Esc cancels a running query on the server.
@@ -56,7 +55,6 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 - **Reviewable row editing:** on Allow writes connections, tables with a primary key support cell edits, SQL NULL, JSON text, new rows with database defaults, and selected-row deletion. Modified/new/deleted rows are marked separately. Review shows exact Rust-generated SQL; Apply commits one transaction or rolls everything back on an optimistic-concurrency conflict. Bytea, generated and identity-always columns cannot be edited. Discard clears pending changes.
 - **Connections:** paste a `postgres://` URL, import from `~/.pgpass`, or fill the form. TLS (`prefer`/`require`) for hosted Postgres such as Supabase, Neon, or RDS.
 - **Per-connection time zone:** set an IANA zone such as `Asia/Jakarta` on a connection and every session (table browsing and the SQL editor) shows `timestamptz` values in that zone, whatever the server default is. A `postgres://` URL with `options=-c timezone=...` fills it in.
-- **Small:** about 8 MB on disk.
 
 ## Install
 
