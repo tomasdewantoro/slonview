@@ -3,7 +3,7 @@ use slonview_core::{Engine, AppError, config::ProfileStore, history::HistoryStor
 
 async fn fixture(writes: bool) -> (Engine, ConnId, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let mut p = parse_conn_url(&std::env::var("SLONVIEW_TEST_URL").unwrap_or_else(|_| "postgres://tomas@localhost/slonview_fixture_grid".into())).unwrap().profile;
+    let mut p = parse_conn_url(&std::env::var("SLONVIEW_TEST_URL").unwrap_or_else(|_| "postgres://tomas@localhost/slonview_fixture".into())).unwrap().profile;
     p.read_only = !writes;
     let store = ProfileStore::new(dir.path().join("connections.toml"));
     store.upsert(p.clone()).unwrap();
@@ -119,7 +119,13 @@ async fn cancel_column_stream_stops_server() {
     let mut req = page(id); req.raw_where = Some("pg_sleep(0.001) IS NOT NULL".into());
     let task_engine = e.clone();
     let task = tokio::spawn(async move { task_engine.stream_columns("cancel-column", &ColumnCopyRequest { page: req, columns: vec!["note".into()] }, |_| Ok(())).await });
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Cancel once the streaming SELECT is running on the server; a fixed sleep raced setup under load.
+    let probe = "SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state = 'active' AND query LIKE 'SELECT \"note\"::text FROM %pg_sleep(0.001)%'";
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while sql(&e, id, probe).await[0][0].as_deref() == Some("0") {
+        assert!(Instant::now() < deadline, "column stream never started");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     e.cancel_query("cancel-column").await.unwrap();
     assert!(matches!(task.await.unwrap(), Err(AppError::Cancelled)));
     assert_eq!(e.fetch_page("after-cancel", &page(id)).await.unwrap().rows.len(), 500);
