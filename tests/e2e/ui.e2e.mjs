@@ -696,17 +696,26 @@ try {
       await openRel("scratch_insert_target");
       // Edit permissions load asynchronously; "Add row" is enabled only once editing is allowed.
       await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Add row" && !b.disabled), 10000);
-      // Activate the `note` cell (row 0) through Glide's accessible cell mirror: clicking a
-      // mirror cell sends Enter to exactly that cell, whatever the grid's scroll position.
-      // Column indexes include the row-marker column, so resolve `note` by its header.
-      await until(() => [...document.querySelectorAll('th[role="columnheader"]')].some((h) => h.textContent.trim() === "note"), 10000);
-      const ok = await page.evaluate(() => {
-        const th = [...document.querySelectorAll('th[role="columnheader"]')].find((h) => h.textContent.trim() === "note");
-        const cell = th && document.querySelector(`td[role="gridcell"][aria-colindex="${th.getAttribute("aria-colindex")}"]`);
-        cell?.click();
-        return !!cell;
-      });
-      assert(ok, "note cell not in the accessible grid");
+      // Canvas grid: widen the viewport so all six columns fit (no horizontal scroll offset),
+      // then double-click across the first row and read each edit dialog's title until the
+      // `note` editor opens. Double-click avoids depending on keyboard focus.
+      await page.setViewport({ width: 1800, height: 900 });
+      await sleep(400);
+      const cellY = (await gridTop()) + HEADER + 12;
+      const editLabel = () => page.evaluate(() => [...document.querySelectorAll("dialog[open]")].map((d) => d.getAttribute("aria-label") ?? "").find((l) => l.startsWith("Edit ")) ?? null);
+      let found = false;
+      for (let x = 340; x < 1780 && !found; x += 60) {
+        await page.mouse.click(x, cellY, { clickCount: 2 });
+        try {
+          await until(() => !!document.querySelector("dialog[open]"), 1500);
+        } catch {
+          continue;
+        }
+        if ((await editLabel()) === "Edit note") { found = true; break; }
+        await page.keyboard.press("Escape");
+        await until(() => !document.querySelector("dialog[open]"));
+      }
+      assert(found, "no editable note cell found in the first row");
       await page.waitForSelector('[aria-label="Edit note"]');
       await page.$eval("#edit-value", e => e.select());
       await page.type("#edit-value", "grid-after 'quoted'");
@@ -721,7 +730,10 @@ try {
       eq(psql("SELECT note FROM scratch_insert_target WHERE id=900000004"), "grid-after 'quoted'", "grid edit committed");
       await page.screenshot({ path: `${SHOTS}/grid-edit-applied.png` });
       return "reviewed Rust-generated SQL, transaction applied, psql confirmed quoted value";
-    } finally { psql("DELETE FROM scratch_insert_target WHERE id=900000004"); }
+    } finally {
+      psql("DELETE FROM scratch_insert_target WHERE id=900000004");
+      await page.setViewport({ width: 1400, height: 900 });
+    }
   });
 
   await check("A connection time zone applies to browsing", async () => {
