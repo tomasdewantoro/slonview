@@ -60,7 +60,9 @@ pub struct SshConfig {
     pub auth: SshAuth,
 }
 
-fn ssh_port() -> u16 { 22 }
+fn ssh_port() -> u16 {
+    22
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -551,9 +553,16 @@ pub struct EditValue {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[ts(export)]
 pub enum RowEdit {
-    Update { original: Vec<EditValue>, values: Vec<EditValue> },
-    Insert { values: Vec<EditValue> },
-    Delete { original: Vec<EditValue> },
+    Update {
+        original: Vec<EditValue>,
+        values: Vec<EditValue>,
+    },
+    Insert {
+        values: Vec<EditValue>,
+    },
+    Delete {
+        original: Vec<EditValue>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

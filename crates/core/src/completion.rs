@@ -2,8 +2,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::model::ConnId;
 use crate::AppResult;
+use crate::model::ConnId;
 
 /// One column of a table, view, materialized view, partitioned or foreign table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -33,10 +33,18 @@ impl crate::engine::Engine {
     /// All columns in the database, ordered by schema, relation and attnum.
     pub async fn list_columns(&self, conn_id: ConnId) -> AppResult<Vec<ColumnRef>> {
         let (_, client) = self.client(conn_id).await?;
-        let rows = client.query(COLUMNS_SQL, &[]).await.map_err(|e| crate::conn::map_query_error(e, false))?;
+        let rows = client
+            .query(COLUMNS_SQL, &[])
+            .await
+            .map_err(|e| crate::conn::map_query_error(e, false))?;
         Ok(rows
             .into_iter()
-            .map(|row| ColumnRef { schema: row.get(0), table: row.get(1), name: row.get(2), type_name: row.get(3) })
+            .map(|row| ColumnRef {
+                schema: row.get(0),
+                table: row.get(1),
+                name: row.get(2),
+                type_name: row.get(3),
+            })
             .collect())
     }
 }

@@ -3,12 +3,13 @@
 //! (`examples/e2e_bridge.rs`) exercise exactly the code the app runs.
 use std::path::Path;
 
-use slonview_core::model::{
-    CellRequest, ConnId, ConnProfile, ExportSource, Filter, HistoryEntry, ObjectKind, Page, PageRequest, ParsedConn,
-    QueryResult, RequestId, SchemaTree, ServerInfo, TableDescription, DEFAULT_SQL_MAX_ROWS,
-};
-use slonview_core::{connurl, AppError, AppResult, Engine};
 use serde_json::Value;
+use slonview_core::model::{
+    CellRequest, ConnId, ConnProfile, DEFAULT_SQL_MAX_ROWS, ExportSource, Filter, HistoryEntry,
+    ObjectKind, Page, PageRequest, ParsedConn, QueryResult, RequestId, SchemaTree, ServerInfo,
+    TableDescription,
+};
+use slonview_core::{AppError, AppResult, Engine, connurl};
 
 const DEFAULT_HISTORY_LIMIT: u32 = 200;
 
@@ -42,11 +43,18 @@ pub async fn list_profiles(engine: &Engine) -> AppResult<Vec<ConnProfile>> {
 /// Trims `time_zone`; blank means server default (None). Validity is left to Postgres,
 /// which rejects unknown names on connect.
 fn normalize_profile(mut profile: ConnProfile) -> ConnProfile {
-    profile.time_zone = profile.time_zone.map(|tz| tz.trim().to_owned()).filter(|tz| !tz.is_empty());
+    profile.time_zone = profile
+        .time_zone
+        .map(|tz| tz.trim().to_owned())
+        .filter(|tz| !tz.is_empty());
     profile
 }
 
-pub async fn save_profile(engine: &Engine, profile: ConnProfile, password: PasswordUpdate) -> AppResult<Vec<ConnProfile>> {
+pub async fn save_profile(
+    engine: &Engine,
+    profile: ConnProfile,
+    password: PasswordUpdate,
+) -> AppResult<Vec<ConnProfile>> {
     if profile.name.trim().is_empty() {
         return Err(AppError::invalid("connection name is required"));
     }
@@ -78,8 +86,14 @@ pub async fn import_pgpass() -> AppResult<Vec<ParsedConn>> {
     connurl::read_pgpass()
 }
 
-pub async fn test_connection(engine: &Engine, profile: &ConnProfile, password: Option<&str>) -> AppResult<ServerInfo> {
-    engine.test_connection(&normalize_profile(profile.clone()), password).await
+pub async fn test_connection(
+    engine: &Engine,
+    profile: &ConnProfile,
+    password: Option<&str>,
+) -> AppResult<ServerInfo> {
+    engine
+        .test_connection(&normalize_profile(profile.clone()), password)
+        .await
 }
 
 pub async fn connect(engine: &Engine, conn_id: ConnId) -> AppResult<ServerInfo> {
@@ -96,17 +110,30 @@ pub async fn list_schema_tree(engine: &Engine, conn_id: ConnId) -> AppResult<Sch
     engine.list_schema_tree(conn_id).await
 }
 
-pub async fn describe_table(engine: &Engine, conn_id: ConnId, schema: &str, table: &str) -> AppResult<TableDescription> {
+pub async fn describe_table(
+    engine: &Engine,
+    conn_id: ConnId,
+    schema: &str,
+    table: &str,
+) -> AppResult<TableDescription> {
     engine.describe_table(conn_id, schema, table).await
 }
 
-pub async fn get_function_definition(engine: &Engine, conn_id: ConnId, oid: u32) -> AppResult<String> {
+pub async fn get_function_definition(
+    engine: &Engine,
+    conn_id: ConnId,
+    oid: u32,
+) -> AppResult<String> {
     engine.get_function_definition(conn_id, oid).await
 }
 
 // Data
 
-pub async fn fetch_page(engine: &Engine, request_id: &RequestId, req: &PageRequest) -> AppResult<Page> {
+pub async fn fetch_page(
+    engine: &Engine,
+    request_id: &RequestId,
+    req: &PageRequest,
+) -> AppResult<Page> {
     engine.fetch_page(request_id, req).await
 }
 
@@ -119,7 +146,9 @@ pub async fn count_exact(
     filters: &[Filter],
     raw_where: Option<&str>,
 ) -> AppResult<i64> {
-    engine.count_exact(request_id, conn_id, schema, table, filters, raw_where).await
+    engine
+        .count_exact(request_id, conn_id, schema, table, filters, raw_where)
+        .await
 }
 
 pub async fn get_cell(engine: &Engine, req: &CellRequest) -> AppResult<Option<String>> {
@@ -135,7 +164,14 @@ pub async fn run_sql(
     sql: &str,
     max_rows: Option<u32>,
 ) -> AppResult<Vec<QueryResult>> {
-    engine.run_sql(request_id, conn_id, sql, max_rows.unwrap_or(DEFAULT_SQL_MAX_ROWS)).await
+    engine
+        .run_sql(
+            request_id,
+            conn_id,
+            sql,
+            max_rows.unwrap_or(DEFAULT_SQL_MAX_ROWS),
+        )
+        .await
 }
 
 pub async fn cancel_query(engine: &Engine, request_id: &RequestId) -> AppResult<()> {
@@ -144,7 +180,12 @@ pub async fn cancel_query(engine: &Engine, request_id: &RequestId) -> AppResult<
 
 // Export
 
-pub async fn export_csv(engine: &Engine, request_id: &RequestId, source: &ExportSource, path: &str) -> AppResult<u64> {
+pub async fn export_csv(
+    engine: &Engine,
+    request_id: &RequestId,
+    source: &ExportSource,
+    path: &str,
+) -> AppResult<u64> {
     if path.trim().is_empty() {
         return Err(AppError::invalid("export path is required"));
     }
@@ -159,40 +200,72 @@ pub async fn list_history(
     search: Option<&str>,
     limit: Option<u32>,
 ) -> AppResult<Vec<HistoryEntry>> {
-    engine.history.list(conn_id, search, limit.unwrap_or(DEFAULT_HISTORY_LIMIT) as usize)
+    engine.history.list(
+        conn_id,
+        search,
+        limit.unwrap_or(DEFAULT_HISTORY_LIMIT) as usize,
+    )
 }
 
 pub async fn clear_history(engine: &Engine) -> AppResult<()> {
     engine.history.clear()
 }
 
-pub async fn get_object_definition(engine: &Engine, conn_id: ConnId, kind: ObjectKind, oid: u32) -> AppResult<String> {
+pub async fn get_object_definition(
+    engine: &Engine,
+    conn_id: ConnId,
+    kind: ObjectKind,
+    oid: u32,
+) -> AppResult<String> {
     engine.get_object_definition(conn_id, kind, oid).await
 }
 
-pub async fn stream_columns(engine: &Engine, request_id: &str, req: &slonview_core::model::ColumnCopyRequest, emit: impl FnMut(slonview_core::model::ColumnCopyChunk) -> AppResult<()> + Send) -> AppResult<slonview_core::model::ColumnCopySummary> {
+pub async fn stream_columns(
+    engine: &Engine,
+    request_id: &str,
+    req: &slonview_core::model::ColumnCopyRequest,
+    emit: impl FnMut(slonview_core::model::ColumnCopyChunk) -> AppResult<()> + Send,
+) -> AppResult<slonview_core::model::ColumnCopySummary> {
     engine.stream_columns(request_id, req, emit).await
 }
 
-pub async fn edit_info(engine: &Engine, conn_id: ConnId, schema: &str, table: &str) -> AppResult<slonview_core::model::EditInfo> {
+pub async fn edit_info(
+    engine: &Engine,
+    conn_id: ConnId,
+    schema: &str,
+    table: &str,
+) -> AppResult<slonview_core::model::EditInfo> {
     engine.edit_info(conn_id, schema, table).await
 }
 
-pub async fn get_edit_row(engine: &Engine, req: &CellRequest) -> AppResult<Vec<slonview_core::model::EditValue>> {
+pub async fn get_edit_row(
+    engine: &Engine,
+    req: &CellRequest,
+) -> AppResult<Vec<slonview_core::model::EditValue>> {
     engine.get_edit_row(req).await
 }
 
-pub async fn review_edits(engine: &Engine, req: &slonview_core::model::EditRequest) -> AppResult<Vec<String>> {
+pub async fn review_edits(
+    engine: &Engine,
+    req: &slonview_core::model::EditRequest,
+) -> AppResult<Vec<String>> {
     engine.review_edits(req).await
 }
 
-pub async fn apply_edits(engine: &Engine, request_id: &str, req: &slonview_core::model::EditRequest) -> AppResult<u32> {
+pub async fn apply_edits(
+    engine: &Engine,
+    request_id: &str,
+    req: &slonview_core::model::EditRequest,
+) -> AppResult<u32> {
     engine.apply_edits(request_id, req).await
 }
 
 // SQL assist
 
-pub async fn list_columns(engine: &Engine, conn_id: ConnId) -> AppResult<Vec<slonview_core::completion::ColumnRef>> {
+pub async fn list_columns(
+    engine: &Engine,
+    conn_id: ConnId,
+) -> AppResult<Vec<slonview_core::completion::ColumnRef>> {
     engine.list_columns(conn_id).await
 }
 
@@ -206,46 +279,77 @@ pub async fn explain(
     engine.explain(request_id, conn_id, sql, analyze).await
 }
 
-pub async fn set_time_zone(engine: &Engine, conn_id: ConnId, time_zone: Option<String>) -> AppResult<Vec<ConnProfile>> {
+pub async fn set_time_zone(
+    engine: &Engine,
+    conn_id: ConnId,
+    time_zone: Option<String>,
+) -> AppResult<Vec<ConnProfile>> {
     engine.set_time_zone(conn_id, time_zone).await
 }
 
 /// SSH secrets never enter ConnProfile or connections.toml. None means clear.
-pub async fn save_ssh_secret(engine: &Engine, id: ConnId, passphrase: bool, value: Option<&str>) -> AppResult<()> {
+pub async fn save_ssh_secret(
+    engine: &Engine,
+    id: ConnId,
+    passphrase: bool,
+    value: Option<&str>,
+) -> AppResult<()> {
     engine.secrets.set_ssh(id, passphrase, value)
 }
 
-pub async fn test_tunnel_connection(engine: &Engine, profile: &ConnProfile, password: Option<&str>, ssh_secret: Option<&str>) -> AppResult<ServerInfo> {
+pub async fn test_tunnel_connection(
+    engine: &Engine,
+    profile: &ConnProfile,
+    password: Option<&str>,
+    ssh_secret: Option<&str>,
+) -> AppResult<ServerInfo> {
     let stored;
     let ssh_secret = if ssh_secret.is_none() {
         stored = match profile.ssh.as_ref().map(|ssh| &ssh.auth) {
-            Some(slonview_core::model::SshAuth::Password) => engine.secrets.get_ssh(profile.id, false)?,
-            Some(slonview_core::model::SshAuth::Key { .. }) => engine.secrets.get_ssh(profile.id, true)?,
+            Some(slonview_core::model::SshAuth::Password) => {
+                engine.secrets.get_ssh(profile.id, false)?
+            }
+            Some(slonview_core::model::SshAuth::Key { .. }) => {
+                engine.secrets.get_ssh(profile.id, true)?
+            }
             _ => None,
         };
         stored.as_deref()
-    } else { ssh_secret };
-    engine.test_connection_with_ssh(&normalize_profile(profile.clone()), password, ssh_secret).await
+    } else {
+        ssh_secret
+    };
+    engine
+        .test_connection_with_ssh(&normalize_profile(profile.clone()), password, ssh_secret)
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
+    use serde_json::json;
     use slonview_core::config::ProfileStore;
     use slonview_core::history::HistoryStore;
     use slonview_core::model::{Cursor, FilterOp, Sort};
     use slonview_core::secrets::{MemorySecretStore, SecretStore};
-    use serde_json::json;
 
     use super::*;
 
     #[test]
     fn password_update_tristate() {
         let args = json!({ "a": null, "b": "s3cret", "c": 5 });
-        assert_eq!(PasswordUpdate::from_json(args.get("missing")), Ok(PasswordUpdate::Keep));
-        assert_eq!(PasswordUpdate::from_json(args.get("a")), Ok(PasswordUpdate::Clear));
-        assert_eq!(PasswordUpdate::from_json(args.get("b")), Ok(PasswordUpdate::Set("s3cret".into())));
+        assert_eq!(
+            PasswordUpdate::from_json(args.get("missing")),
+            Ok(PasswordUpdate::Keep)
+        );
+        assert_eq!(
+            PasswordUpdate::from_json(args.get("a")),
+            Ok(PasswordUpdate::Clear)
+        );
+        assert_eq!(
+            PasswordUpdate::from_json(args.get("b")),
+            Ok(PasswordUpdate::Set("s3cret".into()))
+        );
         assert!(PasswordUpdate::from_json(args.get("c")).is_err());
     }
 
@@ -270,16 +374,34 @@ mod tests {
             Err(AppError::Invalid { .. })
         ));
         profile.name = "p".into();
-        save_profile(&engine, profile.clone(), PasswordUpdate::Set("pw".into())).await.unwrap();
+        save_profile(&engine, profile.clone(), PasswordUpdate::Set("pw".into()))
+            .await
+            .unwrap();
         assert_eq!(secrets.get(profile.id).unwrap().as_deref(), Some("pw"));
-        save_profile(&engine, profile.clone(), PasswordUpdate::Keep).await.unwrap();
+        save_profile(&engine, profile.clone(), PasswordUpdate::Keep)
+            .await
+            .unwrap();
         assert_eq!(secrets.get(profile.id).unwrap().as_deref(), Some("pw"));
-        save_profile(&engine, profile.clone(), PasswordUpdate::Clear).await.unwrap();
+        save_profile(&engine, profile.clone(), PasswordUpdate::Clear)
+            .await
+            .unwrap();
         assert_eq!(secrets.get(profile.id).unwrap(), None);
         let toml = std::fs::read_to_string(dir.path().join("connections.toml")).unwrap();
         assert!(!toml.contains("pw"));
         assert_eq!(delete_profile(&engine, profile.id).await.unwrap(), vec![]);
-        assert!(matches!(export_csv(&engine, &"r".into(), &ExportSource::Sql { conn_id: profile.id, sql: "select 1".into() }, " ").await, Err(AppError::Invalid { .. })));
+        assert!(matches!(
+            export_csv(
+                &engine,
+                &"r".into(),
+                &ExportSource::Sql {
+                    conn_id: profile.id,
+                    sql: "select 1".into()
+                },
+                " "
+            )
+            .await,
+            Err(AppError::Invalid { .. })
+        ));
     }
 
     #[tokio::test]
@@ -288,51 +410,101 @@ mod tests {
         let (engine, _) = engine(&dir);
         let mut profile = parse_conn_url("postgres://u@h/db").await.unwrap().profile;
         profile.time_zone = Some("  Asia/Jakarta \n".into());
-        let saved = save_profile(&engine, profile.clone(), PasswordUpdate::Keep).await.unwrap();
+        let saved = save_profile(&engine, profile.clone(), PasswordUpdate::Keep)
+            .await
+            .unwrap();
         assert_eq!(saved[0].time_zone.as_deref(), Some("Asia/Jakarta"));
         profile.time_zone = Some("   ".into());
-        let saved = save_profile(&engine, profile, PasswordUpdate::Keep).await.unwrap();
+        let saved = save_profile(&engine, profile, PasswordUpdate::Keep)
+            .await
+            .unwrap();
         assert_eq!(saved[0].time_zone, None);
     }
 
     /// Every data command against the seeded fixture (tests/fixtures/seed.sql).
     #[tokio::test]
     async fn commands_against_fixture() {
-        let url = std::env::var("SLONVIEW_TEST_URL").unwrap_or_else(|_| "postgres://tomas@localhost/slonview_fixture".into());
+        let url = std::env::var("SLONVIEW_TEST_URL")
+            .unwrap_or_else(|_| "postgres://tomas@localhost/slonview_fixture".into());
         let dir = tempfile::TempDir::new().unwrap();
         let (engine, _) = engine(&dir);
         let parsed = parse_conn_url(&url).await.unwrap();
         let mut profile = parsed.profile;
         profile.name = "fixture".into();
         let id = profile.id;
-        let password = match parsed.password { Some(p) => PasswordUpdate::Set(p), None => PasswordUpdate::Keep };
-        assert_eq!(save_profile(&engine, profile.clone(), password).await.unwrap().len(), 1);
+        let password = match parsed.password {
+            Some(p) => PasswordUpdate::Set(p),
+            None => PasswordUpdate::Keep,
+        };
+        assert_eq!(
+            save_profile(&engine, profile.clone(), password)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
         assert_eq!(list_profiles(&engine).await.unwrap()[0].id, id);
-        assert!(test_connection(&engine, &profile, None).await.unwrap().version.contains("PostgreSQL"));
-        assert!(matches!(list_schema_tree(&engine, id).await, Err(AppError::NotConnected)));
+        assert!(
+            test_connection(&engine, &profile, None)
+                .await
+                .unwrap()
+                .version
+                .contains("PostgreSQL")
+        );
+        assert!(matches!(
+            list_schema_tree(&engine, id).await,
+            Err(AppError::NotConnected)
+        ));
         connect(&engine, id).await.unwrap();
 
         let tree = list_schema_tree(&engine, id).await.unwrap();
         assert!(tree.schemas.iter().any(|s| s.name == "Sales Data"));
         assert!(tree.extensions.iter().any(|e| e.name == "plpgsql"));
-        let desc = describe_table(&engine, id, "public", "orders").await.unwrap();
+        let desc = describe_table(&engine, id, "public", "orders")
+            .await
+            .unwrap();
         assert!(desc.columns.iter().any(|c| c.name == "id" && c.is_pk));
 
         let req = PageRequest {
             conn_id: id,
             schema: "public".into(),
             table: "orders".into(),
-            filters: vec![Filter { column: "status".into(), op: FilterOp::Eq, value: Some("paid".into()) }],
+            filters: vec![Filter {
+                column: "status".into(),
+                op: FilterOp::Eq,
+                value: Some("paid".into()),
+            }],
             raw_where: None,
-            sort: vec![Sort { column: "id".into(), desc: false }],
+            sort: vec![Sort {
+                column: "id".into(),
+                desc: false,
+            }],
             cursor: None,
             limit: 10,
         };
         let page = fetch_page(&engine, &"p".into(), &req).await.unwrap();
         assert_eq!(page.rows.len(), 10);
         assert!(matches!(page.next_cursor, Some(Cursor::Keyset { .. })));
-        let n = count_exact(&engine, &"c".into(), id, "public", "orders", &req.filters, None).await.unwrap();
-        let psql = run_sql(&engine, &"s".into(), id, "select count(*) from orders where status = 'paid'", None).await.unwrap();
+        let n = count_exact(
+            &engine,
+            &"c".into(),
+            id,
+            "public",
+            "orders",
+            &req.filters,
+            None,
+        )
+        .await
+        .unwrap();
+        let psql = run_sql(
+            &engine,
+            &"s".into(),
+            id,
+            "select count(*) from orders where status = 'paid'",
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(psql[0].rows[0][0].as_deref(), Some(n.to_string().as_str()));
 
         let cell = CellRequest {
@@ -343,19 +515,36 @@ mod tests {
             pk_values: vec![page.rows[0][0].clone()],
             column: "status".into(),
         };
-        assert_eq!(get_cell(&engine, &cell).await.unwrap().as_deref(), Some("paid"));
+        assert_eq!(
+            get_cell(&engine, &cell).await.unwrap().as_deref(),
+            Some("paid")
+        );
 
         let out = dir.path().join("x.csv");
-        let src = ExportSource::Sql { conn_id: id, sql: "select g from generate_series(1,5) g".into() };
-        assert_eq!(export_csv(&engine, &"e".into(), &src, out.to_str().unwrap()).await.unwrap(), 5);
+        let src = ExportSource::Sql {
+            conn_id: id,
+            sql: "select g from generate_series(1,5) g".into(),
+        };
+        assert_eq!(
+            export_csv(&engine, &"e".into(), &src, out.to_str().unwrap())
+                .await
+                .unwrap(),
+            5
+        );
         assert_eq!(std::fs::read_to_string(&out).unwrap().lines().count(), 6);
 
         assert!(cancel_query(&engine, &"nope".into()).await.is_ok());
-        let history = list_history(&engine, Some(id), Some("count"), None).await.unwrap();
+        let history = list_history(&engine, Some(id), Some("count"), None)
+            .await
+            .unwrap();
         assert_eq!(history.len(), 1);
         clear_history(&engine).await.unwrap();
-        assert!(list_history(&engine, None, None, None).await.unwrap().is_empty());
+        assert!(
+            list_history(&engine, None, None, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         disconnect(&engine, id).await.unwrap();
     }
 }
-

@@ -64,12 +64,34 @@ pub struct ExplainResult {
 
 /// Properties mapped to typed fields (or recursed into) instead of `details`.
 const TYPED_KEYS: &[&str] = &[
-    "Node Type", "Plans", "Parent Relationship", "Relation Name", "Schema", "Alias", "Index Name",
-    "Join Type", "Scan Direction", "Strategy", "Operation", "Partial Mode",
-    "Startup Cost", "Total Cost", "Plan Rows", "Plan Width",
-    "Actual Rows", "Actual Total Time", "Actual Startup Time", "Actual Loops",
-    "Shared Hit Blocks", "Shared Read Blocks", "Shared Dirtied Blocks", "Shared Written Blocks",
-    "Temp Read Blocks", "Temp Written Blocks", "Parallel Aware", "Async Capable",
+    "Node Type",
+    "Plans",
+    "Parent Relationship",
+    "Relation Name",
+    "Schema",
+    "Alias",
+    "Index Name",
+    "Join Type",
+    "Scan Direction",
+    "Strategy",
+    "Operation",
+    "Partial Mode",
+    "Startup Cost",
+    "Total Cost",
+    "Plan Rows",
+    "Plan Width",
+    "Actual Rows",
+    "Actual Total Time",
+    "Actual Startup Time",
+    "Actual Loops",
+    "Shared Hit Blocks",
+    "Shared Read Blocks",
+    "Shared Dirtied Blocks",
+    "Shared Written Blocks",
+    "Temp Read Blocks",
+    "Temp Written Blocks",
+    "Parallel Aware",
+    "Async Capable",
 ];
 
 fn explain_prefix(analyze: bool) -> &'static str {
@@ -82,13 +104,21 @@ fn explain_prefix(analyze: bool) -> &'static str {
 
 impl crate::engine::Engine {
     /// Plans `sql` (one statement); with `analyze` also runs it. Always rolled back.
-    pub async fn explain(&self, request_id: &str, conn_id: ConnId, sql: &str, analyze: bool) -> AppResult<ExplainResult> {
+    pub async fn explain(
+        &self,
+        request_id: &str,
+        conn_id: ConnId,
+        sql: &str,
+        analyze: bool,
+    ) -> AppResult<ExplainResult> {
         let mut statements = split_statements(sql);
         if statements.is_empty() {
             return Err(AppError::invalid("nothing to explain"));
         }
         if statements.len() > 1 {
-            return Err(AppError::invalid("Explain needs exactly one SQL statement; select or place the cursor in one."));
+            return Err(AppError::invalid(
+                "Explain needs exactly one SQL statement; select or place the cursor in one.",
+            ));
         }
         let statement = statements.remove(0);
         let (session, client) = self.client(conn_id).await?;
@@ -97,15 +127,26 @@ impl crate::engine::Engine {
             reject_read_only(&statement)?;
         }
         let prefix = explain_prefix(analyze);
-        let span = RawSpan { start: prefix.chars().count(), chars: statement.text.chars().count() };
+        let span = RawSpan {
+            start: prefix.chars().count(),
+            chars: statement.text.chars().count(),
+        };
         let explain_sql = format!("{prefix}{}", statement.text);
         let offset = |mut e: AppError| {
-            if let AppError::Sql { position: Some(p), .. } | AppError::Invalid { position: Some(p), .. } = &mut e {
+            if let AppError::Sql {
+                position: Some(p), ..
+            }
+            | AppError::Invalid {
+                position: Some(p), ..
+            } = &mut e
+            {
                 *p += statement.char_offset as u32;
             }
             e
         };
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
+        let guard =
+            self.cancels
+                .register(request_id, client.cancel_token(), session.transport.clone())?;
         let outcome = async {
             // Server Parse of the exact text that will run: more than one command is refused
             // in every mode before anything executes.
@@ -115,7 +156,10 @@ impl crate::engine::Engine {
             let start = if read_only {
                 Some(query::begin_read_only(&client, &guard).await?)
             } else {
-                client.batch_execute("BEGIN").await.map_err(|e| guard.map_err(e))?;
+                client
+                    .batch_execute("BEGIN")
+                    .await
+                    .map_err(|e| guard.map_err(e))?;
                 None
             };
             let messages = client
@@ -145,7 +189,8 @@ impl crate::engine::Engine {
 
 /// Parses the single-row output of `EXPLAIN (FORMAT JSON …)`.
 pub(crate) fn parse_explain(json: &str, analyzed: bool) -> AppResult<ExplainResult> {
-    let value: Value = serde_json::from_str(json).map_err(|e| AppError::internal(format!("parsing EXPLAIN output: {e}")))?;
+    let value: Value = serde_json::from_str(json)
+        .map_err(|e| AppError::internal(format!("parsing EXPLAIN output: {e}")))?;
     let top = value
         .as_array()
         .and_then(|a| a.first())
@@ -177,27 +222,46 @@ fn plan_node(node: &Map<String, Value>) -> PlanNode {
             _ => qualified,
         }
     });
-    let qualifier = ["Join Type", "Scan Direction", "Strategy", "Operation", "Partial Mode"]
-        .iter()
-        .filter_map(|k| text(k))
-        // "Forward" is the default scan direction and "Plain" the default strategy: noise.
-        .filter(|v| v != "Forward" && v != "Plain")
-        .collect::<Vec<_>>();
+    let qualifier = [
+        "Join Type",
+        "Scan Direction",
+        "Strategy",
+        "Operation",
+        "Partial Mode",
+    ]
+    .iter()
+    .filter_map(|k| text(k))
+    // "Forward" is the default scan direction and "Plain" the default strategy: noise.
+    .filter(|v| v != "Forward" && v != "Plain")
+    .collect::<Vec<_>>();
     let details = node
         .iter()
         .filter(|(k, _)| !TYPED_KEYS.contains(&k.as_str()))
-        .map(|(k, v)| PlanDetail { key: k.clone(), value: detail_text(v) })
+        .map(|(k, v)| PlanDetail {
+            key: k.clone(),
+            value: detail_text(v),
+        })
         .collect();
     let children = node
         .get("Plans")
         .and_then(Value::as_array)
-        .map(|plans| plans.iter().filter_map(Value::as_object).map(plan_node).collect())
+        .map(|plans| {
+            plans
+                .iter()
+                .filter_map(Value::as_object)
+                .map(plan_node)
+                .collect()
+        })
         .unwrap_or_default();
     PlanNode {
         node_type: text("Node Type").unwrap_or_default(),
         relation,
         index_name: text("Index Name"),
-        qualifier: if qualifier.is_empty() { None } else { Some(qualifier.join(" ")) },
+        qualifier: if qualifier.is_empty() {
+            None
+        } else {
+            Some(qualifier.join(" "))
+        },
         startup_cost: num("Startup Cost").unwrap_or(0.0),
         total_cost: num("Total Cost").unwrap_or(0.0),
         plan_rows: num("Plan Rows").unwrap_or(0.0),
@@ -241,10 +305,19 @@ mod tests {
         assert_eq!(r.plan.node_type, "Hash Join");
         assert_eq!(r.plan.qualifier.as_deref(), Some("Inner"));
         assert_eq!(r.plan.actual_rows, Some(90.0));
-        assert_eq!(r.plan.details, vec![
-            PlanDetail { key: "Hash Cond".into(), value: "(o.customer_id = c.id)".into() },
-            PlanDetail { key: "Output".into(), value: "o.id, c.name".into() },
-        ]);
+        assert_eq!(
+            r.plan.details,
+            vec![
+                PlanDetail {
+                    key: "Hash Cond".into(),
+                    value: "(o.customer_id = c.id)".into()
+                },
+                PlanDetail {
+                    key: "Output".into(),
+                    value: "o.id, c.name".into()
+                },
+            ]
+        );
         let scan = &r.plan.children[0];
         assert_eq!(scan.relation.as_deref(), Some("public.orders o"));
         assert_eq!(scan.qualifier, None);

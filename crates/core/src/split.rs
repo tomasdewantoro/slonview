@@ -82,7 +82,10 @@ fn push_statement(chars: &[char], start: usize, end: usize, out: &mut Vec<Statem
     while e > s && chars[e - 1].is_whitespace() {
         e -= 1;
     }
-    out.push(Statement { text: chars[s..e].iter().collect(), char_offset: s });
+    out.push(Statement {
+        text: chars[s..e].iter().collect(),
+        char_offset: s,
+    });
 }
 
 fn is_ident_char(c: char) -> bool {
@@ -104,8 +107,14 @@ fn leading_words(sql: &str) -> impl Iterator<Item = &str> {
                 let bytes = rest.as_bytes();
                 while i + 1 < bytes.len() && depth != 0 {
                     match &bytes[i..i + 2] {
-                        b"/*" => { depth += 1; i += 2; }
-                        b"*/" => { depth -= 1; i += 2; }
+                        b"/*" => {
+                            depth += 1;
+                            i += 2;
+                        }
+                        b"*/" => {
+                            depth -= 1;
+                            i += 2;
+                        }
                         _ => i += 1,
                     }
                 }
@@ -115,7 +124,9 @@ fn leading_words(sql: &str) -> impl Iterator<Item = &str> {
             }
         }
         let end = rest.find(|c: char| !is_ident_char(c)).unwrap_or(rest.len());
-        if end == 0 { return None; }
+        if end == 0 {
+            return None;
+        }
         let word = &rest[..end];
         rest = &rest[end..];
         Some(word)
@@ -131,30 +142,67 @@ pub(crate) fn read_only_rejection(sql: &str) -> Option<&'static str> {
     let third = words.next().unwrap_or("");
     let is = |word: &str, keyword: &str| word.eq_ignore_ascii_case(keyword);
     if is(first, "ROLLBACK") {
-        return if is(second, "TO") || ((is(second, "WORK") || is(second, "TRANSACTION")) && is(third, "TO")) {
+        return if is(second, "TO")
+            || ((is(second, "WORK") || is(second, "TRANSACTION")) && is(third, "TO"))
+        {
             None
-        } else { Some("ROLLBACK") };
+        } else {
+            Some("ROLLBACK")
+        };
     }
     for keyword in ["BEGIN", "START", "COMMIT", "END", "ABORT", "VACUUM", "LOCK"] {
-        if is(first, keyword) { return Some(keyword); }
+        if is(first, keyword) {
+            return Some(keyword);
+        }
     }
-    if is(first, "PREPARE") && is(second, "TRANSACTION") { return Some("PREPARE TRANSACTION"); }
+    if is(first, "PREPARE") && is(second, "TRANSACTION") {
+        return Some("PREPARE TRANSACTION");
+    }
     if is(first, "SET") {
-        if is(second, "TRANSACTION") { return Some("SET TRANSACTION"); }
-        if is(second, "SESSION") && is(third, "CHARACTERISTICS") { return Some("SET SESSION CHARACTERISTICS"); }
+        if is(second, "TRANSACTION") {
+            return Some("SET TRANSACTION");
+        }
+        if is(second, "SESSION") && is(third, "CHARACTERISTICS") {
+            return Some("SET SESSION CHARACTERISTICS");
+        }
     }
-    if is(first, "ALTER") && is(second, "SYSTEM") { return Some("ALTER SYSTEM"); }
+    if is(first, "ALTER") && is(second, "SYSTEM") {
+        return Some("ALTER SYSTEM");
+    }
     if is(first, "CREATE") || is(first, "DROP") {
-        if is(second, "DATABASE") { return Some(if is(first, "CREATE") { "CREATE DATABASE" } else { "DROP DATABASE" }); }
-        if is(second, "TABLESPACE") { return Some(if is(first, "CREATE") { "CREATE TABLESPACE" } else { "DROP TABLESPACE" }); }
+        if is(second, "DATABASE") {
+            return Some(if is(first, "CREATE") {
+                "CREATE DATABASE"
+            } else {
+                "DROP DATABASE"
+            });
+        }
+        if is(second, "TABLESPACE") {
+            return Some(if is(first, "CREATE") {
+                "CREATE TABLESPACE"
+            } else {
+                "DROP TABLESPACE"
+            });
+        }
     }
-    if is(first, "CREATE") && (is(second, "INDEX") || (is(second, "UNIQUE") && is(third, "INDEX"))) {
-        let concurrent = if is(second, "INDEX") { third } else { words.next().unwrap_or("") };
-        if is(concurrent, "CONCURRENTLY") { return Some("CREATE INDEX CONCURRENTLY"); }
+    if is(first, "CREATE") && (is(second, "INDEX") || (is(second, "UNIQUE") && is(third, "INDEX")))
+    {
+        let concurrent = if is(second, "INDEX") {
+            third
+        } else {
+            words.next().unwrap_or("")
+        };
+        if is(concurrent, "CONCURRENTLY") {
+            return Some("CREATE INDEX CONCURRENTLY");
+        }
     }
     // REINDEX [(options)] target CONCURRENTLY ...: CONCURRENTLY is outside
     // parentheses. Server Parse still rejects malformed statements before execution.
-    if is(first, "REINDEX") && sql.split(|c: char| !is_ident_char(c)).any(|w| is(w, "CONCURRENTLY")) {
+    if is(first, "REINDEX")
+        && sql
+            .split(|c: char| !is_ident_char(c))
+            .any(|w| is(w, "CONCURRENTLY"))
+    {
         return Some("REINDEX CONCURRENTLY");
     }
     None
@@ -250,34 +298,73 @@ mod tests {
     #[test]
     fn read_only_leading_keywords() {
         for (sql, expected) in [
-            (" \n-- comment\n/* outer /* nested */ */ BeGiN;", Some("BEGIN")),
-            ("begin_date", None), ("begin$foo", None), ("\"BEGIN\"", None),
-            ("SAVEPOINT a", None), ("RELEASE SAVEPOINT a", None),
-            ("ROLLBACK TO a", None), ("rollback work to savepoint a", None),
-            ("ROLLBACK TRANSACTION TO a", None), ("ROLLBACK WORK", Some("ROLLBACK")),
-            ("PREPARE x AS SELECT 1", None), ("prepare /* c */ transaction 'x'", Some("PREPARE TRANSACTION")),
+            (
+                " \n-- comment\n/* outer /* nested */ */ BeGiN;",
+                Some("BEGIN"),
+            ),
+            ("begin_date", None),
+            ("begin$foo", None),
+            ("\"BEGIN\"", None),
+            ("SAVEPOINT a", None),
+            ("RELEASE SAVEPOINT a", None),
+            ("ROLLBACK TO a", None),
+            ("rollback work to savepoint a", None),
+            ("ROLLBACK TRANSACTION TO a", None),
+            ("ROLLBACK WORK", Some("ROLLBACK")),
+            ("PREPARE x AS SELECT 1", None),
+            (
+                "prepare /* c */ transaction 'x'",
+                Some("PREPARE TRANSACTION"),
+            ),
             ("SET default_transaction_read_only = off", None),
             ("set transaction read write", Some("SET TRANSACTION")),
-            ("set session characteristics as transaction read write", Some("SET SESSION CHARACTERISTICS")),
+            (
+                "set session characteristics as transaction read write",
+                Some("SET SESSION CHARACTERISTICS"),
+            ),
             ("LOCK TABLE orders IN ACCESS SHARE MODE", Some("LOCK")),
-            ("CREATE /*x*/ UNIQUE INDEX CONCURRENTLY x ON t(a)", Some("CREATE INDEX CONCURRENTLY")),
-            ("REINDEX (VERBOSE) TABLE CONCURRENTLY t", Some("REINDEX CONCURRENTLY")),
-            ("SELECT 'COMMIT'", None), ("/* COMMIT */ select 1", None),
-        ] { assert_eq!(read_only_rejection(sql), expected, "{sql}"); }
+            (
+                "CREATE /*x*/ UNIQUE INDEX CONCURRENTLY x ON t(a)",
+                Some("CREATE INDEX CONCURRENTLY"),
+            ),
+            (
+                "REINDEX (VERBOSE) TABLE CONCURRENTLY t",
+                Some("REINDEX CONCURRENTLY"),
+            ),
+            ("SELECT 'COMMIT'", None),
+            ("/* COMMIT */ select 1", None),
+        ] {
+            assert_eq!(read_only_rejection(sql), expected, "{sql}");
+        }
     }
 
     #[test]
     fn basic_and_quotes() {
-        assert_eq!(texts("SELECT 1; SELECT $$a;b$$; select 'x;y'"), ["SELECT 1", "SELECT $$a;b$$", "select 'x;y'"]);
-        assert_eq!(texts("select 'it''s;'; select 2;"), ["select 'it''s;'", "select 2"]);
-        assert_eq!(texts("select \"a;\"\"b\" from t; x"), ["select \"a;\"\"b\" from t", "x"]);
+        assert_eq!(
+            texts("SELECT 1; SELECT $$a;b$$; select 'x;y'"),
+            ["SELECT 1", "SELECT $$a;b$$", "select 'x;y'"]
+        );
+        assert_eq!(
+            texts("select 'it''s;'; select 2;"),
+            ["select 'it''s;'", "select 2"]
+        );
+        assert_eq!(
+            texts("select \"a;\"\"b\" from t; x"),
+            ["select \"a;\"\"b\" from t", "x"]
+        );
     }
 
     #[test]
     fn escape_strings() {
-        assert_eq!(texts(r"select E'a\';b'; select 2"), [r"select E'a\';b'", "select 2"]);
+        assert_eq!(
+            texts(r"select E'a\';b'; select 2"),
+            [r"select E'a\';b'", "select 2"]
+        );
         // Not an escape string: identifier ending in e followed by a standard string.
-        assert_eq!(texts(r"select some'\'; select 2"), [r"select some'\'", "select 2"]);
+        assert_eq!(
+            texts(r"select some'\'; select 2"),
+            [r"select some'\'", "select 2"]
+        );
     }
 
     #[test]
@@ -285,14 +372,20 @@ mod tests {
         let sql = "create function f() returns int as $body$ select 1; $$ ; $body$ language sql; select $1";
         assert_eq!(
             texts(sql),
-            ["create function f() returns int as $body$ select 1; $$ ; $body$ language sql", "select $1"]
+            [
+                "create function f() returns int as $body$ select 1; $$ ; $body$ language sql",
+                "select $1"
+            ]
         );
         assert_eq!(texts("select a$b; select 2"), ["select a$b", "select 2"]);
     }
 
     #[test]
     fn comments() {
-        assert_eq!(texts("-- a;b\nselect 1; /* x; /* nested; */ y; */ select 2"), ["-- a;b\nselect 1", "/* x; /* nested; */ y; */ select 2"]);
+        assert_eq!(
+            texts("-- a;b\nselect 1; /* x; /* nested; */ y; */ select 2"),
+            ["-- a;b\nselect 1", "/* x; /* nested; */ y; */ select 2"]
+        );
         assert_eq!(texts("select 1; -- trailing only"), ["select 1"]);
         assert_eq!(texts(" ; ;; "), Vec::<String>::new());
         assert_eq!(texts("/* only */ ; -- c"), Vec::<String>::new());

@@ -85,14 +85,21 @@ impl SecretStore for MemorySecretStore {
     }
     fn set_ssh(&self, id: ConnId, passphrase: bool, value: Option<&str>) -> AppResult<()> {
         let mut secrets = self.ssh.lock().unwrap();
-        if let Some(value) = value { secrets.insert((id, passphrase), value.to_owned()); }
-        else { secrets.remove(&(id, passphrase)); }
+        if let Some(value) = value {
+            secrets.insert((id, passphrase), value.to_owned());
+        } else {
+            secrets.remove(&(id, passphrase));
+        }
         Ok(())
     }
 }
 
 fn ssh_entry(id: ConnId, passphrase: bool) -> AppResult<keyring::Entry> {
-    let suffix = if passphrase { "ssh-key-passphrase" } else { "ssh-password" };
+    let suffix = if passphrase {
+        "ssh-key-passphrase"
+    } else {
+        "ssh-password"
+    };
     keyring::Entry::new(SERVICE, &format!("{id}:{suffix}")).map_err(store_error)
 }
 

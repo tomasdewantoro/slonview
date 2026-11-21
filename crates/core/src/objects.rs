@@ -9,7 +9,8 @@ use tokio_postgres::{Client, Row};
 
 use crate::introspect::db_err;
 use crate::model::{
-    ConnId, ExtensionInfo, ObjectKind, SequenceInfo, TriggerEvent, TriggerInfo, TriggerTiming, TypeInfo, TypeKind,
+    ConnId, ExtensionInfo, ObjectKind, SequenceInfo, TriggerEvent, TriggerInfo, TriggerTiming,
+    TypeInfo, TypeKind,
 };
 use crate::{AppError, AppResult};
 
@@ -65,7 +66,8 @@ pub(crate) fn triggers_sql(schema_filter: &str) -> String {
     )
 }
 
-pub(crate) const EXTENSIONS_SQL: &str = "SELECT e.oid, e.extname::text, e.extversion, n.nspname::text
+pub(crate) const EXTENSIONS_SQL: &str =
+    "SELECT e.oid, e.extname::text, e.extversion, n.nspname::text
      FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
      ORDER BY e.extname";
 
@@ -93,7 +95,13 @@ pub(crate) fn type_info(row: Row) -> AppResult<TypeInfo> {
         "c" => TypeKind::Composite,
         other => return Err(AppError::internal(format!("unexpected typtype {other:?}"))),
     };
-    Ok(TypeInfo { oid: row.get::<_, Oid>(0), schema: row.get(1), name: row.get(2), kind, detail: row.get(4) })
+    Ok(TypeInfo {
+        oid: row.get::<_, Oid>(0),
+        schema: row.get(1),
+        name: row.get(2),
+        kind,
+        detail: row.get(4),
+    })
 }
 
 // pg_trigger.tgtype bits (src/include/catalog/pg_trigger.h).
@@ -138,11 +146,18 @@ pub(crate) fn trigger(row: Row) -> AppResult<TriggerInfo> {
 }
 
 pub(crate) fn extension(row: Row) -> AppResult<ExtensionInfo> {
-    Ok(ExtensionInfo { oid: row.get::<_, Oid>(0), name: row.get(1), version: row.get(2), schema: row.get(3) })
+    Ok(ExtensionInfo {
+        oid: row.get::<_, Oid>(0),
+        name: row.get(1),
+        version: row.get(2),
+        schema: row.get(3),
+    })
 }
 
 fn not_found(what: &str, oid: Oid) -> AppError {
-    AppError::invalid(format!("{what} with oid {oid} not found (it may have been dropped)"))
+    AppError::invalid(format!(
+        "{what} with oid {oid} not found (it may have been dropped)"
+    ))
 }
 
 /// Definition comment plus a runnable `SELECT * FROM <seq>;`.
@@ -169,11 +184,23 @@ async fn sequence_definition(client: &Client, oid: Oid) -> AppResult<String> {
         .map_err(db_err)?
         .ok_or_else(|| not_found("sequence", oid))?;
     let name: String = row.get(0);
-    let unlogged = if row.get::<_, String>(8) == "u" { "UNLOGGED " } else { "" };
-    let cycle = if row.get::<_, bool>(7) { "CYCLE" } else { "NO CYCLE" };
+    let unlogged = if row.get::<_, String>(8) == "u" {
+        "UNLOGGED "
+    } else {
+        ""
+    };
+    let cycle = if row.get::<_, bool>(7) {
+        "CYCLE"
+    } else {
+        "NO CYCLE"
+    };
     let mut out = String::new();
     let _ = writeln!(out, "-- Sequence {name}");
-    let _ = writeln!(out, "--   CREATE {unlogged}SEQUENCE {name} AS {}", row.get::<_, String>(1));
+    let _ = writeln!(
+        out,
+        "--   CREATE {unlogged}SEQUENCE {name} AS {}",
+        row.get::<_, String>(1)
+    );
     let _ = writeln!(
         out,
         "--     INCREMENT BY {} MINVALUE {} MAXVALUE {} START WITH {} CACHE {} {cycle};",
@@ -225,7 +252,12 @@ async fn type_definition(client: &Client, oid: Oid) -> AppResult<String> {
         .ok_or_else(|| not_found("type", oid))?;
     let typtype: String = row.get(0);
     let name: String = row.get(1);
-    let indent = |s: &str, by: &str| s.lines().map(|l| format!("{by}{l}")).collect::<Vec<_>>().join("\n");
+    let indent = |s: &str, by: &str| {
+        s.lines()
+            .map(|l| format!("{by}{l}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     let mut out = String::new();
     let object = match typtype.as_str() {
         "e" => {
@@ -252,10 +284,18 @@ async fn type_definition(client: &Client, oid: Oid) -> AppResult<String> {
         }
         "c" => {
             let attrs = row.get::<_, Option<String>>(8).unwrap_or_default();
-            let _ = writeln!(out, "CREATE TYPE {name} AS (\n{}\n);", indent(&attrs, "    "));
+            let _ = writeln!(
+                out,
+                "CREATE TYPE {name} AS (\n{}\n);",
+                indent(&attrs, "    ")
+            );
             "TYPE"
         }
-        other => return Err(AppError::invalid(format!("type {name} is not an enum, domain or composite type ({other:?})"))),
+        other => {
+            return Err(AppError::invalid(format!(
+                "type {name} is not an enum, domain or composite type ({other:?})"
+            )));
+        }
     };
     if let Some(comment) = row.get::<_, Option<String>>(9) {
         let _ = writeln!(out, "\nCOMMENT ON {object} {name} IS {comment};");
@@ -323,7 +363,12 @@ async fn extension_definition(client: &Client, oid: Oid) -> AppResult<String> {
 impl crate::engine::Engine {
     /// SQL text for a sidebar object; `oid` comes from the matching `SchemaTree` entry.
     /// Unknown oid = Invalid.
-    pub async fn get_object_definition(&self, conn_id: ConnId, kind: ObjectKind, oid: u32) -> AppResult<String> {
+    pub async fn get_object_definition(
+        &self,
+        conn_id: ConnId,
+        kind: ObjectKind,
+        oid: u32,
+    ) -> AppResult<String> {
         let (_, client) = self.client(conn_id).await?;
         match kind {
             ObjectKind::Sequence => sequence_definition(&client, oid).await,

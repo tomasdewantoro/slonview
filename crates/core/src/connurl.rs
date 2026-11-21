@@ -24,25 +24,36 @@ pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
     let rest = input
         .strip_prefix("postgres://")
         .or_else(|| input.strip_prefix("postgresql://"))
-        .ok_or_else(|| AppError::invalid("connection URL must start with postgres:// or postgresql://"))?;
+        .ok_or_else(|| {
+            AppError::invalid("connection URL must start with postgres:// or postgresql://")
+        })?;
 
     // `url` rejects an empty host when userinfo or a port is present; substitute a placeholder.
     let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_end];
     let host_part = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let normalized: Cow<str> = if (host_part.is_empty() || host_part.starts_with(':')) && !authority.is_empty() {
-        let at = authority.len() - host_part.len();
-        Cow::Owned(format!("postgres://{}{EMPTY_HOST_PLACEHOLDER}{}", &authority[..at], &rest[at..]))
-    } else {
-        Cow::Owned(format!("postgres://{rest}"))
-    };
+    let normalized: Cow<str> =
+        if (host_part.is_empty() || host_part.starts_with(':')) && !authority.is_empty() {
+            let at = authority.len() - host_part.len();
+            Cow::Owned(format!(
+                "postgres://{}{EMPTY_HOST_PLACEHOLDER}{}",
+                &authority[..at],
+                &rest[at..]
+            ))
+        } else {
+            Cow::Owned(format!("postgres://{rest}"))
+        };
 
-    let url = Url::parse(&normalized).map_err(|e| AppError::invalid(format!("invalid connection URL: {e}")))?;
+    let url = Url::parse(&normalized)
+        .map_err(|e| AppError::invalid(format!("invalid connection URL: {e}")))?;
 
     let mut host = match url.host_str() {
         None | Some(EMPTY_HOST_PLACEHOLDER) | Some("") => String::new(),
         Some(h) => {
-            let h = h.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(h);
+            let h = h
+                .strip_prefix('[')
+                .and_then(|h| h.strip_suffix(']'))
+                .unwrap_or(h);
             decode(h)?
         }
     };
@@ -58,7 +69,11 @@ pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
         match key.as_ref() {
             "host" if host.is_empty() => host = value.into_owned(),
             "port" if port.is_none() => {
-                port = Some(value.parse().map_err(|_| AppError::invalid(format!("invalid port \"{value}\"")))?)
+                port = Some(
+                    value
+                        .parse()
+                        .map_err(|_| AppError::invalid(format!("invalid port \"{value}\"")))?,
+                )
             }
             "user" if user.is_empty() => user = value.into_owned(),
             "password" if password.is_none() => password = Some(value.into_owned()),
@@ -111,7 +126,8 @@ fn options_time_zone(options: &str) -> Option<String> {
 }
 
 fn decode(s: &str) -> AppResult<String> {
-    percent_decode(s).ok_or_else(|| AppError::invalid(format!("invalid percent-encoding in \"{s}\"")))
+    percent_decode(s)
+        .ok_or_else(|| AppError::invalid(format!("invalid percent-encoding in \"{s}\"")))
 }
 
 fn percent_decode(s: &str) -> Option<String> {
@@ -139,7 +155,9 @@ fn parse_sslmode(value: &str) -> AppResult<SslMode> {
         "require" => Ok(SslMode::Require),
         "verify-ca" => Ok(SslMode::VerifyCa),
         "verify-full" => Ok(SslMode::VerifyFull),
-        other => Err(AppError::invalid(format!("unsupported sslmode \"{other}\""))),
+        other => Err(AppError::invalid(format!(
+            "unsupported sslmode \"{other}\""
+        ))),
     }
 }
 
@@ -157,12 +175,25 @@ fn parse_pgpass_line(line: &str) -> Option<ParsedConn> {
     }
     let fields = split_pgpass_fields(line);
     let [host, port, database, user, password]: [String; 5] = fields.try_into().ok()?;
-    if [&host, &port, &database, &user].iter().any(|f| f.as_str() == "*") {
+    if [&host, &port, &database, &user]
+        .iter()
+        .any(|f| f.as_str() == "*")
+    {
         return None;
     }
     let port: u16 = port.parse().ok()?;
-    let profile = ConnProfile { name: format!("{database}@{host}"), host, port, database, user, ..new_profile() };
-    Some(ParsedConn { profile, password: Some(password) })
+    let profile = ConnProfile {
+        name: format!("{database}@{host}"),
+        host,
+        port,
+        database,
+        user,
+        ..new_profile()
+    };
+    Some(ParsedConn {
+        profile,
+        password: Some(password),
+    })
 }
 
 /// Splits on unescaped `:` into at most 5 fields (the password keeps any further colons
@@ -230,7 +261,10 @@ mod tests {
         assert_eq!(p.profile.database, "tomas");
         assert_eq!(p.profile.ssl, SslMode::Prefer);
         assert_eq!(p.password, None);
-        assert_eq!(parse("postgres://tomas@localhost/").profile.database, "tomas");
+        assert_eq!(
+            parse("postgres://tomas@localhost/").profile.database,
+            "tomas"
+        );
     }
 
     #[test]
@@ -296,22 +330,44 @@ mod tests {
             ("verify-ca", SslMode::VerifyCa),
             ("verify-full", SslMode::VerifyFull),
         ] {
-            assert_eq!(parse(&format!("postgres://u@h/d?sslmode={mode}")).profile.ssl, want, "{mode}");
+            assert_eq!(
+                parse(&format!("postgres://u@h/d?sslmode={mode}"))
+                    .profile
+                    .ssl,
+                want,
+                "{mode}"
+            );
         }
-        assert!(matches!(parse_conn_url("postgres://u@h/d?sslmode=bogus"), Err(AppError::Invalid { .. })));
+        assert!(matches!(
+            parse_conn_url("postgres://u@h/d?sslmode=bogus"),
+            Err(AppError::Invalid { .. })
+        ));
     }
 
     #[test]
     fn sslrootcert_maps() {
-        let parsed = parse("postgres://u@host/db?sslmode=verify-full&sslrootcert=%2Ftmp%2Fmy%20ca.pem");
-        assert_eq!(parsed.profile.ssl_root_cert.as_deref(), Some("/tmp/my ca.pem"));
+        let parsed =
+            parse("postgres://u@host/db?sslmode=verify-full&sslrootcert=%2Ftmp%2Fmy%20ca.pem");
+        assert_eq!(
+            parsed.profile.ssl_root_cert.as_deref(),
+            Some("/tmp/my ca.pem")
+        );
         assert_eq!(parsed.profile.ssl, SslMode::VerifyFull);
     }
 
     #[test]
     fn rejects_bad_input() {
-        for bad in ["mysql://u@h/d", "postgres://u@h:notaport/d", "postgres://u@h/d%ZZ", "localhost:5432", ""] {
-            assert!(matches!(parse_conn_url(bad), Err(AppError::Invalid { .. })), "{bad}");
+        for bad in [
+            "mysql://u@h/d",
+            "postgres://u@h:notaport/d",
+            "postgres://u@h/d%ZZ",
+            "localhost:5432",
+            "",
+        ] {
+            assert!(
+                matches!(parse_conn_url(bad), Err(AppError::Invalid { .. })),
+                "{bad}"
+            );
         }
     }
 
@@ -330,9 +386,18 @@ mod tests {
             "postgres://u@h/d?options=--timezone%3DAsia/Jakarta",
             "postgres://u@h/d?options=-c%20search_path%3Dx%20-c%20timezone%3DAsia/Jakarta",
         ] {
-            assert_eq!(parse(url).profile.time_zone.as_deref(), Some("Asia/Jakarta"), "{url}");
+            assert_eq!(
+                parse(url).profile.time_zone.as_deref(),
+                Some("Asia/Jakarta"),
+                "{url}"
+            );
         }
-        assert_eq!(parse("postgres://u@h/d?options=-c%20search_path%3Dx").profile.time_zone, None);
+        assert_eq!(
+            parse("postgres://u@h/d?options=-c%20search_path%3Dx")
+                .profile
+                .time_zone,
+            None
+        );
     }
 
     #[test]

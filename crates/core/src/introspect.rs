@@ -7,8 +7,8 @@ use tokio_postgres::Client;
 use tokio_postgres::types::Oid;
 
 use crate::model::{
-    Column, ColumnDetail, ForeignKeyInfo, FunctionInfo, FunctionKind, IndexInfo, Relation, RelationKind, SchemaNode,
-    SchemaTree, TableDescription,
+    Column, ColumnDetail, ForeignKeyInfo, FunctionInfo, FunctionKind, IndexInfo, Relation,
+    RelationKind, SchemaNode, SchemaTree, TableDescription,
 };
 use crate::objects;
 use crate::{AppError, AppResult};
@@ -104,19 +104,28 @@ pub(crate) async fn schema_tree(client: &Client) -> AppResult<SchemaTree> {
             continue; // schema without relations
         };
         let relkind: String = row.get(2);
-        out.last_mut().expect("pushed above").relations.push(Relation {
-            schema,
-            name,
-            kind: relation_kind(&relkind)?,
-            est_rows: row.get::<_, Option<i64>>(3).unwrap_or(-1),
-            size_bytes: row.get::<_, Option<i64>>(4).unwrap_or(0),
-        });
+        out.last_mut()
+            .expect("pushed above")
+            .relations
+            .push(Relation {
+                schema,
+                name,
+                kind: relation_kind(&relkind)?,
+                est_rows: row.get::<_, Option<i64>>(3).unwrap_or(-1),
+                size_bytes: row.get::<_, Option<i64>>(4).unwrap_or(0),
+            });
     }
-    let index: HashMap<String, usize> = out.iter().enumerate().map(|(i, n)| (n.name.clone(), i)).collect();
+    let index: HashMap<String, usize> = out
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.name.clone(), i))
+        .collect();
     for row in fn_rows {
         let schema: String = row.get(1);
         // A schema created between the two snapshots is simply skipped until the next refresh.
-        let Some(&i) = index.get(&schema) else { continue };
+        let Some(&i) = index.get(&schema) else {
+            continue;
+        };
         let prokind: String = row.get(5);
         out[i].functions.push(FunctionInfo {
             oid: row.get::<_, Oid>(0),
@@ -144,8 +153,14 @@ pub(crate) async fn schema_tree(client: &Client) -> AppResult<SchemaTree> {
             out[i].triggers.push(objects::trigger(row)?);
         }
     }
-    let extensions = ext_rows.into_iter().map(objects::extension).collect::<AppResult<_>>()?;
-    Ok(SchemaTree { schemas: out, extensions })
+    let extensions = ext_rows
+        .into_iter()
+        .map(objects::extension)
+        .collect::<AppResult<_>>()?;
+    Ok(SchemaTree {
+        schemas: out,
+        extensions,
+    })
 }
 
 /// `CREATE OR REPLACE …` text for functions, procedures and window functions. Aggregates,
@@ -170,9 +185,9 @@ pub(crate) async fn function_definition(client: &Client, oid: Oid) -> AppResult<
         .ok_or_else(|| AppError::invalid(format!("function with oid {oid} not found (it may have been dropped)")))?;
     let prokind: String = row.get(0);
     if prokind != "a" {
-        return row
-            .get::<_, Option<String>>(1)
-            .ok_or_else(|| AppError::internal(format!("pg_get_functiondef returned no text for oid {oid}")));
+        return row.get::<_, Option<String>>(1).ok_or_else(|| {
+            AppError::internal(format!("pg_get_functiondef returned no text for oid {oid}"))
+        });
     }
     let name: String = row.get(2);
     let args: String = row.get(3);
@@ -180,8 +195,14 @@ pub(crate) async fn function_definition(client: &Client, oid: Oid) -> AppResult<
     let comment = |s: &str| s.replace('\n', "\n--     ");
     let mut out = String::new();
     let _ = writeln!(out, "-- Aggregate function {name}({args})");
-    let _ = writeln!(out, "-- Returns: {}", result.as_deref().unwrap_or("unknown"));
-    out.push_str("--\n-- pg_get_functiondef does not support aggregates; details from pg_aggregate:\n");
+    let _ = writeln!(
+        out,
+        "-- Returns: {}",
+        result.as_deref().unwrap_or("unknown")
+    );
+    out.push_str(
+        "--\n-- pg_get_functiondef does not support aggregates; details from pg_aggregate:\n",
+    );
     let kind = match row.get::<_, Option<String>>(9).as_deref() {
         Some("o") => "ordered-set",
         Some("h") => "hypothetical-set",
@@ -195,9 +216,17 @@ pub(crate) async fn function_definition(client: &Client, oid: Oid) -> AppResult<
         let _ = writeln!(out, "--   STYPE     = {stype}");
     }
     let finalfunc = row.get::<_, Option<String>>(7);
-    let _ = writeln!(out, "--   FINALFUNC = {}", finalfunc.as_deref().unwrap_or("(none)"));
+    let _ = writeln!(
+        out,
+        "--   FINALFUNC = {}",
+        finalfunc.as_deref().unwrap_or("(none)")
+    );
     let initcond = row.get::<_, Option<String>>(8);
-    let _ = writeln!(out, "--   INITCOND  = {}", initcond.map_or("(null)".to_owned(), |c| format!("'{}'", comment(&c))));
+    let _ = writeln!(
+        out,
+        "--   INITCOND  = {}",
+        initcond.map_or("(null)".to_owned(), |c| format!("'{}'", comment(&c)))
+    );
     if let Some(sortop) = row.get::<_, Option<String>>(10) {
         let _ = writeln!(out, "--   SORTOP    = {sortop}");
     }
@@ -300,10 +329,18 @@ async fn columns(client: &Client, oid: Oid) -> AppResult<(Vec<ColumnDetail>, Vec
 pub(crate) async fn table_meta(client: &Client, schema: &str, table: &str) -> AppResult<TableMeta> {
     let rel = resolve(client, schema, table).await?;
     let (columns, pk) = columns(client, rel.oid).await?;
-    Ok(TableMeta { kind: rel.kind, columns, pk })
+    Ok(TableMeta {
+        kind: rel.kind,
+        columns,
+        pk,
+    })
 }
 
-pub(crate) async fn describe(client: &Client, schema: &str, table: &str) -> AppResult<TableDescription> {
+pub(crate) async fn describe(
+    client: &Client,
+    schema: &str,
+    table: &str,
+) -> AppResult<TableDescription> {
     let rel = resolve(client, schema, table).await?;
     let (columns, _) = columns(client, rel.oid).await?;
     let indexes = client
@@ -317,7 +354,12 @@ pub(crate) async fn describe(client: &Client, schema: &str, table: &str) -> AppR
         .await
         .map_err(db_err)?
         .into_iter()
-        .map(|r| IndexInfo { name: r.get(0), definition: r.get(1), is_unique: r.get(2), is_primary: r.get(3) })
+        .map(|r| IndexInfo {
+            name: r.get(0),
+            definition: r.get(1),
+            is_unique: r.get(2),
+            is_primary: r.get(3),
+        })
         .collect();
     let foreign_keys = client
         .query(
@@ -329,7 +371,10 @@ pub(crate) async fn describe(client: &Client, schema: &str, table: &str) -> AppR
         .await
         .map_err(db_err)?
         .into_iter()
-        .map(|r| ForeignKeyInfo { name: r.get(0), definition: r.get(1) })
+        .map(|r| ForeignKeyInfo {
+            name: r.get(0),
+            definition: r.get(1),
+        })
         .collect();
     let view_definition = match rel.kind {
         RelationKind::View | RelationKind::MaterializedView => client

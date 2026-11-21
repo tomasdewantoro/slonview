@@ -10,14 +10,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
 use slonview_core::config::ProfileStore;
 use slonview_core::history::HistoryStore;
 use slonview_core::secrets::OsSecretStore;
 use slonview_core::{AppError, Engine};
 use slonview_lib::ops::{self, PasswordUpdate};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use serde_json::{Map, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -38,7 +38,8 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
     match cmd {
         "list_profiles" => ok(ops::list_profiles(engine).await?),
         "save_profile" => {
-            let password = PasswordUpdate::from_json(a.get("password")).map_err(AppError::invalid)?;
+            let password =
+                PasswordUpdate::from_json(a.get("password")).map_err(AppError::invalid)?;
             ok(ops::save_profile(engine, arg(a, "profile")?, password).await?)
         }
         "delete_profile" => ok(ops::delete_profile(engine, arg(a, "id")?).await?),
@@ -94,12 +95,22 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
         .await?),
         "list_history" => {
             let search: Option<String> = arg(a, "search")?;
-            ok(ops::list_history(engine, arg(a, "connId")?, search.as_deref(), arg(a, "limit")?).await?)
+            ok(ops::list_history(
+                engine,
+                arg(a, "connId")?,
+                search.as_deref(),
+                arg(a, "limit")?,
+            )
+            .await?)
         }
         "clear_history" => ok(ops::clear_history(engine).await?),
-        "get_object_definition" => {
-            ok(ops::get_object_definition(engine, arg(a, "connId")?, arg(a, "kind")?, arg(a, "oid")?).await?)
-        }
+        "get_object_definition" => ok(ops::get_object_definition(
+            engine,
+            arg(a, "connId")?,
+            arg(a, "kind")?,
+            arg(a, "oid")?,
+        )
+        .await?),
         "list_columns" => ok(ops::list_columns(engine, arg(a, "connId")?).await?),
         "explain" => ok(ops::explain(
             engine,
@@ -112,20 +123,42 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
         // Test-only probe: reads the credential store from this process (which created the item), so
         // E2E scripts never run `security -w`, which can raise an access prompt.
         "e2e_keychain_get" => ok(engine.secrets.get(arg(a, "id")?)?),
-        "set_time_zone" => ok(ops::set_time_zone(engine, arg(a, "connId")?, arg(a, "timeZone")?).await?),
+        "set_time_zone" => {
+            ok(ops::set_time_zone(engine, arg(a, "connId")?, arg(a, "timeZone")?).await?)
+        }
         "save_ssh_secret" => {
             let value: Option<String> = arg(a, "value")?;
-            ok(ops::save_ssh_secret(engine, arg(a, "id")?, arg(a, "passphrase")?, value.as_deref()).await?)
+            ok(ops::save_ssh_secret(
+                engine,
+                arg(a, "id")?,
+                arg(a, "passphrase")?,
+                value.as_deref(),
+            )
+            .await?)
         }
         "test_tunnel_connection" => {
             let password: Option<String> = arg(a, "password")?;
             let secret: Option<String> = arg(a, "sshSecret")?;
-            ok(ops::test_tunnel_connection(engine, &arg(a, "profile")?, password.as_deref(), secret.as_deref()).await?)
+            ok(ops::test_tunnel_connection(
+                engine,
+                &arg(a, "profile")?,
+                password.as_deref(),
+                secret.as_deref(),
+            )
+            .await?)
         }
-        "edit_info" => ok(ops::edit_info(engine, arg(a, "connId")?, &arg::<String>(a, "schema")?, &arg::<String>(a, "table")?).await?),
+        "edit_info" => ok(ops::edit_info(
+            engine,
+            arg(a, "connId")?,
+            &arg::<String>(a, "schema")?,
+            &arg::<String>(a, "table")?,
+        )
+        .await?),
         "get_edit_row" => ok(ops::get_edit_row(engine, &arg(a, "req")?).await?),
         "review_edits" => ok(ops::review_edits(engine, &arg(a, "req")?).await?),
-        "apply_edits" => ok(ops::apply_edits(engine, &arg::<String>(a, "requestId")?, &arg(a, "req")?).await?),
+        "apply_edits" => {
+            ok(ops::apply_edits(engine, &arg::<String>(a, "requestId")?, &arg(a, "req")?).await?)
+        }
         other => Err(AppError::invalid(format!("unknown command {other}"))),
     }
 }
@@ -192,7 +225,8 @@ async fn handle(engine: Arc<Engine>, mut stream: TcpStream) -> std::io::Result<(
             Ok(Value::Object(m)) => m,
             Ok(Value::Null) => Args::new(),
             _ => {
-                let err = serde_json::to_vec(&AppError::invalid("args must be a JSON object")).unwrap();
+                let err =
+                    serde_json::to_vec(&AppError::invalid("args must be a JSON object")).unwrap();
                 return respond(&mut stream, "400 Bad Request", &err).await;
             }
         }
@@ -204,9 +238,14 @@ async fn handle(engine: Arc<Engine>, mut stream: TcpStream) -> std::io::Result<(
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let produce = async {
             let result = ops::stream_columns(&engine, &request_id, &req, |chunk| {
-                tx.send(serde_json::json!({ "chunk": chunk })).map_err(|_| AppError::Cancelled)
-            }).await;
-            let last = match result { Ok(summary) => serde_json::json!({ "done": summary }), Err(error) => serde_json::json!({ "error": error }) };
+                tx.send(serde_json::json!({ "chunk": chunk }))
+                    .map_err(|_| AppError::Cancelled)
+            })
+            .await;
+            let last = match result {
+                Ok(summary) => serde_json::json!({ "done": summary }),
+                Err(error) => serde_json::json!({ "error": error }),
+            };
             let _ = tx.send(last);
             drop(tx);
         };
@@ -228,7 +267,14 @@ async fn handle(engine: Arc<Engine>, mut stream: TcpStream) -> std::io::Result<(
     }
     match result {
         Ok(v) => respond(&mut stream, "200 OK", &serde_json::to_vec(&v).unwrap()).await,
-        Err(e) => respond(&mut stream, "400 Bad Request", &serde_json::to_vec(&e).unwrap()).await,
+        Err(e) => {
+            respond(
+                &mut stream,
+                "400 Bad Request",
+                &serde_json::to_vec(&e).unwrap(),
+            )
+            .await
+        }
     }
 }
 

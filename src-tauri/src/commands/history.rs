@@ -1,6 +1,6 @@
 //! SQL editor history.
-use slonview_core::model::{ConnId, HistoryEntry};
 use slonview_core::AppResult;
+use slonview_core::model::{ConnId, HistoryEntry};
 use tauri::State;
 
 use crate::ops;

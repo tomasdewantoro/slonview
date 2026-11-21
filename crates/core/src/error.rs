@@ -50,13 +50,21 @@ pub enum AppError {
 
 impl AppError {
     pub fn invalid(message: impl Into<String>) -> Self {
-        Self::Invalid { message: message.into(), position: None }
+        Self::Invalid {
+            message: message.into(),
+            position: None,
+        }
     }
     pub fn invalid_at(message: impl Into<String>, position: u32) -> Self {
-        Self::Invalid { message: message.into(), position: Some(position) }
+        Self::Invalid {
+            message: message.into(),
+            position: Some(position),
+        }
     }
     pub fn internal(message: impl Into<String>) -> Self {
-        Self::Internal { message: message.into() }
+        Self::Internal {
+            message: message.into(),
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 //! SQL editor execution and cancellation.
-use slonview_core::model::{ConnId, QueryResult, RequestId};
 use slonview_core::AppResult;
+use slonview_core::model::{ConnId, QueryResult, RequestId};
 use tauri::State;
 
 use crate::ops;

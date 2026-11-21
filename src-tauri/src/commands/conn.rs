@@ -1,6 +1,6 @@
 //! Profiles, URL/pgpass parsing, and connection lifecycle.
-use slonview_core::model::{ConnId, ConnProfile, ParsedConn, ServerInfo};
 use slonview_core::AppResult;
+use slonview_core::model::{ConnId, ConnProfile, ParsedConn, ServerInfo};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
 use tauri::{Runtime, State};
 
@@ -13,9 +13,10 @@ impl<'de, R: Runtime> CommandArg<'de, R> for PasswordUpdate {
         match command.message.payload() {
             InvokeBody::Json(args) => Self::from_json(args.get(command.key))
                 .map_err(|e| InvokeError::from(format!("command {}: {e}", command.name))),
-            InvokeBody::Raw(_) => {
-                Err(InvokeError::from(format!("command {} expects JSON arguments", command.name)))
-            }
+            InvokeBody::Raw(_) => Err(InvokeError::from(format!(
+                "command {} expects JSON arguments",
+                command.name
+            ))),
         }
     }
 }
@@ -35,7 +36,10 @@ pub async fn save_profile(
 }
 
 #[tauri::command]
-pub async fn delete_profile(engine: State<'_, AppState>, id: ConnId) -> AppResult<Vec<ConnProfile>> {
+pub async fn delete_profile(
+    engine: State<'_, AppState>,
+    id: ConnId,
+) -> AppResult<Vec<ConnProfile>> {
     ops::delete_profile(&engine, id).await
 }
 

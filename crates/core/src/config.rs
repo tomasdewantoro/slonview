@@ -102,7 +102,9 @@ impl ProfileStore {
     }
 
     fn save(&self, profiles: &[ConnProfile]) -> AppResult<()> {
-        let file = ProfileFile { profile: profiles.to_vec() };
+        let file = ProfileFile {
+            profile: profiles.to_vec(),
+        };
         let text = toml::to_string_pretty(&file)
             .map_err(|e| AppError::internal(format!("cannot serialize profiles: {e}")))?;
         write_atomic(&self.path, text.as_bytes())
@@ -115,10 +117,19 @@ fn sort_profiles(profiles: &mut [ConnProfile]) {
 
 /// Writes `bytes` to a temp file (mode 0600) next to `path`, fsyncs, then renames over `path`.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> AppResult<()> {
-    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     fs::create_dir_all(dir).map_err(|e| io_error("create", dir, e))?;
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("slonview");
-    let tmp = dir.join(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("slonview");
+    let tmp = dir.join(format!(
+        ".{file_name}.{}.tmp",
+        uuid::Uuid::new_v4().simple()
+    ));
     let result = (|| {
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -143,7 +154,12 @@ mod tests {
     use super::*;
 
     fn profile(name: &str) -> ConnProfile {
-        ConnProfile { name: name.to_owned(), database: "db".into(), user: "u".into(), ..new_profile() }
+        ConnProfile {
+            name: name.to_owned(),
+            database: "db".into(),
+            user: "u".into(),
+            ..new_profile()
+        }
     }
 
     #[test]
@@ -164,7 +180,10 @@ mod tests {
         let base = directories::BaseDirs::new().unwrap();
         assert_eq!(dir, base.data_dir().join("slonview"));
         #[cfg(target_os = "macos")]
-        assert_eq!(dir, base.home_dir().join("Library/Application Support/slonview"));
+        assert_eq!(
+            dir,
+            base.home_dir().join("Library/Application Support/slonview")
+        );
         assert!(dir.is_dir());
     }
 
@@ -173,7 +192,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = ProfileStore::new(tmp.path().join("connections.toml"));
         assert!(store.load().unwrap().is_empty());
-        assert!(matches!(store.get(uuid::Uuid::new_v4()), Err(AppError::Invalid { .. })));
+        assert!(matches!(
+            store.get(uuid::Uuid::new_v4()),
+            Err(AppError::Invalid { .. })
+        ));
     }
 
     #[test]
@@ -186,7 +208,10 @@ mod tests {
         a.ssl = SslMode::Require;
         store.upsert(b.clone()).unwrap();
         let list = store.upsert(a.clone()).unwrap();
-        assert_eq!(list.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Alpha", "beta"]);
+        assert_eq!(
+            list.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Alpha", "beta"]
+        );
         assert_eq!(store.load().unwrap(), list);
         assert_eq!(store.get(a.id).unwrap(), a);
 
@@ -219,7 +244,10 @@ mod tests {
             assert_eq!(mode, 0o600);
         }
         // No temp files left behind.
-        let names: Vec<_> = fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        let names: Vec<_> = fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
         assert_eq!(names, vec![std::ffi::OsString::from("connections.toml")]);
     }
 
@@ -228,7 +256,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("connections.toml");
         fs::write(&path, "[[profile]]\nname = 3").unwrap();
-        assert!(matches!(ProfileStore::new(&path).load(), Err(AppError::Internal { .. })));
+        assert!(matches!(
+            ProfileStore::new(&path).load(),
+            Err(AppError::Internal { .. })
+        ));
     }
 
     #[test]
@@ -249,7 +280,11 @@ mod tests {
         let mut p = list[0].clone();
         p.time_zone = Some("Asia/Jakarta".into());
         store.upsert(p.clone()).unwrap();
-        assert!(fs::read_to_string(&path).unwrap().contains("timeZone = \"Asia/Jakarta\""));
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("timeZone = \"Asia/Jakarta\"")
+        );
         assert_eq!(store.get(p.id).unwrap(), p);
     }
 
@@ -275,7 +310,9 @@ mod tests {
             host: "bastion".into(),
             port: 22,
             user: "ops".into(),
-            auth: crate::model::SshAuth::Key { path: "~/.ssh/id_ed25519".into() },
+            auth: crate::model::SshAuth::Key {
+                path: "~/.ssh/id_ed25519".into(),
+            },
         });
         store.upsert(p.clone()).unwrap();
         let saved = fs::read_to_string(&path).unwrap();
@@ -285,10 +322,8 @@ mod tests {
 
     #[test]
     fn ssh_port_defaults_to_22_when_absent() {
-        let ssh: crate::model::SshConfig = toml::from_str(
-            "host = \"h\"\nuser = \"u\"\nauth = { kind = \"agent\" }\n",
-        )
-        .unwrap();
+        let ssh: crate::model::SshConfig =
+            toml::from_str("host = \"h\"\nuser = \"u\"\nauth = { kind = \"agent\" }\n").unwrap();
         assert_eq!(ssh.port, 22);
         assert!(matches!(ssh.auth, crate::model::SshAuth::Agent));
     }

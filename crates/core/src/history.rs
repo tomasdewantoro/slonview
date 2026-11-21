@@ -18,7 +18,10 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into(), lock: Mutex::new(()) }
+        Self {
+            path: path.into(),
+            lock: Mutex::new(()),
+        }
     }
     /// Append one line. When the file exceeds 2*HISTORY_KEEP lines, rewrite it keeping
     /// the newest HISTORY_KEEP. Corrupt lines are skipped on read, never fatal.
@@ -37,8 +40,11 @@ impl HistoryStore {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&self.path).map_err(|e| io_error("open", &self.path, e))?;
-        file.write_all(line.as_bytes()).map_err(|e| io_error("write", &self.path, e))?;
+        let mut file = options
+            .open(&self.path)
+            .map_err(|e| io_error("open", &self.path, e))?;
+        file.write_all(line.as_bytes())
+            .map_err(|e| io_error("write", &self.path, e))?;
         drop(file);
 
         let text = self.read_text()?;
@@ -51,15 +57,27 @@ impl HistoryStore {
         Ok(())
     }
     /// Newest first. `search` = case-insensitive substring on sql.
-    pub fn list(&self, conn_id: Option<ConnId>, search: Option<&str>, limit: usize) -> AppResult<Vec<HistoryEntry>> {
-        let needle = search.map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase);
+    pub fn list(
+        &self,
+        conn_id: Option<ConnId>,
+        search: Option<&str>,
+        limit: usize,
+    ) -> AppResult<Vec<HistoryEntry>> {
+        let needle = search
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase);
         let text = self.read_text()?;
         Ok(text
             .lines()
             .rev()
             .filter_map(|line| serde_json::from_str::<HistoryEntry>(line).ok())
             .filter(|e| conn_id.is_none_or(|id| e.conn_id == id))
-            .filter(|e| needle.as_deref().is_none_or(|n| e.sql.to_lowercase().contains(n)))
+            .filter(|e| {
+                needle
+                    .as_deref()
+                    .is_none_or(|n| e.sql.to_lowercase().contains(n))
+            })
             .take(limit)
             .collect())
     }
@@ -128,7 +146,10 @@ mod tests {
             s.append(&e).unwrap();
         }
         let list = s.list(None, None, 10).unwrap();
-        assert_eq!(list.iter().map(|e| e.sql.as_str()).collect::<Vec<_>>(), ["select 3", "select 2", "select 1"]);
+        assert_eq!(
+            list.iter().map(|e| e.sql.as_str()).collect::<Vec<_>>(),
+            ["select 3", "select 2", "select 1"]
+        );
         assert_eq!(list[0], e3);
         assert_eq!(s.list(None, None, 2).unwrap().len(), 2);
     }
@@ -138,7 +159,8 @@ mod tests {
         let (_d, s) = store();
         let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
         s.append(&entry(a, "SELECT * FROM Orders")).unwrap();
-        s.append(&entry(b, "select * from orders where id = 1")).unwrap();
+        s.append(&entry(b, "select * from orders where id = 1"))
+            .unwrap();
         s.append(&entry(a, "update customers set x = 1")).unwrap();
         assert_eq!(s.list(Some(a), None, 10).unwrap().len(), 2);
         assert_eq!(s.list(Some(b), None, 10).unwrap().len(), 1);
@@ -156,11 +178,15 @@ mod tests {
         let c = Uuid::new_v4();
         s.append(&entry(c, "select 1")).unwrap();
         let mut f = fs::OpenOptions::new().append(true).open(&s.path).unwrap();
-        f.write_all(b"{not json\n\xff\xfe garbage\n{\"id\":1}\n").unwrap();
+        f.write_all(b"{not json\n\xff\xfe garbage\n{\"id\":1}\n")
+            .unwrap();
         drop(f);
         s.append(&entry(c, "select 2")).unwrap();
         let list = s.list(None, None, 10).unwrap();
-        assert_eq!(list.iter().map(|e| e.sql.as_str()).collect::<Vec<_>>(), ["select 2", "select 1"]);
+        assert_eq!(
+            list.iter().map(|e| e.sql.as_str()).collect::<Vec<_>>(),
+            ["select 2", "select 1"]
+        );
     }
 
     #[test]
@@ -175,7 +201,10 @@ mod tests {
         let list = s.list(None, None, usize::MAX).unwrap();
         assert_eq!(list.len(), HISTORY_KEEP);
         assert_eq!(list[0].sql, format!("select {}", 2 * HISTORY_KEEP));
-        assert_eq!(list[HISTORY_KEEP - 1].sql, format!("select {}", HISTORY_KEEP + 1));
+        assert_eq!(
+            list[HISTORY_KEEP - 1].sql,
+            format!("select {}", HISTORY_KEEP + 1)
+        );
     }
 
     #[test]
@@ -189,7 +218,9 @@ mod tests {
     #[test]
     fn now_is_rfc3339_utc() {
         let now = now_rfc3339();
-        let parsed = time::OffsetDateTime::parse(&now, &time::format_description::well_known::Rfc3339).unwrap();
+        let parsed =
+            time::OffsetDateTime::parse(&now, &time::format_description::well_known::Rfc3339)
+                .unwrap();
         assert_eq!(parsed.offset(), time::UtcOffset::UTC);
         assert!(now.ends_with('Z'), "{now}");
     }

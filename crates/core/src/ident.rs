@@ -54,7 +54,10 @@ mod tests {
 
     #[test]
     fn ident_embedded_quotes() {
-        assert_eq!(quote_ident("Weird \"Name\" Table"), "\"Weird \"\"Name\"\" Table\"");
+        assert_eq!(
+            quote_ident("Weird \"Name\" Table"),
+            "\"Weird \"\"Name\"\" Table\""
+        );
         assert_eq!(quote_ident("\""), "\"\"\"\"");
         assert_eq!(quote_ident(""), "\"\"");
     }

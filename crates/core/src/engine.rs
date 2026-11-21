@@ -35,17 +35,37 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(profiles: ProfileStore, secrets: Arc<dyn SecretStore>, history: HistoryStore) -> Self {
-        Self { profiles, secrets, history, sessions: RwLock::default(), cancels: CancelRegistry::default() }
+    pub fn new(
+        profiles: ProfileStore,
+        secrets: Arc<dyn SecretStore>,
+        history: HistoryStore,
+    ) -> Self {
+        Self {
+            profiles,
+            secrets,
+            history,
+            sessions: RwLock::default(),
+            cancels: CancelRegistry::default(),
+        }
     }
 
     /// Connect with an unsaved profile + password; runs `SELECT version()`; closes after.
-    pub async fn test_connection(&self, profile: &ConnProfile, password: Option<&str>) -> AppResult<ServerInfo> {
+    pub async fn test_connection(
+        &self,
+        profile: &ConnProfile,
+        password: Option<&str>,
+    ) -> AppResult<ServerInfo> {
         let secret = self.ssh_secret(profile)?;
-        self.test_connection_with_ssh(profile, password, secret.as_deref()).await
+        self.test_connection_with_ssh(profile, password, secret.as_deref())
+            .await
     }
 
-    pub async fn test_connection_with_ssh(&self, profile: &ConnProfile, password: Option<&str>, ssh_secret: Option<&str>) -> AppResult<ServerInfo> {
+    pub async fn test_connection_with_ssh(
+        &self,
+        profile: &ConnProfile,
+        password: Option<&str>,
+        ssh_secret: Option<&str>,
+    ) -> AppResult<ServerInfo> {
         let transport = Transport::new(profile, ssh_secret).await?;
         let (client, _) = conn::open_client(profile, password, &transport).await?;
         client
@@ -63,7 +83,11 @@ impl Engine {
         self.connect_with(profile, password.as_deref()).await
     }
 
-    async fn connect_with(&self, profile: ConnProfile, password: Option<&str>) -> AppResult<ServerInfo> {
+    async fn connect_with(
+        &self,
+        profile: ConnProfile,
+        password: Option<&str>,
+    ) -> AppResult<ServerInfo> {
         // A standalone probe settles which TLS mode works (Prefer may fall back to plain).
         let secret = self.ssh_secret(&profile)?;
         let transport = Transport::new(&profile, secret.as_deref()).await?;
@@ -74,7 +98,12 @@ impl Engine {
             let client = pool.get().await.map_err(conn::map_pool_error)?;
             server_info(&client).await?
         };
-        let session = Arc::new(Session { profile, pool, types: query::TypeNames::default(), transport });
+        let session = Arc::new(Session {
+            profile,
+            pool,
+            types: query::TypeNames::default(),
+            transport,
+        });
         let previous = self.sessions_write().insert(session.profile.id, session);
         if let Some(old) = previous {
             old.pool.close();
@@ -92,11 +121,18 @@ impl Engine {
 
     /// Atomically swap pools, leaving checked-out sessions and all open tabs alive.
     /// Probe the new settings before persisting; invalid zones leave the old pool intact.
-    pub async fn set_time_zone(&self, conn_id: ConnId, time_zone: Option<String>) -> AppResult<Vec<ConnProfile>> {
+    pub async fn set_time_zone(
+        &self,
+        conn_id: ConnId,
+        time_zone: Option<String>,
+    ) -> AppResult<Vec<ConnProfile>> {
         let mut profile = self.profiles.get(conn_id)?;
-        profile.time_zone = time_zone.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+        profile.time_zone = time_zone
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty());
         let password = self.secrets.get(conn_id)?;
-        self.connect_with(profile.clone(), password.as_deref()).await?;
+        self.connect_with(profile.clone(), password.as_deref())
+            .await?;
         self.profiles.upsert(profile)
     }
 
@@ -112,7 +148,12 @@ impl Engine {
         introspect::schema_tree(&client).await
     }
 
-    pub async fn describe_table(&self, conn_id: ConnId, schema: &str, table: &str) -> AppResult<TableDescription> {
+    pub async fn describe_table(
+        &self,
+        conn_id: ConnId,
+        schema: &str,
+        table: &str,
+    ) -> AppResult<TableDescription> {
         let (_, client) = self.client(conn_id).await?;
         introspect::describe(&client, schema, table).await
     }
@@ -127,12 +168,19 @@ impl Engine {
         let started = Instant::now();
         let (session, client) = self.client(req.conn_id).await?;
         let meta = introspect::table_meta(&client, &req.schema, &req.table).await?;
-        let limit = if req.limit == 0 { DEFAULT_PAGE_LIMIT } else { req.limit };
+        let limit = if req.limit == 0 {
+            DEFAULT_PAGE_LIMIT
+        } else {
+            req.limit
+        };
         let q = paging::page_query(req, &meta, limit)?;
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
+        let guard =
+            self.cancels
+                .register(request_id, client.cancel_token(), session.transport.clone())?;
         let messages = if q.raw_span.is_some() {
             // User text: same protection as the SQL editor, then reset the pooled session.
-            let result = raw_where_query(&client, &session.profile, &q.sql, q.raw_span, &guard).await;
+            let result =
+                raw_where_query(&client, &session.profile, &q.sql, q.raw_span, &guard).await;
             drop(guard);
             restore_session(client, &session.profile).await;
             result?
@@ -149,10 +197,16 @@ impl Engine {
         let mut truncated = Vec::new();
         let mut cursor_values = Vec::new();
         for msg in messages {
-            let SimpleQueryMessage::Row(row) = msg else { continue };
+            let SimpleQueryMessage::Row(row) = msg else {
+                continue;
+            };
             let row_index = rows.len() as u32;
             if rows.len() + 1 == limit as usize {
-                cursor_values = q.pk_indexes.iter().map(|&i| row.get(i).map(str::to_owned)).collect();
+                cursor_values = q
+                    .pk_indexes
+                    .iter()
+                    .map(|&i| row.get(i).map(str::to_owned))
+                    .collect();
             }
             let mut values = Vec::with_capacity(row.len());
             for (col_index, column) in meta.columns.iter().enumerate() {
@@ -175,10 +229,12 @@ impl Engine {
         }
         let next_cursor = match (has_more, q.mode) {
             (false, _) => None,
-            (true, PageMode::Keyset) => {
-                Some(Cursor::Keyset { values: cursor_values })
-            }
-            (true, PageMode::Offset(offset)) => Some(Cursor::Offset { offset: offset + u64::from(limit) }),
+            (true, PageMode::Keyset) => Some(Cursor::Keyset {
+                values: cursor_values,
+            }),
+            (true, PageMode::Offset(offset)) => Some(Cursor::Offset {
+                offset: offset + u64::from(limit),
+            }),
         };
         Ok(Page {
             columns: meta.grid_columns(),
@@ -202,14 +258,19 @@ impl Engine {
         let (session, client) = self.client(conn_id).await?;
         let meta = introspect::table_meta(&client, schema, table).await?;
         let (sql, raw_span) = paging::count_query(schema, table, &meta, filters, raw_where)?;
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
+        let guard =
+            self.cancels
+                .register(request_id, client.cancel_token(), session.transport.clone())?;
         let messages = if raw_span.is_some() {
             let result = raw_where_query(&client, &session.profile, &sql, raw_span, &guard).await;
             drop(guard);
             restore_session(client, &session.profile).await;
             result?
         } else {
-            client.simple_query(&sql).await.map_err(|e| guard.map_err(e))?
+            client
+                .simple_query(&sql)
+                .await
+                .map_err(|e| guard.map_err(e))?
         };
         first_value(&messages)
             .flatten()
@@ -221,14 +282,31 @@ impl Engine {
     pub async fn get_cell(&self, req: &CellRequest) -> AppResult<Option<String>> {
         let (_, client) = self.client(req.conn_id).await?;
         let meta = introspect::table_meta(&client, &req.schema, &req.table).await?;
-        let sql = paging::cell_query(&req.schema, &req.table, &meta, &req.pk_columns, &req.pk_values, &req.column)?;
-        let messages = client.simple_query(&sql).await.map_err(|e| conn::map_query_error(e, false))?;
-        first_value(&messages).ok_or_else(|| AppError::invalid("row not found (it may have been deleted)"))
+        let sql = paging::cell_query(
+            &req.schema,
+            &req.table,
+            &meta,
+            &req.pk_columns,
+            &req.pk_values,
+            &req.column,
+        )?;
+        let messages = client
+            .simple_query(&sql)
+            .await
+            .map_err(|e| conn::map_query_error(e, false))?;
+        first_value(&messages)
+            .ok_or_else(|| AppError::invalid("row not found (it may have been deleted)"))
     }
 
     /// Runs all statements in `sql` on one pooled client (so SET/BEGIN persist within
     /// the call). Stops at the first error. Appends one HistoryEntry (success or error).
-    pub async fn run_sql(&self, request_id: &str, conn_id: ConnId, sql: &str, max_rows: u32) -> AppResult<Vec<QueryResult>> {
+    pub async fn run_sql(
+        &self,
+        request_id: &str,
+        conn_id: ConnId,
+        sql: &str,
+        max_rows: u32,
+    ) -> AppResult<Vec<QueryResult>> {
         let started = Instant::now();
         let result = self.run_sql_inner(request_id, conn_id, sql, max_rows).await;
         self.log_history(HistoryEntry {
@@ -242,41 +320,65 @@ impl Engine {
         result
     }
 
-    async fn run_sql_inner(&self, request_id: &str, conn_id: ConnId, sql: &str, max_rows: u32) -> AppResult<Vec<QueryResult>> {
+    async fn run_sql_inner(
+        &self,
+        request_id: &str,
+        conn_id: ConnId,
+        sql: &str,
+        max_rows: u32,
+    ) -> AppResult<Vec<QueryResult>> {
         let statements = split_statements(sql);
         if statements.is_empty() {
             return Err(AppError::invalid("nothing to run"));
         }
         let (session, client) = self.client(conn_id).await?;
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
+        let guard =
+            self.cancels
+                .register(request_id, client.cancel_token(), session.transport.clone())?;
         let outcome = async {
             if session.profile.read_only {
                 // Preflight the entire script before any user command runs.
-                for st in &statements { reject_read_only(st)?; }
+                for st in &statements {
+                    reject_read_only(st)?;
+                }
             }
             let transaction = if session.profile.read_only {
                 Some(query::begin_read_only(&client, &guard).await?)
-            } else { None };
+            } else {
+                None
+            };
             let mut results = Vec::with_capacity(statements.len());
             for st in &statements {
                 let result = async {
                     let types = if transaction.is_some() {
-                        let prepared = query::require_single_statement(&client, &st.text, &guard).await?;
-                        session.types.for_statement(&client, &prepared).await.map_err(|e| guard.map_err(e))?
+                        let prepared =
+                            query::require_single_statement(&client, &st.text, &guard).await?;
+                        session
+                            .types
+                            .for_statement(&client, &prepared)
+                            .await
+                            .map_err(|e| guard.map_err(e))?
                     } else {
                         query::describe_writable(&client, &session.types, &st.text, &guard).await?
                     };
-                    let r = query::run_statement(&client, &st.text, max_rows, &types, &guard).await?;
+                    let r =
+                        query::run_statement(&client, &st.text, max_rows, &types, &guard).await?;
                     if let Some(start) = &transaction {
-                        if r.len() > 1 { return Err(AppError::internal(query::READ_ONLY_GUARD_ERROR)); }
+                        if r.len() > 1 {
+                            return Err(AppError::internal(query::READ_ONLY_GUARD_ERROR));
+                        }
                         query::verify_read_only(&client, start, &guard).await?;
                     }
                     Ok(r)
-                }.await;
+                }
+                .await;
                 match result {
                     Ok(mut r) => results.append(&mut r),
                     Err(mut e) => {
-                        if let AppError::Sql { position: Some(p), .. } = &mut e {
+                        if let AppError::Sql {
+                            position: Some(p), ..
+                        } = &mut e
+                        {
                             *p += st.char_offset as u32;
                         }
                         return Err(e);
@@ -284,7 +386,8 @@ impl Engine {
                 }
             }
             Ok(results)
-        }.await;
+        }
+        .await;
         drop(guard);
         // ROLLBACK always ends the wrapper, including aborted/cancelled runs;
         // RESET ALL and profile setup then clean the pooled session as before.
@@ -297,19 +400,34 @@ impl Engine {
         let Some((token, transport)) = self.cancels.begin_cancel(request_id) else {
             return Ok(());
         };
-        tokio::time::timeout(conn::CONNECT_TIMEOUT, transport.cancel(&token)).await
-            .map_err(|_| AppError::Connect { message: "sending cancel request timed out".into() })?
+        tokio::time::timeout(conn::CONNECT_TIMEOUT, transport.cancel(&token))
+            .await
+            .map_err(|_| AppError::Connect {
+                message: "sending cancel request timed out".into(),
+            })?
     }
 
     /// Streams rows to a CSV file (header row first). Returns data rows written.
-    pub async fn export_csv(&self, request_id: &str, source: &ExportSource, path: &std::path::Path) -> AppResult<u64> {
+    pub async fn export_csv(
+        &self,
+        request_id: &str,
+        source: &ExportSource,
+        path: &std::path::Path,
+    ) -> AppResult<u64> {
         let conn_id = match source {
             ExportSource::Table { conn_id, .. } | ExportSource::Sql { conn_id, .. } => *conn_id,
         };
         let (session, client) = self.client(conn_id).await?;
         // `span` locates the user's own text (raw WHERE, or the whole SQL statement) in `select`.
         let (select, span) = match source {
-            ExportSource::Table { schema, table, filters, raw_where, sort, .. } => {
+            ExportSource::Table {
+                schema,
+                table,
+                filters,
+                raw_where,
+                sort,
+                ..
+            } => {
                 let meta = introspect::table_meta(&client, schema, table).await?;
                 paging::export_query(schema, table, &meta, filters, raw_where.as_deref(), sort)?
             }
@@ -319,25 +437,47 @@ impl Engine {
                     return Err(AppError::invalid("export needs exactly one SQL statement"));
                 }
                 let statement = statements.remove(0);
-                if session.profile.read_only { reject_read_only(&statement)?; }
-                let span = paging::RawSpan { start: 0, chars: statement.text.chars().count() };
+                if session.profile.read_only {
+                    reject_read_only(&statement)?;
+                }
+                let span = paging::RawSpan {
+                    start: 0,
+                    chars: statement.text.chars().count(),
+                };
                 (statement.text, Some(span))
             }
         };
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
+        let guard =
+            self.cancels
+                .register(request_id, client.cancel_token(), session.transport.clone())?;
         let result = async {
             // A long export must not hit the interactive statement_timeout.
-            client.batch_execute("SET statement_timeout = 0").await.map_err(|e| guard.map_err(e))?;
+            client
+                .batch_execute("SET statement_timeout = 0")
+                .await
+                .map_err(|e| guard.map_err(e))?;
             let transaction = if session.profile.read_only {
                 Some(query::begin_read_only(&client, &guard).await?)
-            } else { None };
+            } else {
+                None
+            };
             let copy = export::copy_sql(&select);
-            query::require_single_statement(&client, &copy, &guard).await.map_err(|e| {
-                let e = paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e);
-                if matches!(source, ExportSource::Table { .. }) { raw_expression_error(None, e) } else { e }
-            })?;
+            query::require_single_statement(&client, &copy, &guard)
+                .await
+                .map_err(|e| {
+                    let e =
+                        paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e);
+                    if matches!(source, ExportSource::Table { .. }) {
+                        raw_expression_error(None, e)
+                    } else {
+                        e
+                    }
+                })?;
             let rows = export::copy_to_file(&client, &select, path, &guard)
-                .await.map_err(|e| paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e))?;
+                .await
+                .map_err(|e| {
+                    paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e)
+                })?;
             if let Some(start) = &transaction
                 && let Err(e) = query::verify_read_only(&client, start, &guard).await
             {
@@ -345,7 +485,8 @@ impl Engine {
                 return Err(e);
             }
             Ok(rows)
-        }.await;
+        }
+        .await;
         drop(guard);
         restore_session(client, &session.profile).await;
         result
@@ -377,7 +518,9 @@ impl Engine {
 pub(crate) fn reject_read_only(statement: &crate::split::Statement) -> AppResult<()> {
     if let Some(keyword) = crate::split::read_only_rejection(&statement.text) {
         return Err(AppError::invalid_at(
-            format!("Read-only mode: command ({keyword}) is not allowed. Turn on “Allow writes” for this connection to run it."),
+            format!(
+                "Read-only mode: command ({keyword}) is not allowed. Turn on “Allow writes” for this connection to run it."
+            ),
             statement.char_offset as u32 + 1,
         ));
     }
@@ -387,9 +530,11 @@ pub(crate) fn reject_read_only(statement: &crate::split::Statement) -> AppResult
 fn raw_expression_error(span: Option<paging::RawSpan>, e: AppError) -> AppError {
     let mut e = paging::RawSpan::relocate(span, e);
     if let AppError::Sql { code, message, .. } = &mut e
-        && code == "42601" && message.contains("multiple commands")
+        && code == "42601"
+        && message.contains("multiple commands")
     {
-        *message = "Raw WHERE must be a single expression; multiple SQL commands are not allowed.".into();
+        *message =
+            "Raw WHERE must be a single expression; multiple SQL commands are not allowed.".into();
     }
     e
 }
@@ -426,7 +571,12 @@ async fn server_info(client: &Client) -> AppResult<ServerInfo> {
         )
         .await
         .map_err(|e| conn::map_query_error(e, false))?;
-    Ok(ServerInfo { version: row.get(0), database: row.get(1), user: row.get(2), read_only: row.get(3) })
+    Ok(ServerInfo {
+        version: row.get(0),
+        database: row.get(1),
+        user: row.get(2),
+        read_only: row.get(3),
+    })
 }
 
 /// Ends any transaction the user left open and undoes their SETs, re-applying the

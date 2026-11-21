@@ -1,7 +1,7 @@
 //! Builds the shared `Engine` managed by Tauri.
 use std::sync::Arc;
 
-use slonview_core::config::{app_data_dir, ProfileStore};
+use slonview_core::config::{ProfileStore, app_data_dir};
 use slonview_core::history::HistoryStore;
 use slonview_core::secrets::OsSecretStore;
 use slonview_core::{AppResult, Engine};

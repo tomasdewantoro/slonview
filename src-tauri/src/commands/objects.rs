@@ -1,6 +1,6 @@
 //! Definitions of sidebar objects: sequences, types, triggers and extensions.
-use slonview_core::model::{ConnId, ObjectKind};
 use slonview_core::AppResult;
+use slonview_core::model::{ConnId, ObjectKind};
 use tauri::State;
 
 use crate::ops;

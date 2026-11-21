@@ -83,11 +83,7 @@ jobs:
       - name: pnpm build
         run: pnpm build
 
-      # Formatting is reported but not enforced yet: several feature branches are in flight and
-      # a repo-wide `cargo fmt` lands in one commit after they are integrated. Then drop
-      # continue-on-error.
       - name: cargo fmt --check
-        continue-on-error: true
         run: cargo fmt --all --check
 
       - name: cargo clippy

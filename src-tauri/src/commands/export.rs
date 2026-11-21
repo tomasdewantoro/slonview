@@ -1,6 +1,6 @@
 //! CSV export, streamed to disk in Rust.
-use slonview_core::model::{ExportSource, RequestId};
 use slonview_core::AppResult;
+use slonview_core::model::{ExportSource, RequestId};
 use tauri::State;
 
 use crate::ops;

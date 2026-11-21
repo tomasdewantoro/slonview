@@ -21,11 +21,23 @@ pub(crate) struct TypeNames {
 
 impl TypeNames {
     /// Type name per result column of `statement`; one catalog query for any unseen types.
-    pub(crate) async fn for_statement(&self, client: &Client, statement: &Statement) -> Result<Vec<String>, tokio_postgres::Error> {
-        let keys: Vec<(u32, i32)> = statement.columns().iter().map(|c| (c.type_().oid(), c.type_modifier())).collect();
+    pub(crate) async fn for_statement(
+        &self,
+        client: &Client,
+        statement: &Statement,
+    ) -> Result<Vec<String>, tokio_postgres::Error> {
+        let keys: Vec<(u32, i32)> = statement
+            .columns()
+            .iter()
+            .map(|c| (c.type_().oid(), c.type_modifier()))
+            .collect();
         let missing: Vec<(u32, i32)> = {
             let names = self.lock();
-            let mut missing: Vec<(u32, i32)> = keys.iter().copied().filter(|k| !names.contains_key(k)).collect();
+            let mut missing: Vec<(u32, i32)> = keys
+                .iter()
+                .copied()
+                .filter(|k| !names.contains_key(k))
+                .collect();
             missing.sort_unstable();
             missing.dedup();
             missing
@@ -46,7 +58,10 @@ impl TypeNames {
             }
         }
         let names = self.lock();
-        Ok(keys.iter().map(|k| names.get(k).cloned().unwrap_or_default()).collect())
+        Ok(keys
+            .iter()
+            .map(|k| names.get(k).cloned().unwrap_or_default())
+            .collect())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(u32, i32), String>> {
@@ -62,7 +77,12 @@ const DESCRIBE_SAVEPOINT: &str = "SAVEPOINT slonview_describe";
 /// A failed Parse would abort a transaction the user opened earlier in the script, so
 /// inside a transaction block it runs under a savepoint that is rolled back on failure.
 /// Only a cancel is reported as an error.
-pub(crate) async fn describe_writable(client: &Client, types: &TypeNames, sql: &str, guard: &CancelGuard<'_>) -> AppResult<Vec<String>> {
+pub(crate) async fn describe_writable(
+    client: &Client,
+    types: &TypeNames,
+    sql: &str,
+    guard: &CancelGuard<'_>,
+) -> AppResult<Vec<String>> {
     let cancelled = |e: &tokio_postgres::Error| e.code() == Some(&SqlState::QUERY_CANCELED);
     let in_transaction = match client.batch_execute(DESCRIBE_SAVEPOINT).await {
         Ok(()) => true,
@@ -82,7 +102,10 @@ pub(crate) async fn describe_writable(client: &Client, types: &TypeNames, sql: &
         } else {
             "ROLLBACK TO SAVEPOINT slonview_describe; RELEASE SAVEPOINT slonview_describe"
         };
-        client.batch_execute(end).await.map_err(|e| guard.map_err(e))?;
+        client
+            .batch_execute(end)
+            .await
+            .map_err(|e| guard.map_err(e))?;
     }
     match described {
         Ok(names) => Ok(names),
@@ -103,7 +126,10 @@ pub(crate) async fn run_statement(
 ) -> AppResult<Vec<QueryResult>> {
     let max_rows = max_rows as usize;
     let mut started = Instant::now();
-    let stream = client.simple_query_raw(statement).await.map_err(|e| guard.map_err(e))?;
+    let stream = client
+        .simple_query_raw(statement)
+        .await
+        .map_err(|e| guard.map_err(e))?;
     pin_mut!(stream);
     let mut results = Vec::new();
     let mut columns: Vec<Column> = Vec::new();
@@ -118,7 +144,11 @@ pub(crate) async fn run_statement(
                     .enumerate()
                     .map(|(i, c)| Column {
                         name: c.name().to_owned(),
-                        type_name: if typed { types[i].clone() } else { String::new() },
+                        type_name: if typed {
+                            types[i].clone()
+                        } else {
+                            String::new()
+                        },
                         nullable: true,
                         is_pk: false,
                     })
@@ -126,7 +156,11 @@ pub(crate) async fn run_statement(
             }
             SimpleQueryMessage::Row(row) => {
                 if rows.len() < max_rows {
-                    rows.push((0..row.len()).map(|i| row.get(i).map(str::to_owned)).collect());
+                    rows.push(
+                        (0..row.len())
+                            .map(|i| row.get(i).map(str::to_owned))
+                            .collect(),
+                    );
                 } else {
                     truncated = true;
                 }
@@ -152,26 +186,39 @@ pub(crate) async fn run_statement(
 /// Server Parse is authoritative about command boundaries. A post-execution
 /// check alone is too late if a mis-split piece contains COMMIT followed by writes.
 /// Returns the prepared statement so callers can reuse its row description.
-pub(crate) async fn require_single_statement(client: &Client, sql: &str, guard: &CancelGuard<'_>) -> AppResult<Statement> {
+pub(crate) async fn require_single_statement(
+    client: &Client,
+    sql: &str,
+    guard: &CancelGuard<'_>,
+) -> AppResult<Statement> {
     client.prepare(sql).await.map_err(|e| guard.map_err(e))
 }
 
-const READ_ONLY_STATE: &str = "SELECT current_setting('transaction_read_only'), extract(epoch FROM now())::text";
+const READ_ONLY_STATE: &str =
+    "SELECT current_setting('transaction_read_only'), extract(epoch FROM now())::text";
 pub(crate) const READ_ONLY_GUARD_ERROR: &str =
     "Read-only guard: statement left the read-only transaction; it was rolled back.";
 
 /// The SELECT acquires a snapshot, preventing subsequent SET TRANSACTION READ
 /// WRITE (including SET transaction_read_only / set_config) from upgrading it.
 pub(crate) async fn begin_read_only(client: &Client, guard: &CancelGuard<'_>) -> AppResult<String> {
-    client.batch_execute("BEGIN TRANSACTION READ ONLY").await.map_err(|e| guard.map_err(e))?;
+    client
+        .batch_execute("BEGIN TRANSACTION READ ONLY")
+        .await
+        .map_err(|e| guard.map_err(e))?;
     read_only_state(client, guard).await
 }
 
 async fn read_only_state(client: &Client, guard: &CancelGuard<'_>) -> AppResult<String> {
-    let messages = client.simple_query(READ_ONLY_STATE).await.map_err(|e| guard.map_err(e))?;
+    let messages = client
+        .simple_query(READ_ONLY_STATE)
+        .await
+        .map_err(|e| guard.map_err(e))?;
     for message in messages {
         if let SimpleQueryMessage::Row(row) = message {
-            if row.get(0) == Some("on") && let Some(start) = row.get(1) {
+            if row.get(0) == Some("on")
+                && let Some(start) = row.get(1)
+            {
                 return Ok(start.to_owned());
             }
             break;
@@ -180,7 +227,11 @@ async fn read_only_state(client: &Client, guard: &CancelGuard<'_>) -> AppResult<
     Err(AppError::internal(READ_ONLY_GUARD_ERROR))
 }
 
-pub(crate) async fn verify_read_only(client: &Client, start: &str, guard: &CancelGuard<'_>) -> AppResult<()> {
+pub(crate) async fn verify_read_only(
+    client: &Client,
+    start: &str,
+    guard: &CancelGuard<'_>,
+) -> AppResult<()> {
     if read_only_state(client, guard).await? != start {
         return Err(AppError::internal(READ_ONLY_GUARD_ERROR));
     }
