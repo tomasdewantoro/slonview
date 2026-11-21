@@ -168,7 +168,9 @@ footer p { margin: 0 0 10px; max-width: 820px; }
 
     <section id="install">
       <h2>Install</h2>
-      <p>Download the <code>.dmg</code> for your Mac (Apple Silicon or Intel), the <code>.AppImage</code> or <code>.deb</code> for Linux, or the <code>.msi</code> for Windows from the <a href="https://github.com/tomasdewantoro/slonview/releases/latest">latest release</a>. Mac builds are signed and notarized by Apple. Windows builds aren't signed yet, so SmartScreen asks once. Or build from source:</p>
+      <p>On a Mac with Homebrew:</p>
+<pre>brew install --cask tomasdewantoro/tap/slonview</pre>
+      <p>Or download the <code>.dmg</code> for your Mac (Apple Silicon or Intel), the <code>.AppImage</code> or <code>.deb</code> for Linux, or the <code>.msi</code> for Windows from the <a href="https://github.com/tomasdewantoro/slonview/releases/latest">latest release</a>. Mac builds are signed and notarized by Apple. Windows builds aren't signed, so SmartScreen asks once. Or build from source:</p>
 <pre>git clone https://github.com/tomasdewantoro/slonview
 cd slonview && pnpm install && pnpm tauri build</pre>
     </section>

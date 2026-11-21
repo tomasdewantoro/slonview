@@ -186,9 +186,9 @@ Errors say what happened and what to do next. They never apologise. Below are th
 | Cancel | "Esc cancels the query on the server." 15–28 ms at the engine (local). | Unlabelled "54 ms" (that's headless Chromium UI) | — |
 | Memory / launch | Nothing. | Idle RAM, launch time, "instant", "opens in under a second" | In-app measurement [STRAT §12] |
 | Read-only | "Read-only by default, enforced by the PostgreSQL server." "Turn on Allow writes to write; a red WRITE badge shows it." | "Every connection is read-only", "can't break production", "100% safe", "guaranteed read-only" | — |
-| SQL-editor writes | Nothing yet. | "Read-only mode blocks writes from the SQL editor" | Hardening E2E passes (all four bypasses) |
+| SQL-editor writes | "In read-only mode the SQL editor refuses commands that could leave the read-only transaction before anything runs." Hardening signed off 2026-11-21 (`docs/qa/slonview-e2e-signoff.md` §6). | "Blocks every write", "can't write" (advisory locks, `dblink` and `postgres_fdw` still act) | — |
 | Telemetry | "No telemetry. Slonview contains no analytics, crash reporting, or update checks. The only network connections it makes are to the PostgreSQL servers you configure (plus the DNS lookups needed to find them)." Short: "No telemetry. Slonview only talks to the PostgreSQL servers you configure." | "No network requests at all", "offline", "private" | — |
-| TLS | "Encrypted connections (`sslmode=require` behaviour)." | "Secure connection", "verified TLS", "safe on production" | `verify-full` ships and is tested |
+| TLS | "TLS up to `verify-full`." `prefer`/`require` encrypt without verifying. | "Secure connection" unqualified, "safe on production" | — |
 | Native | "Feels at home on the Mac", "built with Tauri and Rust" | "Native" (unqualified), "No Electron. No subscription. No bloat." | — |
 | Comparisons | Describe the pain ("Java or Electron weight"). | "Faster than X", "unlike X, read-only is opt-in" | Same-machine benchmark / cited desk check |
 | Install | "Signed and notarized for macOS"; "build from source" | "Available on Homebrew" (until a tap ships) | — |

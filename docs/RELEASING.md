@@ -28,9 +28,20 @@ so an older base runs on more distributions.
 
 4. Wait for the four `Release` jobs. Open the draft release, check that every asset is attached
    (2 × dmg, 2 × app tarball, AppImage, deb, msi, setup.exe), edit the notes, and publish.
+5. Publishing triggers the `Homebrew` workflow, which downloads both dmgs, writes the new version
+   and SHA-256 sums into `Casks/slonview.rb` in
+   [tomasdewantoro/homebrew-tap](https://github.com/tomasdewantoro/homebrew-tap), and pushes.
+   To re-run it for an existing release, start it from the Actions tab with the tag.
 
 To retry a failed job, re-run it from the Actions tab; tauri-action uploads into the existing
 draft for the same tag.
+
+## Homebrew tap
+
+The `Homebrew` workflow pushes to the tap with an SSH deploy key that has write access to that
+one repository only. The private key is the `HOMEBREW_TAP_DEPLOY_KEY` secret here; the public key
+is a deploy key with write access on `tomasdewantoro/homebrew-tap`. To rotate it, generate a new
+ed25519 key pair, replace both, and delete the old deploy key.
 
 ## Unsigned builds
 

@@ -58,7 +58,13 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 
 ## Install
 
-Prebuilt macOS (Apple Silicon and Intel), Linux (AppImage, deb) and Windows (msi, setup.exe) builds are attached to each [GitHub release](https://github.com/tomasdewantoro/slonview/releases). The macOS builds are signed with a Developer ID and notarized by Apple, so they open without a Gatekeeper prompt. The Windows builds are not code-signed yet: SmartScreen asks once, choose **More info**, then **Run anyway**.
+On macOS with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask tomasdewantoro/tap/slonview
+```
+
+Prebuilt macOS (Apple Silicon and Intel), Linux (AppImage, deb) and Windows (msi, setup.exe) builds are also attached to each [GitHub release](https://github.com/tomasdewantoro/slonview/releases). The macOS builds are signed with a Developer ID and notarized by Apple, so they open without a Gatekeeper prompt. The Windows builds are not code-signed: SmartScreen asks once, choose **More info**, then **Run anyway**.
 
 Saved passwords go to the operating system's credential store: the macOS Keychain, the Secret Service on Linux (GNOME Keyring, KWallet or KeePassXC; one must be running), or the Windows Credential Manager.
 

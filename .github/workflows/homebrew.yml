@@ -1,0 +1,55 @@
+name: Homebrew
+
+# When a release is published, point the cask in tomasdewantoro/homebrew-tap at its dmgs.
+# Pushes over SSH with a deploy key that can write only to the tap repository
+# (secret HOMEBREW_TAP_DEPLOY_KEY). See docs/RELEASING.md.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish to the tap, e.g. v0.2.0
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  cask:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update the cask
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+          mkdir -p dmg
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*.dmg' -D dmg
+          arm=$(sha256sum "dmg/Slonview_${version}_aarch64.dmg" | cut -d' ' -f1)
+          intel=$(sha256sum "dmg/Slonview_${version}_x64.dmg" | cut -d' ' -f1)
+
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/tap_key
+          chmod 600 ~/.ssh/tap_key
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone --depth 1 git@github.com:tomasdewantoro/homebrew-tap.git tap
+          cd tap
+          sed -i -E \
+            -e "s/^  version \"[^\"]+\"/  version \"${version}\"/" \
+            -e "s/^  sha256 arm:   \"[0-9a-f]{64}\"/  sha256 arm:   \"${arm}\"/" \
+            -e "s/^         intel: \"[0-9a-f]{64}\"/         intel: \"${intel}\"/" \
+            Casks/slonview.rb
+          grep -q "version \"${version}\"" Casks/slonview.rb
+          grep -q "$arm" Casks/slonview.rb
+          grep -q "$intel" Casks/slonview.rb
+          if git diff --quiet; then
+            echo "cask already at ${version}"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -am "slonview ${version}"
+          git push origin HEAD:main
