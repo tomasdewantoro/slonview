@@ -48,7 +48,7 @@ jobs:
       HAS_WINDOWS_CERT: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux system dependencies (Tauri 2, Secret Service)
         if: runner.os == 'Linux'
@@ -66,9 +66,9 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: .nvmrc
 
       - name: Enable pnpm via corepack
         shell: bash

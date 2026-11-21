@@ -21,7 +21,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # backend on its own OS). Without a backend feature keyring silently uses an in-memory mock.
 keyring = "3"
 directories = "6"
-toml = "0.9"
+toml = "1"
 futures-util = "0.3"
 url = "2"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
