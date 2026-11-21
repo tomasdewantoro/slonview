@@ -588,7 +588,7 @@ try {
     });
     await page.waitForSelector("#cd-name");
     eq(await page.$eval("#cd-pw", (e) => e.value), "", "password field untouched");
-    await page.evaluate(() => document.querySelector('form input[type="checkbox"]').click());
+    await page.click("#cd-allow-writes");
     await clickText("Save");
     await until(() => document.body.innerText.includes("WRITE"));
     const kc = await bridge("e2e_keychain_get", { id: connId });

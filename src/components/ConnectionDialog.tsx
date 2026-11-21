@@ -470,7 +470,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
 
         <span className="text-muted">Access</span>
         <label className="flex items-center gap-2">
-          <input type="checkbox" checked={!p.readOnly} onChange={(e) => update({ readOnly: !e.target.checked })} />
+          <input id="cd-allow-writes" type="checkbox" checked={!p.readOnly} onChange={(e) => update({ readOnly: !e.target.checked })} />
           <span>Allow writes</span>
           <span className="text-xs text-muted">{p.readOnly ? "sessions are read-only" : "INSERT/UPDATE/DELETE allowed"}</span>
         </label>
