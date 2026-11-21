@@ -157,7 +157,27 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Slonview ${{ github.ref_name }}
-          releaseBody: See the assets below. Unsigned builds need a Gatekeeper/SmartScreen confirmation on first launch.
+          releaseBody: See the assets below.
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} ${{ steps.wincert.outputs.config }}
+
+      # The Tauri CLI notarizes the .app, but the .dmg is created afterwards and stays
+      # unnotarized, so Gatekeeper rejects the download itself. Notarize and staple the dmg,
+      # then replace the release asset.
+      - name: Notarize and staple the dmg
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true' && (env.HAS_APPLE_NOTARY_ID == 'true' || env.HAS_APPLE_NOTARY_API == 'true')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dmg=$(ls target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
+          if [[ -n "${APPLE_ID:-}" ]]; then
+            auth=(--apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          else
+            auth=(--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER")
+          fi
+          xcrun notarytool submit "$dmg" "${auth[@]}" --wait --timeout 30m
+          xcrun stapler staple "$dmg"
+          spctl -a -t open --context context:primary-signature -v "$dmg"
+          gh release upload "${{ github.ref_name }}" "$dmg" --clobber

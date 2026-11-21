@@ -32,9 +32,10 @@ so an older base runs on more distributions.
 To retry a failed job, re-run it from the Actions tab; tauri-action uploads into the existing
 draft for the same tag.
 
-## Unsigned builds (default)
+## Unsigned builds
 
-With no signing secrets set, every artifact is unsigned:
+Without signing secrets, artifacts are unsigned. This repository has the macOS secrets set, so
+only the Windows builds are unsigned today:
 
 - **macOS:** Gatekeeper blocks the first launch. Right-click the app and choose **Open**, or run
   `xattr -dr com.apple.quarantine /Applications/Slonview.app`.
@@ -57,8 +58,7 @@ Needs an Apple Developer Program membership and a **Developer ID Application** c
 | `APPLE_CERTIFICATE_PASSWORD` | The password you set when exporting the `.p12` |
 | `APPLE_SIGNING_IDENTITY` | The identity name, e.g. `Developer ID Application: Your Name (TEAMID)`; list with `security find-identity -v -p codesigning` |
 
-The Tauri CLI imports the certificate into a temporary keychain on the runner and signs the app
-and dmg.
+The Tauri CLI imports the certificate into a temporary keychain on the runner and signs the app.
 
 ### macOS notarization
 
@@ -82,7 +82,12 @@ Apple ID wins.
 | `APPLE_API_ISSUER` | The issuer ID shown above the keys list in App Store Connect → Users and Access → Integrations |
 
 The workflow writes the key to a temporary file and passes `APPLE_API_KEY`, `APPLE_API_ISSUER`
-and `APPLE_API_KEY_PATH` to the Tauri CLI, which notarizes and staples the dmg.
+and `APPLE_API_KEY_PATH` to the Tauri CLI.
+
+The Tauri CLI notarizes the `.app` but builds the `.dmg` afterwards, so the dmg itself would be
+unnotarized and Gatekeeper would reject the download. The **Notarize and staple the dmg** step
+submits the dmg with `notarytool`, staples the ticket, checks it with `spctl`, and replaces the
+release asset.
 
 ### Windows code signing
 
