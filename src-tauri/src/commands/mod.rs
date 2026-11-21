@@ -10,3 +10,4 @@ pub mod schema;
 pub mod sql;
 pub mod grid;
 pub mod sql_assist;
+pub mod connections;

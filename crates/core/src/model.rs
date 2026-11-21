@@ -17,6 +17,8 @@ pub enum SslMode {
     #[default]
     Prefer,
     Require,
+    VerifyCa,
+    VerifyFull,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -40,6 +42,33 @@ pub struct ConnProfile {
     /// session; None = server default. Absent in older connections.toml files.
     #[serde(default)]
     pub time_zone: Option<String>,
+    /// Optional PEM CA bundle, added to the system trust roots.
+    #[serde(default)]
+    pub ssl_root_cert: Option<String>,
+    #[serde(default)]
+    pub ssh: Option<SshConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SshConfig {
+    pub host: String,
+    #[serde(default = "ssh_port")]
+    pub port: u16,
+    pub user: String,
+    pub auth: SshAuth,
+}
+
+fn ssh_port() -> u16 { 22 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[ts(export)]
+pub enum SshAuth {
+    Agent,
+    Key { path: String },
+    Password,
 }
 
 /// Result of parsing a `postgres://` URL or a `~/.pgpass` line.

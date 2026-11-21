@@ -12,8 +12,8 @@ use crate::{AppError, AppResult};
 const EMPTY_HOST_PLACEHOLDER: &str = "slonview-empty-host.invalid";
 
 /// Supports user, password, host, port, database, percent-decoding, and query
-/// params `sslmode` (disable|allow|prefer|require|verify-ca|verify-full; allow->Prefer,
-/// verify-*->Require). Profile name = "<db>@<host>". Other fields from `config::new_profile()`.
+/// params `sslmode` (disable|allow|prefer|require|verify-ca|verify-full; allow->Prefer)
+/// and `sslrootcert`. Profile name = "<db>@<host>". Other fields from `config::new_profile()`.
 ///
 /// Also honours the libpq query params `host` (used when the URL host is empty, e.g. a
 /// unix socket directory `?host=/tmp`), `port`, `user`, `password` and `dbname`, plus a
@@ -52,6 +52,7 @@ pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
     let mut database = decode(url.path().trim_start_matches('/'))?;
     let mut ssl = SslMode::Prefer;
     let mut time_zone = None;
+    let mut ssl_root_cert = None;
 
     for (key, value) in url.query_pairs() {
         match key.as_ref() {
@@ -63,6 +64,7 @@ pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
             "password" if password.is_none() => password = Some(value.into_owned()),
             "dbname" if database.is_empty() => database = value.into_owned(),
             "sslmode" => ssl = parse_sslmode(&value)?,
+            "sslrootcert" => ssl_root_cert = Some(value.into_owned()),
             "options" => time_zone = options_time_zone(&value).or(time_zone),
             _ => {}
         }
@@ -82,6 +84,7 @@ pub fn parse_conn_url(input: &str) -> AppResult<ParsedConn> {
         user,
         ssl,
         time_zone,
+        ssl_root_cert,
         ..new_profile()
     };
     Ok(ParsedConn { profile, password })
@@ -133,7 +136,9 @@ fn parse_sslmode(value: &str) -> AppResult<SslMode> {
     match value {
         "disable" => Ok(SslMode::Disable),
         "allow" | "prefer" => Ok(SslMode::Prefer),
-        "require" | "verify-ca" | "verify-full" => Ok(SslMode::Require),
+        "require" => Ok(SslMode::Require),
+        "verify-ca" => Ok(SslMode::VerifyCa),
+        "verify-full" => Ok(SslMode::VerifyFull),
         other => Err(AppError::invalid(format!("unsupported sslmode \"{other}\""))),
     }
 }
@@ -288,12 +293,19 @@ mod tests {
             ("allow", SslMode::Prefer),
             ("prefer", SslMode::Prefer),
             ("require", SslMode::Require),
-            ("verify-ca", SslMode::Require),
-            ("verify-full", SslMode::Require),
+            ("verify-ca", SslMode::VerifyCa),
+            ("verify-full", SslMode::VerifyFull),
         ] {
             assert_eq!(parse(&format!("postgres://u@h/d?sslmode={mode}")).profile.ssl, want, "{mode}");
         }
         assert!(matches!(parse_conn_url("postgres://u@h/d?sslmode=bogus"), Err(AppError::Invalid { .. })));
+    }
+
+    #[test]
+    fn sslrootcert_maps() {
+        let parsed = parse("postgres://u@host/db?sslmode=verify-full&sslrootcert=%2Ftmp%2Fmy%20ca.pem");
+        assert_eq!(parsed.profile.ssl_root_cert.as_deref(), Some("/tmp/my ca.pem"));
+        assert_eq!(parsed.profile.ssl, SslMode::VerifyFull);
     }
 
     #[test]

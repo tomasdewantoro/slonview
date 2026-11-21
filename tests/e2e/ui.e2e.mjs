@@ -588,7 +588,7 @@ try {
     });
     await page.waitForSelector("#cd-name");
     eq(await page.$eval("#cd-pw", (e) => e.value), "", "password field untouched");
-    await page.evaluate(() => document.querySelector('form input[type="checkbox"]').click());
+    await page.click("#cd-allow-writes");
     await clickText("Save");
     await until(() => document.body.innerText.includes("WRITE"));
     const kc = await bridge("e2e_keychain_get", { id: connId });
@@ -623,8 +623,13 @@ try {
     psql("INSERT INTO scratch_insert_target(id,customer_id,status,amount,note,created_at) VALUES (900000004,1,'paid',1.00,'grid-before',now())");
     try {
       await openRel("scratch_insert_target");
+      // Edit permissions load asynchronously; "Add row" is enabled only once editing is allowed.
+      await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Add row" && !b.disabled), 10000);
       const y = await gridTop();
       await page.mouse.click(330, y + HEADER + 12);
+      // The grid can keep a horizontal scroll offset, so the click may land on any column.
+      // Walk to column 0 (ArrowLeft stops there), then to `note` (id, customer_id, status, amount, note).
+      for (let i = 0; i < 8; i++) await page.keyboard.press("ArrowLeft");
       for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
       await page.keyboard.press("Enter");
       await page.waitForSelector('[aria-label="Edit note"]');
@@ -693,6 +698,50 @@ try {
       out.push(`${tz}: ${createdAt}`);
     }
     await page.screenshot({ path: `${SHOTS}/A-time-zone.png` });
+    return out.join("; ");
+  });
+
+  await check("Status-bar time zone switch applies live (no disconnect)", async () => {
+    // The previous check left the fixture connected with Asia/Jakarta. Switch zones purely
+    // from the status bar popover and confirm orders.created_at re-renders without a reconnect.
+    const switchZone = async (zone) => {
+      await page.click('[data-testid="session-tz"]');
+      await until(() => !!document.querySelector('[role="dialog"][aria-label="Session time zone"]'));
+      const ok = await page.evaluate((z) => {
+        // Match by zone id, not label: the Mac's own zone is labelled "<zone> (this Mac)".
+        const b = [...document.querySelectorAll('[role="option"]')].find((x) => x.dataset.zone === z);
+        b?.click();
+        return !!b;
+      }, zone);
+      assert(ok, `no zone option ${zone}`);
+      await until((z) => document.querySelector('[data-testid="session-tz"]')?.innerText.trim() === z, 10000, zone);
+    };
+    const createdSuffix = async () => {
+      for (let attempt = 0; ; attempt++) {
+        await selectRows(0, 0);
+        await page.evaluate(() => (window.__clipboard = ""));
+        await page.keyboard.down("Meta");
+        await page.keyboard.press("c");
+        await page.keyboard.up("Meta");
+        try {
+          await until(() => (window.__clipboard ?? "").includes("\n"), 2000);
+          break;
+        } catch (e) {
+          if (attempt === 3) throw e;
+        }
+      }
+      const [header, row] = (await page.evaluate(() => window.__clipboard)).split("\n");
+      return row.split("\t")[header.split("\t").indexOf("created_at")];
+    };
+    const out = [];
+    for (const [zone, suffix] of [["UTC", "+00"], ["Asia/Jakarta", "+07"]]) {
+      await switchZone(zone);
+      eq((await bridge("list_profiles")).find((p) => p.id === connId).timeZone, zone, "profile timeZone persisted without reconnect");
+      const createdAt = await createdSuffix();
+      assert(createdAt?.endsWith(suffix), `${zone}: created_at ${createdAt} does not end with ${suffix}`);
+      out.push(`${zone}: ${createdAt}`);
+    }
+    await page.screenshot({ path: `${SHOTS}/A-time-zone-status-bar.png` });
     return out.join("; ");
   });
 

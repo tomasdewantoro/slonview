@@ -1,5 +1,7 @@
 import { Check, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { SshConfig } from "../bindings/SshConfig";
 import { api, errorMessage } from "../api";
 import type { ConnProfile } from "../bindings/ConnProfile";
 import type { ParsedConn } from "../bindings/ParsedConn";
@@ -69,6 +71,8 @@ export function newProfile(): ConnProfile {
     color: null,
     statementTimeoutMs: 30000,
     timeZone: null,
+    sslRootCert: null,
+    ssh: null,
   };
 }
 
@@ -94,6 +98,15 @@ export function ConnectionDialog({ existing, onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [macZone] = useState(localTimeZone);
+  const [sshSecret, setSshSecret] = useState("");
+  const [sshSecretTouched, setSshSecretTouched] = useState(false);
+  const updateSsh = (patch: Partial<SshConfig>) => { if (p.ssh) update({ ssh: { ...p.ssh, ...patch } }); };
+  const chooseCa = async () => {
+    try {
+      const path = await open({ multiple: false, filters: [{ name: "PEM certificates", extensions: ["pem", "crt"] }] });
+      if (typeof path === "string") update({ sslRootCert: path });
+    } catch (e) { setSaveError(errorMessage(e)); }
+  };
 
   const update = (patch: Partial<ConnProfile>) => {
     setP((cur) => ({ ...cur, ...patch }));
@@ -102,8 +115,8 @@ export function ConnectionDialog({ existing, onClose }: Props) {
 
   const applyParsed = (parsed: ParsedConn) => {
     // Keep identity (id, color, read-only choice) of the profile being edited; take the connection fields.
-    const { host, port, database, user, ssl, timeZone } = parsed.profile;
-    setP((cur) => ({ ...cur, host, port, database, user, ssl, timeZone: timeZone ?? cur.timeZone, name: cur.name || parsed.profile.name }));
+    const { host, port, database, user, ssl, timeZone, sslRootCert } = parsed.profile;
+    setP((cur) => ({ ...cur, host, port, database, user, ssl, sslRootCert, timeZone: timeZone ?? cur.timeZone, name: cur.name || parsed.profile.name }));
     setPassword(parsed.password ?? "");
     setPasswordTouched(true);
     setTest({ kind: "idle" });
@@ -137,7 +150,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
   const runTest = async () => {
     setTest({ kind: "running" });
     try {
-      const info = await api.testConnection(finalProfile(), passwordArg() ?? null);
+      const info = await api.testTunnelConnection(finalProfile(), passwordArg() ?? null, sshSecretTouched ? sshSecret : null);
       setTest({ kind: "ok", info });
     } catch (e) {
       setTest({ kind: "error", message: errorMessage(e) });
@@ -151,14 +164,16 @@ export function ConnectionDialog({ existing, onClose }: Props) {
     database: p.database.trim(),
     user: p.user.trim(),
     timeZone: p.timeZone?.trim() || null,
+    sslRootCert: p.sslRootCert?.trim() || null,
   });
 
-  const valid = p.host.trim() !== "" && p.database.trim() !== "" && p.user.trim() !== "" && p.port > 0 && p.port < 65536;
+  const valid = p.host.trim() !== "" && p.database.trim() !== "" && p.user.trim() !== "" && p.port > 0 && p.port < 65536 && (!p.ssh || (!!p.ssh.host.trim() && !!p.ssh.user.trim() && p.ssh.port > 0 && p.ssh.port < 65536 && (p.ssh.auth.kind !== "key" || !!p.ssh.auth.path.trim())));
 
   const save = async () => {
     setSaving(true);
     setSaveError(null);
     try {
+      if (p.ssh && sshSecretTouched && p.ssh.auth.kind !== "agent") await api.saveSshSecret(p.id, p.ssh.auth.kind === "key", sshSecret || null);
       await appStore.getState().saveProfile(finalProfile(), passwordArg());
       onClose();
     } catch (e) {
@@ -374,11 +389,38 @@ export function ConnectionDialog({ existing, onClose }: Props) {
         <label htmlFor="cd-ssl" className="text-muted">
           SSL
         </label>
-        <select id="cd-ssl" className="field w-32" value={p.ssl} onChange={(e) => update({ ssl: e.target.value as SslMode })}>
-          <option value="disable">disable</option>
-          <option value="prefer">prefer</option>
-          <option value="require">require</option>
-        </select>
+        <div>
+          <select id="cd-ssl" className="field w-36" value={p.ssl} onChange={(e) => update({ ssl: e.target.value as SslMode })} aria-describedby="cd-ssl-help">
+            <option value="disable">disable</option>
+            <option value="prefer">prefer</option>
+            <option value="require">require</option>
+            <option value="verify-ca">verify-ca</option>
+            <option value="verify-full">verify-full</option>
+          </select>
+          <p id="cd-ssl-help" className="mt-1 text-xs text-muted">{{ disable: "No encryption. Use only for trusted local connections.", prefer: "Try encryption; allow an unencrypted fallback. Does not verify the server.", require: "Require encryption without verifying the server certificate.", "verify-ca": "Require encryption and a trusted certificate chain; hostname is not checked.", "verify-full": "Verify the certificate chain and hostname. Recommended for production." }[p.ssl]}</p>
+        </div>
+        {(p.ssl === "verify-ca" || p.ssl === "verify-full") && <>
+          <label htmlFor="cd-ca" className="text-muted">CA file</label>
+          <div>
+            <div className="flex gap-2"><input id="cd-ca" className="field min-w-0 flex-1 font-mono text-xs" value={p.sslRootCert ?? ""} placeholder="System roots only" onChange={(e) => update({ sslRootCert: e.target.value || null })} /><button type="button" className="btn" onClick={chooseCa}>Choose…</button></div>
+            <p className="mt-1 text-xs text-muted">Optional PEM bundle, added to this Mac's trusted roots.</p>
+          </div>
+        </>}
+
+        <div className="col-span-2 my-1 h-px bg-border" />
+        <span className="text-muted">SSH tunnel</span>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={!!p.ssh} onChange={(e) => update({ ssh: e.target.checked ? { host: "", port: 22, user: "", auth: { kind: "agent" } } : null })} />Connect through SSH</label>
+        {p.ssh && <>
+          <label htmlFor="cd-ssh-host" className="text-muted">SSH host</label>
+          <div className="flex gap-2"><input id="cd-ssh-host" className="field min-w-0 flex-1 font-mono text-xs" value={p.ssh.host} onChange={(e) => updateSsh({ host: e.target.value })} /><input aria-label="SSH port" className="field w-20 font-mono text-xs" type="number" min="1" max="65535" value={p.ssh.port} onChange={(e) => updateSsh({ port: Number(e.target.value) })} /></div>
+          <label htmlFor="cd-ssh-user" className="text-muted">SSH user</label><input id="cd-ssh-user" className="field" value={p.ssh.user} onChange={(e) => updateSsh({ user: e.target.value })} />
+          <label htmlFor="cd-ssh-auth" className="text-muted">Authenticate</label>
+          <select id="cd-ssh-auth" className="field" value={p.ssh.auth.kind} onChange={(e) => { updateSsh({ auth: e.target.value === "key" ? { kind: "key", path: "~/.ssh/id_ed25519" } : { kind: e.target.value as "agent" | "password" } }); setSshSecret(""); setSshSecretTouched(false); }}><option value="agent">SSH agent</option><option value="key">Private key</option><option value="password">Password</option></select>
+          {p.ssh.auth.kind === "key" && <><label htmlFor="cd-ssh-key" className="text-muted">Key path</label><input id="cd-ssh-key" className="field font-mono text-xs" value={p.ssh.auth.path} onChange={(e) => updateSsh({ auth: { kind: "key", path: e.target.value } })} /></>}
+          {p.ssh.auth.kind !== "agent" && <><label htmlFor="cd-ssh-secret" className="text-muted">{p.ssh.auth.kind === "key" ? "Passphrase" : "SSH password"}</label><input id="cd-ssh-secret" className="field" type="password" value={sshSecret} placeholder={existing && !sshSecretTouched ? "Keychain (unchanged)" : "Stored in Keychain"} onChange={(e) => { setSshSecret(e.target.value); setSshSecretTouched(true); setTest({ kind: "idle" }); }} autoComplete="off" /></>}
+          <span /><p className="text-xs text-muted">The database host is reached from the SSH server. Host keys must already be trusted in ~/.ssh/known_hosts.</p>
+        </>}
+        <div className="col-span-2 my-1 h-px bg-border" />
 
         <label htmlFor="cd-timeout" className="text-muted">
           Timeout
@@ -428,7 +470,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
 
         <span className="text-muted">Access</span>
         <label className="flex items-center gap-2">
-          <input type="checkbox" checked={!p.readOnly} onChange={(e) => update({ readOnly: !e.target.checked })} />
+          <input id="cd-allow-writes" type="checkbox" checked={!p.readOnly} onChange={(e) => update({ readOnly: !e.target.checked })} />
           <span>Allow writes</span>
           <span className="text-xs text-muted">{p.readOnly ? "sessions are read-only" : "INSERT/UPDATE/DELETE allowed"}</span>
         </label>

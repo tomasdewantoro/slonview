@@ -226,6 +226,8 @@ const seedProfiles: ConnProfile[] = [
     color: "#3b82f6",
     statementTimeoutMs: 30000,
     timeZone: null,
+    sslRootCert: null,
+    ssh: null,
   },
   {
     id: "7f6c1d7a-0000-4000-8000-000000000002",
@@ -239,6 +241,8 @@ const seedProfiles: ConnProfile[] = [
     color: "#e5484d",
     statementTimeoutMs: 30000,
     timeZone: "Asia/Jakarta",
+    sslRootCert: null,
+    ssh: null,
   },
   {
     id: "7f6c1d7a-0000-4000-8000-000000000003",
@@ -252,6 +256,8 @@ const seedProfiles: ConnProfile[] = [
     color: null,
     statementTimeoutMs: 30000,
     timeZone: null,
+    sslRootCert: null,
+    ssh: null,
   },
 ];
 
@@ -586,6 +592,8 @@ function parseUrl(url: string): ParsedConn {
       color: null,
       statementTimeoutMs: 30000,
       timeZone: null,
+      sslRootCert: null,
+      ssh: null,
     },
     password: u.password ? decodeURIComponent(u.password) : null,
   };

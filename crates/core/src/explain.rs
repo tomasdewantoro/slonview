@@ -105,7 +105,7 @@ impl crate::engine::Engine {
             }
             e
         };
-        let guard = self.cancels.register(request_id, client.cancel_token());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
         let outcome = async {
             // Server Parse of the exact text that will run: more than one command is refused
             // in every mode before anything executes.

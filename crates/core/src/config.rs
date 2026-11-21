@@ -33,6 +33,8 @@ pub fn new_profile() -> ConnProfile {
         color: None,
         statement_timeout_ms: 30_000,
         time_zone: None,
+        ssl_root_cert: None,
+        ssh: None,
     }
 }
 
@@ -248,5 +250,45 @@ mod tests {
         store.upsert(p.clone()).unwrap();
         assert!(fs::read_to_string(&path).unwrap().contains("timeZone = \"Asia/Jakarta\""));
         assert_eq!(store.get(p.id).unwrap(), p);
+    }
+
+    #[test]
+    fn old_toml_without_ssh_or_root_cert_loads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("connections.toml");
+        fs::write(
+            &path,
+            "[[profile]]\nid = \"7f6c1d7a-0000-4000-8000-000000000001\"\nname = \"old\"\nhost = \"localhost\"\n\
+             port = 5432\ndatabase = \"db\"\nuser = \"u\"\nssl = \"verify-full\"\nreadOnly = true\n\
+             statementTimeoutMs = 30000\n",
+        )
+        .unwrap();
+        let store = ProfileStore::new(&path);
+        let list = store.load().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].ssh, None);
+        assert_eq!(list[0].ssl_root_cert, None);
+
+        let mut p = list[0].clone();
+        p.ssh = Some(crate::model::SshConfig {
+            host: "bastion".into(),
+            port: 22,
+            user: "ops".into(),
+            auth: crate::model::SshAuth::Key { path: "~/.ssh/id_ed25519".into() },
+        });
+        store.upsert(p.clone()).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("ssh"), "{saved}");
+        assert_eq!(store.get(p.id).unwrap(), p);
+    }
+
+    #[test]
+    fn ssh_port_defaults_to_22_when_absent() {
+        let ssh: crate::model::SshConfig = toml::from_str(
+            "host = \"h\"\nuser = \"u\"\nauth = { kind = \"agent\" }\n",
+        )
+        .unwrap();
+        assert_eq!(ssh.port, 22);
+        assert!(matches!(ssh.auth, crate::model::SshAuth::Agent));
     }
 }

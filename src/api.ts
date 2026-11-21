@@ -105,6 +105,9 @@ export const api = {
   /** EXPLAIN (FORMAT JSON) of one statement; `analyze` runs it. Always rolled back. */
   explain: (requestId: string, connId: string, sql: string, analyze: boolean) =>
     invoke<ExplainResult>("explain", { requestId, connId, sql, analyze }),
+  setTimeZone: (connId: string, timeZone: string | null) => invoke<ConnProfile[]>("set_time_zone", { connId, timeZone }),
+  saveSshSecret: (id: string, passphrase: boolean, value: string | null) => invoke<void>("save_ssh_secret", { id, passphrase, value }),
+  testTunnelConnection: (profile: ConnProfile, password: string | null, sshSecret: string | null) => invoke<ServerInfo>("test_tunnel_connection", { profile, password, sshSecret }),
 };
 
 async function streamColumnValues(requestId: string, req: ColumnCopyRequest, onChunk: (chunk: ColumnCopyChunk) => void): Promise<ColumnCopySummary> {

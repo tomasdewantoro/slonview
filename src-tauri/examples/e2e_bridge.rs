@@ -112,6 +112,16 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
         // Test-only probe: reads the Keychain from this process (which created the item), so
         // E2E scripts never run `security -w`, which can raise an access prompt.
         "e2e_keychain_get" => ok(engine.secrets.get(arg(a, "id")?)?),
+        "set_time_zone" => ok(ops::set_time_zone(engine, arg(a, "connId")?, arg(a, "timeZone")?).await?),
+        "save_ssh_secret" => {
+            let value: Option<String> = arg(a, "value")?;
+            ok(ops::save_ssh_secret(engine, arg(a, "id")?, arg(a, "passphrase")?, value.as_deref()).await?)
+        }
+        "test_tunnel_connection" => {
+            let password: Option<String> = arg(a, "password")?;
+            let secret: Option<String> = arg(a, "sshSecret")?;
+            ok(ops::test_tunnel_connection(engine, &arg(a, "profile")?, password.as_deref(), secret.as_deref()).await?)
+        }
         "edit_info" => ok(ops::edit_info(engine, arg(a, "connId")?, &arg::<String>(a, "schema")?, &arg::<String>(a, "table")?).await?),
         "get_edit_row" => ok(ops::get_edit_row(engine, &arg(a, "req")?).await?),
         "review_edits" => ok(ops::review_edits(engine, &arg(a, "req")?).await?),

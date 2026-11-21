@@ -42,6 +42,10 @@ pub enum AppError {
     },
     #[error("{message}")]
     Internal { message: String },
+    #[error("TLS verification failed: {message}")]
+    Tls { message: String },
+    #[error("SSH tunnel failed: {message}")]
+    Ssh { message: String },
 }
 
 impl AppError {
