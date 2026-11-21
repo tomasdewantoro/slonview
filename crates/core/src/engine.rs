@@ -129,7 +129,7 @@ impl Engine {
         let meta = introspect::table_meta(&client, &req.schema, &req.table).await?;
         let limit = if req.limit == 0 { DEFAULT_PAGE_LIMIT } else { req.limit };
         let q = paging::page_query(req, &meta, limit)?;
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
         let messages = if q.raw_span.is_some() {
             // User text: same protection as the SQL editor, then reset the pooled session.
             let result = raw_where_query(&client, &session.profile, &q.sql, q.raw_span, &guard).await;
@@ -202,7 +202,7 @@ impl Engine {
         let (session, client) = self.client(conn_id).await?;
         let meta = introspect::table_meta(&client, schema, table).await?;
         let (sql, raw_span) = paging::count_query(schema, table, &meta, filters, raw_where)?;
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
         let messages = if raw_span.is_some() {
             let result = raw_where_query(&client, &session.profile, &sql, raw_span, &guard).await;
             drop(guard);
@@ -248,7 +248,7 @@ impl Engine {
             return Err(AppError::invalid("nothing to run"));
         }
         let (session, client) = self.client(conn_id).await?;
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
         let outcome = async {
             if session.profile.read_only {
                 // Preflight the entire script before any user command runs.
@@ -324,7 +324,7 @@ impl Engine {
                 (statement.text, Some(span))
             }
         };
-        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone())?;
         let result = async {
             // A long export must not hit the interactive statement_timeout.
             client.batch_execute("SET statement_timeout = 0").await.map_err(|e| guard.map_err(e))?;

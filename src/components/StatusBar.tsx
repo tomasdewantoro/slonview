@@ -1,16 +1,19 @@
 import { LoaderCircle } from "lucide-react";
-import { appStore, findRelation, useApp } from "../store/app";
+import { activeTab, appStore, findRelation, statusConnId, tabConn, useApp } from "../store/app";
 import { formatCount } from "../store/queries";
 import { useEffect, useRef, useState } from "react";
 import { COMMON_TIME_ZONES } from "./ConnectionDialog";
 import { errorMessage } from "../api";
+import { ColorDot } from "./ConnectionList";
 
 export function StatusBar() {
-  const conn = useApp((s) => s.conn);
-  const profile = useApp((s) => s.profiles.find((p) => p.id === s.conn?.profileId));
-  const tab = useApp((s) => s.tabs.find((t) => t.id === s.activeTabId));
+  // The status bar describes the active tab's connection (the sidebar's when no tab is open).
+  const connId = useApp(statusConnId);
+  const conn = useApp((s) => (connId ? s.conns[connId] : undefined));
+  const profile = useApp((s) => s.profiles.find((p) => p.id === connId));
+  const tab = useApp(activeTab);
   const data = useApp((s) => (s.activeTabId ? s.tableData[s.activeTabId] : undefined));
-  const rel = useApp((s) => (tab?.kind === "table" ? findRelation(s.tree, tab.query.schema, tab.query.table) : undefined));
+  const rel = useApp((s) => (tab?.kind === "table" ? findRelation(tabConn(s, tab)?.tree ?? [], tab.query.schema, tab.query.table) : undefined));
 
   let connLabel = "Not connected";
   let dot = "bg-faint";
@@ -50,16 +53,18 @@ export function StatusBar() {
       )}
       {tab?.kind !== "table" && <span className="flex-1" />}
       {version && <span className="hidden shrink-0 lg:inline">{version}</span>}
-      {conn?.status === "connected" && profile && <TimeZonePicker key={profile.id} value={profile.timeZone} />}
-      <span className="flex max-w-80 shrink-0 items-center gap-1.5 truncate" title={conn?.server?.version}>
+      {conn?.status === "connected" && profile && <TimeZonePicker key={profile.id} connId={profile.id} value={profile.timeZone} />}
+      <span className="flex max-w-96 shrink-0 items-center gap-1.5 truncate" title={conn?.server?.version} data-testid="status-conn">
         <span aria-hidden className={`size-1.5 rounded-full ${dot}`} />
+        {profile && <ColorDot color={profile.color} className="size-2" />}
+        {profile && conn?.status === "connected" && <span className="font-medium text-ink">{profile.name}</span>}
         {connLabel}
       </span>
     </footer>
   );
 }
 
-function TimeZonePicker({ value }: { value: string | null }) {
+function TimeZonePicker({ connId, value }: { connId: string; value: string | null }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
@@ -78,7 +83,7 @@ function TimeZonePicker({ value }: { value: string | null }) {
   }, [open]);
   const choose = async (zone: string) => {
     setBusy(true); setError(null);
-    try { await appStore.getState().setTimeZone(zone || null); setOpen(false); trigger.current?.focus(); }
+    try { await appStore.getState().setTimeZone(connId, zone || null); setOpen(false); trigger.current?.focus(); }
     catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   };

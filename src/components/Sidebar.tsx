@@ -9,6 +9,7 @@ import {
   List,
   ListOrdered,
   LoaderCircle,
+  Plus,
   Puzzle,
   RefreshCw,
   Search,
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 import { forwardRef, useMemo, useState, type MouseEvent } from "react";
 import { errorMessage } from "../api";
+import type { ExtensionInfo } from "../bindings/ExtensionInfo";
 import type { FunctionInfo } from "../bindings/FunctionInfo";
 import type { FunctionKind } from "../bindings/FunctionKind";
 import type { ObjectKind } from "../bindings/ObjectKind";
@@ -94,45 +96,88 @@ export function filterTree(tree: SchemaNode[], query: string): SchemaNode[] {
 }
 
 export const Sidebar = forwardRef<HTMLInputElement>(function Sidebar(_props, searchRef) {
-  const conn = useApp((s) => s.conn);
-  const profile = useApp((s) => s.profiles.find((p) => p.id === s.conn?.profileId));
-  if (!conn || conn.status === "failed" || !profile) {
-    return (
-      <aside className="flex w-full flex-col bg-surface">
-        <ConnectionList />
-      </aside>
-    );
-  }
+  const hasConns = useApp((s) => Object.keys(s.conns).length > 0);
+  const active = useApp((s) => (s.activeConnId ? s.conns[s.activeConnId] : undefined));
+  const picker = useApp((s) => s.connectionPicker);
+  const profile = useApp((s) => s.profiles.find((p) => p.id === s.activeConnId));
+  const showList = picker || !active || active.status === "failed" || !profile;
   return (
     <aside className="flex w-full flex-col bg-surface">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border pr-1.5 pl-3">
-        <ColorDot color={profile.color} />
-        <span className="min-w-0 flex-1 truncate font-semibold" title={`${profile.user}@${profile.host}:${profile.port}/${profile.database}`}>
-          {profile.name}
-        </span>
-        {profile.readOnly ? (
-          <span className="badge-readonly" title="Session is read-only">
-            READ-ONLY
-          </span>
-        ) : (
-          <span className="badge-write" title="Writes are allowed on this connection">
-            WRITE
-          </span>
-        )}
-        <button className="icon-btn" aria-label="Disconnect" title="Disconnect" onClick={() => void appStore.getState().disconnect()}>
-          <Unplug size={14} />
-        </button>
-      </div>
-      {conn.status === "connecting" ? (
+      {hasConns && <ConnectionSwitcher />}
+      {showList ? (
+        <ConnectionList />
+      ) : active.status === "connecting" ? (
         <div className="flex items-center gap-2 p-3 text-muted">
           <LoaderCircle size={14} className="animate-spin" aria-hidden /> Connecting to {profile.host}…
         </div>
       ) : (
-        <SchemaTree ref={searchRef} />
+        <SchemaTree key={active.profileId} ref={searchRef} connId={active.profileId} />
       )}
     </aside>
   );
 });
+
+/** Open connections, one row each; clicking a row shows its schema tree. */
+function ConnectionSwitcher() {
+  const conns = useApp((s) => s.conns);
+  const activeId = useApp((s) => s.activeConnId);
+  const picker = useApp((s) => s.connectionPicker);
+  const profiles = useApp((s) => s.profiles);
+  const { setActiveConn, setConnectionPicker, disconnect } = appStore.getState();
+  return (
+    <div className="shrink-0 border-b border-border py-1">
+      <ul aria-label="Open connections" className="flex flex-col">
+        {Object.values(conns).map((c) => {
+          const p = profiles.find((x) => x.id === c.profileId);
+          if (!p) return null;
+          const current = c.profileId === activeId && !picker;
+          return (
+            <li
+              key={c.profileId}
+              className={`group mx-1.5 flex h-7 items-center gap-2 rounded-md pr-0.5 pl-1.5 ${current ? "bg-accent-soft" : "hover:bg-surface-2"}`}
+            >
+              <button
+                className="flex min-w-0 flex-1 items-center gap-2 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-focus-ring rounded"
+                aria-current={current ? "true" : undefined}
+                title={`${p.user}@${p.host}:${p.port}/${p.database}`}
+                onClick={() => setActiveConn(c.profileId)}
+              >
+                <ColorDot color={p.color} />
+                <span className={`min-w-0 flex-1 truncate ${current ? "font-semibold" : "font-medium"}`}>{p.name}</span>
+                {c.status === "connecting" && <LoaderCircle size={13} className="shrink-0 animate-spin text-muted" aria-label="Connecting" />}
+                {c.status === "failed" && <span className="shrink-0 text-[11px] text-error">failed</span>}
+                {c.status !== "failed" &&
+                  (p.readOnly ? (
+                    <span className="badge-readonly" title="Session is read-only">
+                      READ-ONLY
+                    </span>
+                  ) : (
+                    <span className="badge-write" title="Writes are allowed on this connection">
+                      WRITE
+                    </span>
+                  ))}
+              </button>
+              <button className="icon-btn shrink-0" aria-label={`Disconnect ${p.name}`} title={`Disconnect ${p.name}`} onClick={() => void disconnect(c.profileId)}>
+                <Unplug size={14} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <button
+        className={`mx-1.5 mt-0.5 flex h-7 w-[calc(100%-12px)] items-center gap-2 rounded-md px-1.5 text-left text-xs text-muted outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${picker ? "bg-accent-soft text-ink" : "hover:bg-surface-2"}`}
+        aria-pressed={picker}
+        onClick={() => setConnectionPicker(!picker)}
+      >
+        <Plus size={13} className="shrink-0" aria-hidden />
+        Open another connection…
+      </button>
+    </div>
+  );
+}
+
+const NO_TREE: SchemaNode[] = [];
+const NO_EXTENSIONS: ExtensionInfo[] = [];
 
 /** Object to open from a row, the context menu or Enter in the filter. */
 interface Openable {
@@ -142,15 +187,16 @@ interface Openable {
   title: string;
 }
 
-const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, searchRef) {
-  const tree = useApp((s) => s.tree);
-  const extensions = useApp((s) => s.extensions);
-  const loading = useApp((s) => s.treeLoading);
-  const error = useApp((s) => s.treeError);
+const SchemaTree = forwardRef<HTMLInputElement, { connId: string }>(function SchemaTree({ connId }, searchRef) {
+  const tree = useApp((s) => s.conns[connId]?.tree ?? NO_TREE);
+  const extensions = useApp((s) => s.conns[connId]?.extensions ?? NO_EXTENSIONS);
+  const loading = useApp((s) => s.conns[connId]?.treeLoading ?? false);
+  const error = useApp((s) => s.conns[connId]?.treeError ?? null);
   const activeRel = useApp((s) => {
     const t = s.tabs.find((x) => x.id === s.activeTabId);
-    if (t?.kind === "table") return `${t.query.schema}\u0000${t.query.table}`;
-    if (t?.kind === "structure") return `${t.schema}\u0000${t.table}`;
+    if (t?.connId !== connId) return null;
+    if (t.kind === "table") return `${t.query.schema}\u0000${t.query.table}`;
+    if (t.kind === "structure") return `${t.schema}\u0000${t.table}`;
     return null;
   });
   const [query, setQuery] = useState("");
@@ -214,12 +260,12 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
             </button>
           )}
         </div>
-        <button className="icon-btn" aria-label="Refresh schema" title="Refresh schema" onClick={() => void loadTree()} disabled={loading}>
+        <button className="icon-btn" aria-label="Refresh schema" title="Refresh schema" onClick={() => void loadTree(connId)} disabled={loading}>
           <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
       <div role="tree" aria-label="Schemas" className="min-h-0 flex-1 overflow-auto py-1 text-[12.5px]">
-        {error != null && <ErrorPanel error={error} onRetry={() => void loadTree()} />}
+        {error != null && <ErrorPanel error={error} onRetry={() => void loadTree(connId)} />}
         {loading && tree.length === 0 && <div className="px-3 py-2 text-muted">Loading schemas…</div>}
         {!loading && error == null && filtered.length === 0 && shownExtensions.length === 0 && (
           <div className="px-3 py-2 text-xs text-muted">{searching ? `Nothing matches "${query.trim()}".` : "This database has no user tables."}</div>

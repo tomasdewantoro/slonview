@@ -1,4 +1,5 @@
-// App state: profiles, the single active connection, schema tree, tabs and per-tab table data.
+// App state: profiles, every open connection (each with its own schema tree), one tab strip
+// holding the tabs of all open connections, and per-tab table data.
 // Vanilla store + hook so tests can create isolated instances.
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { useStore } from "zustand";
@@ -16,10 +17,18 @@ import { buildPageRequest, filtersToRequest, normalizeRawWhere, type TableQuery 
 
 export type ConnStatus = "connecting" | "connected" | "failed";
 
+/** One open connection (keyed by profile id): its session state and its schema tree. */
 export interface ConnState {
   profileId: string;
   status: ConnStatus;
   server: ServerInfo | null;
+  tree: SchemaNode[];
+  treeLoading: boolean;
+  treeError: unknown | null;
+  /** Installed extensions, loaded with the tree. */
+  extensions: ExtensionInfo[];
+  /** This connection's most recently active tab; restored when the connection is switched to. */
+  activeTabId: string | null;
 }
 
 /** How a sidebar item opens: a preview tab (replaced by the next preview) or a pinned one. */
@@ -28,6 +37,8 @@ export type OpenMode = "preview" | "pinned";
 interface TabBase {
   id: string;
   title: string;
+  /** Profile id of the connection the tab belongs to; every request from the tab uses it. */
+  connId: string;
   /** Preview tab (VS Code model): at most one per connection; the next preview open replaces it. */
   preview: boolean;
 }
@@ -81,12 +92,13 @@ export interface Toast {
 export interface AppState {
   profiles: ConnProfile[];
   selectedProfileId: string | null;
-  conn: ConnState | null;
-  tree: SchemaNode[];
-  treeLoading: boolean;
-  treeError: unknown | null;
-  /** Installed extensions, loaded with the tree. */
-  extensions: ExtensionInfo[];
+  /** Open connections in the order they were opened. */
+  conns: Record<string, ConnState>;
+  /** Connection the sidebar shows; follows the active tab. */
+  activeConnId: string | null;
+  /** Sidebar shows the saved-connection list ("Open another connection…") instead of the schema tree. */
+  connectionPicker: boolean;
+  /** Tabs of every open connection, in strip order. */
   tabs: Tab[];
   activeTabId: string | null;
   tableData: Record<string, TableData>;
@@ -94,20 +106,28 @@ export interface AppState {
   structureNonce: Record<string, number>;
   toasts: Toast[];
 
+  /** Loads profiles and reopens the connections that were open last time. */
   init(): Promise<void>;
   loadProfiles(): Promise<void>;
   saveProfile(profile: ConnProfile, password: string | null | undefined): Promise<void>;
   deleteProfile(id: string): Promise<void>;
   selectProfile(id: string | null): void;
+  /** Opens a connection next to the others and shows it in the sidebar; an open one is only switched to. */
   connect(id: string): Promise<void>;
-  disconnect(): Promise<void>;
-  loadTree(): Promise<void>;
-  setTimeZone(timeZone: string | null): Promise<void>;
+  /** Closes one connection (default: the sidebar's) and its tabs; the tabs stay saved for the next connect. */
+  disconnect(id?: string): Promise<void>;
+  /** Shows a connection in the sidebar and activates its last active tab. */
+  setActiveConn(id: string): void;
+  setConnectionPicker(open: boolean): void;
+  /** Reloads a connection's schema tree (default: the sidebar's). */
+  loadTree(connId?: string): Promise<void>;
+  /** Sets a connection's session time zone and reloads its table tabs. */
+  setTimeZone(connId: string, timeZone: string | null): Promise<void>;
 
-  /** Sidebar opens take a mode; explicit commands (context menu, Structure button) default to pinned. */
+  /** Sidebar opens (on the sidebar's connection) take a mode; explicit commands default to pinned. */
   openTable(schema: string, table: string, mode?: OpenMode): void;
   openStructure(schema: string, table: string, mode?: OpenMode): void;
-  /** New pinned SQL tab; `title` defaults to "Query N". */
+  /** New pinned SQL tab on the sidebar's connection; `title` defaults to "Query N". */
   openSql(initialSql?: string, title?: string): void;
   /** SQL tab holding the function's definition (one fetch per function at a time); errors become a toast. */
   openFunction(fn: FunctionInfo, mode?: OpenMode): Promise<void>;
@@ -116,6 +136,7 @@ export interface AppState {
   /** Turns a preview tab into a normal one, in place. No-op for pinned tabs. */
   pinTab(id: string): void;
   closeTab(id: string): void;
+  /** Activates a tab and switches the sidebar to the tab's connection. */
   activateTab(id: string): void;
   activateTabIndex(index: number): void;
   refreshTab(id: string): void;
@@ -131,12 +152,20 @@ export interface AppState {
   dismissToast(id: number): void;
 }
 
-const LAST_CONN_KEY = "slonview.lastConn";
+/** Connections to reopen on start: `{ ids, active }`. */
+const OPEN_CONNS_KEY = "slonview.openConns";
+/** Single last connection, written before several connections could be open. Read once, then removed. */
+const LEGACY_LAST_CONN_KEY = "slonview.lastConn";
 const tabsKey = (connId: string) => `slonview.tabs.${connId}`;
 
 interface PersistedTabs {
   tabs: Tab[];
   activeTabId: string | null;
+}
+
+interface PersistedConns {
+  ids: string[];
+  active: string | null;
 }
 
 export function emptyTableData(): TableData {
@@ -158,7 +187,7 @@ export function emptyTableData(): TableData {
   };
 }
 
-function isTab(t: unknown): t is Tab {
+function isTab(t: unknown): t is Omit<Tab, "connId"> {
   if (typeof t !== "object" || t === null) return false;
   const o = t as Record<string, unknown>;
   if (typeof o.id !== "string" || typeof o.title !== "string") return false;
@@ -170,23 +199,43 @@ function isTab(t: unknown): t is Tab {
   return o.kind === "sql";
 }
 
+/**
+ * Tabs saved for a connection. Every tab gets `connId` set to the connection it was saved under
+ * (the storage key), so tabs saved before several connections could be open load correctly.
+ */
 export function readPersistedTabs(storage: Storage, connId: string): PersistedTabs {
   try {
     const raw = storage.getItem(tabsKey(connId));
     if (!raw) return { tabs: [], activeTabId: null };
-    const parsed = JSON.parse(raw) as Partial<PersistedTabs>;
+    const parsed = JSON.parse(raw) as { tabs?: unknown; activeTabId?: unknown };
     // Tabs saved before preview tabs existed have no flag and load pinned; at most one stays a preview.
     let previewSeen = false;
-    const tabs = (Array.isArray(parsed.tabs) ? parsed.tabs.filter(isTab) : []).map((t) => {
+    const tabs = (Array.isArray(parsed.tabs) ? parsed.tabs.filter(isTab) : []).map((t): Tab => {
       const preview = t.preview === true && !previewSeen;
       previewSeen ||= preview;
-      return { ...t, preview };
+      return { ...t, connId, preview } as Tab;
     });
     const activeTabId = tabs.some((t) => t.id === parsed.activeTabId) ? (parsed.activeTabId as string) : (tabs[0]?.id ?? null);
     return { tabs, activeTabId };
   } catch {
     return { tabs: [], activeTabId: null };
   }
+}
+
+/** Connections that were open last time, oldest first, and the one the sidebar showed. */
+export function readPersistedConns(storage: Storage): PersistedConns {
+  try {
+    const raw = storage.getItem(OPEN_CONNS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PersistedConns>;
+      const ids = Array.isArray(parsed.ids) ? parsed.ids.filter((x): x is string => typeof x === "string") : [];
+      return { ids, active: typeof parsed.active === "string" && ids.includes(parsed.active) ? parsed.active : (ids[ids.length - 1] ?? null) };
+    }
+  } catch {
+    // Fall through to the legacy key.
+  }
+  const last = storage.getItem(LEGACY_LAST_CONN_KEY);
+  return last ? { ids: [last], active: last } : { ids: [], active: null };
 }
 
 /** localStorage key of a SQL tab's editor text. */
@@ -212,6 +261,25 @@ export function findRelation(tree: SchemaNode[], schema: string, table: string):
   return tree.find((s) => s.name === schema)?.relations.find((r) => r.name === table);
 }
 
+/** Connection state of a tab, or undefined when the tab is gone or its connection closed. */
+export function tabConn(s: Pick<AppState, "conns">, tab: Pick<Tab, "connId"> | undefined): ConnState | undefined {
+  return tab ? s.conns[tab.connId] : undefined;
+}
+
+/** True unless the tab's own session reports writes allowed: each tab follows its connection's mode. */
+export function tabReadOnly(s: Pick<AppState, "conns">, tab: Pick<Tab, "connId">): boolean {
+  return tabConn(s, tab)?.server?.readOnly !== false;
+}
+
+export function activeTab(s: Pick<AppState, "tabs" | "activeTabId">): Tab | undefined {
+  return s.tabs.find((t) => t.id === s.activeTabId);
+}
+
+/** Connection the status bar describes: the active tab's, else the sidebar's. */
+export function statusConnId(s: Pick<AppState, "tabs" | "activeTabId" | "activeConnId">): string | null {
+  return activeTab(s)?.connId ?? s.activeConnId;
+}
+
 const isCancelled = (e: unknown) => isAppError(e) && e.kind === "cancelled";
 const ignore = () => {};
 
@@ -219,11 +287,44 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
   let toastSeq = 0;
 
   return createStore<AppState>()((set, get) => {
-    const persistTabs = () => {
-      const { conn, tabs, activeTabId } = get();
-      if (!conn) return;
-      const data: PersistedTabs = { tabs, activeTabId };
-      storage.setItem(tabsKey(conn.profileId), JSON.stringify(data));
+    const persistTabs = (connId: string) => {
+      const conn = get().conns[connId];
+      if (conn?.status !== "connected") return;
+      const data: PersistedTabs = { tabs: get().tabs.filter((t) => t.connId === connId), activeTabId: conn.activeTabId };
+      storage.setItem(tabsKey(connId), JSON.stringify(data));
+    };
+
+    const persistConns = () => {
+      const { conns, activeConnId } = get();
+      // A failed connection stays listed (with its error) but is not retried on the next start.
+      const ids = Object.values(conns).filter((c) => c.status !== "failed").map((c) => c.profileId);
+      const data: PersistedConns = { ids, active: activeConnId && ids.includes(activeConnId) ? activeConnId : (ids[ids.length - 1] ?? null) };
+      storage.setItem(OPEN_CONNS_KEY, JSON.stringify(data));
+      storage.removeItem(LEGACY_LAST_CONN_KEY);
+    };
+
+    const patchConn = (connId: string, patch: Partial<ConnState>) =>
+      set((s) => {
+        const cur = s.conns[connId];
+        if (!cur) return s;
+        return { conns: { ...s.conns, [connId]: { ...cur, ...patch } } };
+      });
+
+    /** Makes `tabId` the active tab (or clears it), recording it as its connection's last active tab and showing that connection. */
+    const focusTab = (tabId: string | null) => {
+      const tab = get().tabs.find((t) => t.id === tabId);
+      if (!tab) {
+        set({ activeTabId: null });
+        return;
+      }
+      set((s) => ({
+        activeTabId: tab.id,
+        activeConnId: tab.connId,
+        connectionPicker: false,
+        selectedProfileId: tab.connId,
+        conns: s.conns[tab.connId] ? { ...s.conns, [tab.connId]: { ...s.conns[tab.connId], activeTabId: tab.id } } : s.conns,
+      }));
+      persistTabs(tab.connId);
     };
 
     const patchData = (tabId: string, patch: Partial<TableData>) =>
@@ -240,9 +341,12 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       return t?.kind === "table" ? t : undefined;
     };
 
-    const connectedId = () => {
-      const c = get().conn;
-      return c?.status === "connected" ? c.profileId : null;
+    const isConnected = (connId: string | null | undefined): connId is string => !!connId && get().conns[connId]?.status === "connected";
+
+    /** The sidebar's connection when it is connected: target of sidebar opens and new SQL tabs. */
+    const sidebarConnId = () => {
+      const id = get().activeConnId;
+      return isConnected(id) ? id : null;
     };
 
     const cancelInFlight = (d: TableData | undefined) => {
@@ -262,38 +366,38 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
 
     /** Explicit new tab (Cmd+T, New SQL query): pinned, at the end. */
     const addTab = (tab: Tab) => {
-      set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id }));
-      persistTabs();
+      set((s) => ({ tabs: [...s.tabs, tab] }));
+      focusTab(tab.id);
     };
 
     /** Bumped by every preview open, so a slow definition fetch can tell a newer preview superseded it. */
     let previewSeq = 0;
 
     /**
-     * Opens a sidebar item (VS Code preview model). An open tab for the item is activated, and
-     * pinned when `mode` is pinned. Otherwise a preview open replaces the preview tab in place;
-     * with no preview tab, the new tab goes right after the active one.
+     * Opens a sidebar item of `connId` (VS Code preview model). An open tab for the item is
+     * activated, and pinned when `mode` is pinned. Otherwise a preview open replaces that
+     * connection's preview tab in place; with no preview tab, the new tab goes right after the
+     * active one.
      */
-    const openItem = (matches: (t: Tab) => boolean, make: (id: string) => Tab, mode: OpenMode) => {
+    const openItem = (connId: string, matches: (t: Tab) => boolean, make: (id: string) => Tab, mode: OpenMode) => {
       if (mode === "preview") previewSeq++;
       const { tabs, activeTabId } = get();
-      const existing = tabs.find(matches);
+      const existing = tabs.find((t) => t.connId === connId && matches(t));
       if (existing) {
-        const pin = mode === "pinned" && existing.preview;
-        set({ activeTabId: existing.id, tabs: pin ? tabs.map((t) => (t === existing ? { ...t, preview: false } : t)) : tabs });
-        persistTabs();
+        if (mode === "pinned" && existing.preview) set({ tabs: tabs.map((t) => (t === existing ? { ...t, preview: false } : t)) });
+        focusTab(existing.id);
         return;
       }
-      const tab: Tab = { ...make(newRequestId()), preview: mode === "preview" };
-      const previewIdx = mode === "preview" ? tabs.findIndex((t) => t.preview) : -1;
+      const tab: Tab = { ...make(newRequestId()), connId, preview: mode === "preview" };
+      const previewIdx = mode === "preview" ? tabs.findIndex((t) => t.connId === connId && t.preview) : -1;
       if (previewIdx >= 0) {
         const tableData = disposeTab(tabs[previewIdx].id);
-        set({ tabs: tabs.map((t, i) => (i === previewIdx ? tab : t)), activeTabId: tab.id, tableData });
+        set({ tabs: tabs.map((t, i) => (i === previewIdx ? tab : t)), tableData });
       } else {
         const at = tabs.findIndex((t) => t.id === activeTabId) + 1 || tabs.length;
-        set({ tabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)], activeTabId: tab.id });
+        set({ tabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)] });
       }
-      persistTabs();
+      focusTab(tab.id);
     };
 
     /** In-flight definition fetches by `connId\0source`. `pinned` records a double-click that arrived meanwhile; `seq` the latest preview open of it. */
@@ -301,12 +405,12 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
 
     /** Opens an object's definition as a SQL tab keyed by `source`; one fetch per source at a time. */
     const openDefinition = (source: string, title: string, name: string, mode: OpenMode, fetch: (connId: string) => Promise<string>): Promise<void> => {
-      const connId = connectedId();
+      const connId = sidebarConnId();
       if (!connId) return Promise.resolve();
       const matches = (t: Tab) => t.kind === "sql" && t.source === source;
-      const open = get().tabs.find(matches);
+      const open = get().tabs.find((t) => t.connId === connId && matches(t));
       if (open) {
-        openItem(matches, () => open, mode);
+        openItem(connId, matches, () => open, mode);
         return Promise.resolve();
       }
       if (mode === "preview") previewSeq++;
@@ -322,12 +426,12 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       entry.done = (async () => {
         try {
           const sql = await fetch(connId);
-          if (connectedId() !== connId) return;
+          if (!isConnected(connId)) return;
           // A newer preview open (another item clicked meanwhile) wins over this one; a pending pin always opens.
           if (!entry.pinned && entry.seq !== previewSeq) return;
-          openItem(matches, (id) => ({ id, kind: "sql", title, initialSql: sql, source, preview: false }), entry.pinned ? "pinned" : "preview");
+          openItem(connId, matches, (id) => ({ id, kind: "sql", title, initialSql: sql, source, connId, preview: false }), entry.pinned ? "pinned" : "preview");
         } catch (e) {
-          if (connectedId() === connId) get().pushToast("error", `Couldn't load the definition of ${name}: ${errorMessage(e)}`);
+          if (isConnected(connId)) get().pushToast("error", `Couldn't load the definition of ${name}: ${errorMessage(e)}`);
         } finally {
           definitionLoads.delete(key);
         }
@@ -335,14 +439,65 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       return entry.done;
     };
 
+    /** Latest connect attempt per connection; a response for an older attempt is stale. */
+    const connectAttempts = new Map<string, number>();
+    let attemptSeq = 0;
+
+    /** Opens a connection; `activate` shows it in the sidebar (otherwise only when nothing else is shown). */
+    const openConn = async (id: string, activate: boolean) => {
+      const prev = get().conns[id];
+      if (prev && prev.status !== "failed") {
+        if (activate) get().setActiveConn(id);
+        return;
+      }
+      const attempt = ++attemptSeq;
+      connectAttempts.set(id, attempt);
+      const show = activate || !get().activeConnId || get().activeConnId === id;
+      set((s) => ({
+        conns: {
+          ...s.conns,
+          [id]: { profileId: id, status: "connecting", server: null, tree: [], treeLoading: false, treeError: null, extensions: [], activeTabId: null },
+        },
+        ...(show ? { activeConnId: id, selectedProfileId: id, connectionPicker: false, activeTabId: null } : {}),
+      }));
+      persistConns();
+      const current = () => connectAttempts.get(id) === attempt && get().conns[id]?.status === "connecting";
+      try {
+        const server = await api.connect(id);
+        if (!current()) {
+          // Disconnected (or reconnected) while connecting: close the session this attempt opened.
+          if (!get().conns[id]) api.disconnect(id).catch(ignore);
+          return;
+        }
+        const restored = readPersistedTabs(storage, id);
+        set((s) => {
+          // Keep the strip grouped in connection order: restored tabs go before the tabs of later connections.
+          const order = Object.keys(s.conns);
+          const rank = order.indexOf(id);
+          const at = s.tabs.findIndex((t) => order.indexOf(t.connId) > rank);
+          const tabs = at < 0 ? [...s.tabs, ...restored.tabs] : [...s.tabs.slice(0, at), ...restored.tabs, ...s.tabs.slice(at)];
+          return {
+            tabs,
+            conns: { ...s.conns, [id]: { ...s.conns[id], status: "connected", server, activeTabId: restored.activeTabId } },
+            ...(s.activeConnId === id && !activeTab(s) ? { activeTabId: restored.activeTabId } : {}),
+          };
+        });
+        await get().loadTree(id);
+      } catch (e) {
+        if (!current()) return;
+        patchConn(id, { status: "failed" });
+        persistConns();
+        const name = get().profiles.find((p) => p.id === id)?.name ?? "connection";
+        get().pushToast("error", `Couldn't connect to ${name}: ${errorMessage(e)}`);
+      }
+    };
+
     return {
       profiles: [],
       selectedProfileId: null,
-      conn: null,
-      tree: [],
-      treeLoading: false,
-      treeError: null,
-      extensions: [],
+      conns: {},
+      activeConnId: null,
+      connectionPicker: false,
       tabs: [],
       activeTabId: null,
       tableData: {},
@@ -351,11 +506,12 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
 
       async init() {
         await get().loadProfiles();
-        const last = storage.getItem(LAST_CONN_KEY);
-        if (last && get().profiles.some((p) => p.id === last)) {
-          set({ selectedProfileId: last });
-          await get().connect(last);
-        }
+        const { ids, active } = readPersistedConns(storage);
+        const known = ids.filter((id) => get().profiles.some((p) => p.id === id));
+        if (known.length === 0) return;
+        const shown = active && known.includes(active) ? active : known[known.length - 1];
+        // Register every connection first, in saved order, so restored tabs keep that order.
+        await Promise.all(known.map((id) => openConn(id, id === shown)));
       },
 
       async loadProfiles() {
@@ -372,18 +528,17 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         set({ profiles, selectedProfileId: profile.id });
       },
 
-      async setTimeZone(timeZone) {
-        const connId = connectedId();
-        if (!connId) return;
+      async setTimeZone(connId, timeZone) {
+        if (!isConnected(connId)) return;
         const profiles = await api.setTimeZone(connId, timeZone);
-        if (connectedId() !== connId) return;
+        if (!isConnected(connId)) return;
         set({ profiles });
-        // Reload table tabs in the background; the picker shouldn't wait on slow pages.
-        for (const tab of get().tabs) if (tab.kind === "table") void get().loadFirst(tab.id);
+        // Reload this connection's table tabs in the background; the picker shouldn't wait on slow pages.
+        for (const tab of get().tabs) if (tab.kind === "table" && tab.connId === connId) void get().loadFirst(tab.id);
       },
 
       async deleteProfile(id) {
-        if (get().conn?.profileId === id) await get().disconnect();
+        if (get().conns[id]) await get().disconnect(id);
         const profiles = await api.deleteProfile(id);
         storage.removeItem(tabsKey(id));
         set((s) => ({ profiles, selectedProfileId: s.selectedProfileId === id ? null : s.selectedProfileId }));
@@ -393,86 +548,100 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         set({ selectedProfileId: id });
       },
 
-      async connect(id) {
-        const prev = get().conn;
-        if (prev?.profileId === id && prev.status !== "failed") return;
-        if (prev) {
-          Object.values(get().tableData).forEach(cancelInFlight);
-          if (prev.status === "connected") api.disconnect(prev.profileId).catch(ignore);
-        }
-        set({
-          conn: { profileId: id, status: "connecting", server: null },
-          selectedProfileId: id,
-          tree: [],
-          treeError: null,
-          extensions: [],
-          tabs: [],
-          activeTabId: null,
-          tableData: {},
-          structureNonce: {},
-        });
-        try {
-          const server = await api.connect(id);
-          if (get().conn?.profileId !== id) return;
-          const restored = readPersistedTabs(storage, id);
-          set({ conn: { profileId: id, status: "connected", server }, ...restored });
-          storage.setItem(LAST_CONN_KEY, id);
-          await get().loadTree();
-        } catch (e) {
-          if (get().conn?.profileId !== id) return;
-          set({ conn: { profileId: id, status: "failed", server: null } });
-          const name = get().profiles.find((p) => p.id === id)?.name ?? "connection";
-          get().pushToast("error", `Couldn't connect to ${name}: ${errorMessage(e)}`);
-        }
+      connect(id) {
+        return openConn(id, true);
       },
 
-      async disconnect() {
-        const prev = get().conn;
-        if (!prev) return;
-        Object.values(get().tableData).forEach(cancelInFlight);
-        set({ conn: null, tree: [], treeError: null, extensions: [], tabs: [], activeTabId: null, tableData: {}, structureNonce: {} });
-        storage.removeItem(LAST_CONN_KEY);
+      async disconnect(id) {
+        const connId = id ?? get().activeConnId;
+        const prev = connId ? get().conns[connId] : undefined;
+        if (!connId || !prev) return;
+        connectAttempts.delete(connId);
+        const { tabs, tableData, structureNonce, activeTabId, activeConnId, conns } = get();
+        // Its tabs close like closeTab (requests cancelled, data dropped) but stay saved for the next connect.
+        const closing = new Set(tabs.filter((t) => t.connId === connId).map((t) => t.id));
+        for (const tabId of closing) cancelInFlight(tableData[tabId]);
+        const { [connId]: _closed, ...rest } = conns;
+        const remainingTabs = tabs.filter((t) => !closing.has(t.id));
+        const keepActiveTab = activeTabId !== null && !closing.has(activeTabId);
+        const nextConn = activeConnId === connId ? (keepActiveTab ? remainingTabs.find((t) => t.id === activeTabId)!.connId : (Object.keys(rest).pop() ?? null)) : activeConnId;
+        const nextTab = keepActiveTab
+          ? activeTabId
+          : nextConn
+            ? (rest[nextConn].activeTabId ?? remainingTabs.find((t) => t.connId === nextConn)?.id ?? null)
+            : null;
+        set({
+          conns: rest,
+          activeConnId: nextConn,
+          tabs: remainingTabs,
+          activeTabId: nextTab,
+          tableData: Object.fromEntries(Object.entries(tableData).filter(([k]) => !closing.has(k))),
+          structureNonce: Object.fromEntries(Object.entries(structureNonce).filter(([k]) => !closing.has(k))),
+        });
+        if (nextTab) focusTab(nextTab);
+        persistConns();
         if (prev.status === "connected") {
           try {
-            await api.disconnect(prev.profileId);
+            await api.disconnect(connId);
           } catch (e) {
             get().pushToast("error", `Disconnect failed: ${errorMessage(e)}`);
           }
         }
       },
 
-      async loadTree() {
-        const connId = connectedId();
-        if (!connId) return;
-        set({ treeLoading: true, treeError: null });
+      setActiveConn(id) {
+        const conn = get().conns[id];
+        if (!conn) return;
+        const tabId = conn.activeTabId ?? get().tabs.find((t) => t.connId === id)?.id ?? null;
+        set({ activeConnId: id, selectedProfileId: id, connectionPicker: false });
+        if (tabId) focusTab(tabId);
+        else set({ activeTabId: null });
+        persistConns();
+      },
+
+      setConnectionPicker(open) {
+        set({ connectionPicker: open });
+      },
+
+      async loadTree(id) {
+        const connId = id ?? get().activeConnId;
+        if (!isConnected(connId)) return;
+        patchConn(connId, { treeLoading: true, treeError: null });
         try {
           const { schemas, extensions } = await api.listSchemaTree(connId);
-          if (connectedId() === connId) set({ tree: schemas, extensions, treeLoading: false });
+          if (isConnected(connId)) patchConn(connId, { tree: schemas, extensions, treeLoading: false });
         } catch (e) {
-          if (connectedId() === connId) set({ treeError: e, treeLoading: false });
+          if (isConnected(connId)) patchConn(connId, { treeError: e, treeLoading: false });
         }
       },
 
       openTable(schema, table, mode = "pinned") {
+        const connId = sidebarConnId();
+        if (!connId) return;
         openItem(
+          connId,
           (t) => t.kind === "table" && t.query.schema === schema && t.query.table === table,
-          (id) => ({ id, kind: "table", title: relationTitle(schema, table), query: { schema, table, filters: [], rawWhere: "", sort: [] }, preview: false }),
+          (id) => ({ id, kind: "table", title: relationTitle(schema, table), query: { schema, table, filters: [], rawWhere: "", sort: [] }, connId, preview: false }),
           mode,
         );
       },
 
       openStructure(schema, table, mode = "pinned") {
+        const connId = sidebarConnId();
+        if (!connId) return;
         openItem(
+          connId,
           (t) => t.kind === "structure" && t.schema === schema && t.table === table,
-          (id) => ({ id, kind: "structure", title: relationTitle(schema, table), schema, table, preview: false }),
+          (id) => ({ id, kind: "structure", title: relationTitle(schema, table), schema, table, connId, preview: false }),
           mode,
         );
       },
 
       openSql(initialSql, title) {
-        if (!connectedId()) return;
-        const n = get().tabs.filter((t) => t.kind === "sql").length + 1;
-        addTab({ id: newRequestId(), kind: "sql", title: title ?? `Query ${n}`, initialSql, preview: false });
+        const connId = sidebarConnId();
+        if (!connId) return;
+        const n = get().tabs.filter((t) => t.kind === "sql" && t.connId === connId).length + 1;
+        addTab({ id: newRequestId(), kind: "sql", title: title ?? `Query ${n}`, initialSql, connId, preview: false });
       },
 
       openFunction(fn, mode = "pinned") {
@@ -484,25 +653,35 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       },
 
       pinTab(id) {
-        if (!get().tabs.some((t) => t.id === id && t.preview)) return;
+        const tab = get().tabs.find((t) => t.id === id && t.preview);
+        if (!tab) return;
         set((s) => ({ tabs: s.tabs.map((t) => (t.id === id ? { ...t, preview: false } : t)) }));
-        persistTabs();
+        persistTabs(tab.connId);
       },
 
       closeTab(id) {
-        const { tabs, activeTabId } = get();
+        const { tabs, activeTabId, conns } = get();
         const idx = tabs.findIndex((t) => t.id === id);
         if (idx < 0) return;
+        const tab = tabs[idx];
         const nextTabs = tabs.filter((t) => t.id !== id);
         const nextActive = activeTabId === id ? (nextTabs[Math.min(idx, nextTabs.length - 1)]?.id ?? null) : activeTabId;
-        set({ tabs: nextTabs, activeTabId: nextActive, tableData: disposeTab(id) });
-        persistTabs();
+        const conn = conns[tab.connId];
+        set({
+          tabs: nextTabs,
+          tableData: disposeTab(id),
+          conns: conn?.activeTabId === id ? { ...conns, [tab.connId]: { ...conn, activeTabId: nextTabs.find((t) => t.connId === tab.connId)?.id ?? null } } : conns,
+        });
+        if (nextActive && nextActive !== activeTabId) focusTab(nextActive);
+        else if (!nextActive) set({ activeTabId: null });
+        persistTabs(tab.connId);
       },
 
       activateTab(id) {
         if (!get().tabs.some((t) => t.id === id)) return;
-        set({ activeTabId: id });
-        persistTabs();
+        const before = get().activeConnId;
+        focusTab(id);
+        if (get().activeConnId !== before) persistConns();
       },
 
       activateTabIndex(index) {
@@ -517,10 +696,12 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       },
 
       setTableQuery(tabId, patch) {
+        const tab = tableTab(tabId);
+        if (!tab) return;
         set((s) => ({
           tabs: s.tabs.map((t) => (t.id === tabId && t.kind === "table" ? { ...t, query: { ...t.query, ...patch }, preview: false } : t)),
         }));
-        persistTabs();
+        persistTabs(tab.connId);
         void get().loadFirst(tabId);
       },
 
@@ -530,8 +711,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
 
       async loadFirst(tabId) {
         const tab = tableTab(tabId);
-        const connId = connectedId();
-        if (!tab || !connId) return;
+        if (!tab || !isConnected(tab.connId)) return;
         const prev = get().tableData[tabId];
         if (prev?.loading && prev.requestId) api.cancelQuery(prev.requestId).catch(ignore);
         if (prev?.counting && prev.countRequestId) api.cancelQuery(prev.countRequestId).catch(ignore);
@@ -543,7 +723,7 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
           },
         }));
         try {
-          const page = await api.fetchPage(rid, buildPageRequest(connId, tab.query, null));
+          const page = await api.fetchPage(rid, buildPageRequest(tab.connId, tab.query, null));
           if (!isCurrent(tabId, rid)) return;
           patchData(tabId, {
             columns: page.columns,
@@ -562,14 +742,13 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
 
       async loadMore(tabId) {
         const tab = tableTab(tabId);
-        const connId = connectedId();
         const d = get().tableData[tabId];
-        if (!tab || !connId || !d || d.loading || d.error || !d.nextCursor) return;
+        if (!tab || !isConnected(tab.connId) || !d || d.loading || d.error || !d.nextCursor) return;
         const rid = newRequestId();
         const base = d.rows.length;
         patchData(tabId, { requestId: rid, loading: true, cancelled: false });
         try {
-          const page = await api.fetchPage(rid, buildPageRequest(connId, tab.query, d.nextCursor));
+          const page = await api.fetchPage(rid, buildPageRequest(tab.connId, tab.query, d.nextCursor));
           if (!isCurrent(tabId, rid)) return;
           const cur = get().tableData[tabId];
           patchData(tabId, {
@@ -598,16 +777,15 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
 
       async countRows(tabId) {
         const tab = tableTab(tabId);
-        const connId = connectedId();
         const d = get().tableData[tabId];
-        if (!tab || !connId || !d) return;
+        if (!tab || !isConnected(tab.connId) || !d) return;
         get().pinTab(tabId);
         if (d.counting && d.countRequestId) api.cancelQuery(d.countRequestId).catch(ignore);
         const rid = newRequestId();
         patchData(tabId, { countRequestId: rid, counting: true, countError: null });
         const q = tab.query;
         try {
-          const n = await api.countExact(rid, connId, q.schema, q.table, filtersToRequest(q.filters), normalizeRawWhere(q.rawWhere));
+          const n = await api.countExact(rid, tab.connId, q.schema, q.table, filtersToRequest(q.filters), normalizeRawWhere(q.rawWhere));
           if (get().tableData[tabId]?.countRequestId !== rid) return;
           patchData(tabId, { exactCount: n, counting: false });
         } catch (e) {

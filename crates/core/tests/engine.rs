@@ -602,6 +602,32 @@ async fn read_only_blocks_writes() {
     }
 }
 
+/// Several connections open at once: each request runs on its own profile's session and mode.
+#[tokio::test]
+async fn read_only_and_writable_sessions_coexist() {
+    let f = fixture().await;
+    let mut writable = f.engine.profiles.get(f.conn).unwrap();
+    writable.id = uuid::Uuid::new_v4();
+    writable.name = "writable twin".into();
+    writable.read_only = false;
+    if let Some(pw) = f.engine.secrets.get(f.conn).unwrap() {
+        f.engine.secrets.set(writable.id, &pw).unwrap();
+    }
+    f.engine.profiles.upsert(writable.clone()).unwrap();
+    assert!(!f.engine.connect(writable.id).await.unwrap().read_only);
+
+    let write = "UPDATE scratch_insert_target SET note = note WHERE false";
+    let err = f.engine.run_sql("coexist-ro", f.conn, write, 10).await.unwrap_err();
+    assert!(matches!(err, AppError::Sql { ref code, .. } if code == "25006"), "{err:?}");
+    let ok = f.engine.run_sql("coexist-rw", writable.id, write, 10).await.unwrap();
+    assert_eq!(ok[0].rows_affected, Some(0));
+    // Closing one connection leaves the other's session open, still read-only.
+    f.engine.disconnect(writable.id).await.unwrap();
+    let r = f.engine.run_sql("coexist-ro2", f.conn, "SHOW default_transaction_read_only", 10).await.unwrap();
+    assert_eq!(r[0].rows[0][0].as_deref(), Some("on"));
+    assert!(matches!(f.engine.run_sql("coexist-gone", writable.id, "SELECT 1", 10).await.unwrap_err(), AppError::NotConnected));
+}
+
 #[tokio::test]
 async fn read_only_preflights_transaction_and_maintenance_commands() {
     let f = fixture().await;
@@ -788,6 +814,18 @@ async fn cancel_running_query() {
     // History recorded the failure.
     let h = f.engine.history.list(Some(conn), Some("pg_sleep"), 10).unwrap();
     assert_eq!(h[0].error.as_deref(), Some("query cancelled"));
+}
+
+/// A cancel that arrives while the request still waits for a client or reads metadata (before
+/// it registers) must still stop it: the query is never sent.
+#[tokio::test]
+async fn cancel_before_the_request_registers() {
+    let f = fixture().await;
+    f.engine.cancel_query("early-count").await.unwrap();
+    let err = f.engine.count_exact("early-count", f.conn, "public", "orders", &[], Some("pg_sleep(5) IS NOT NULL")).await.unwrap_err();
+    assert_eq!(err, AppError::Cancelled);
+    // The early cancel is used up: the same id runs normally afterwards.
+    assert_eq!(f.engine.count_exact("early-count", f.conn, "public", "customers", &[], None).await.unwrap(), 1000);
 }
 
 #[tokio::test]

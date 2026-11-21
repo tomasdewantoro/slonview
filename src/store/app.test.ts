@@ -3,9 +3,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Page } from "../bindings/Page";
 import type { PageRequest } from "../bindings/PageRequest";
 import type { StoreApi } from "zustand/vanilla";
-import { createAppStore, readPersistedTabs, sqlEditorKey, wasTabDisposed, type AppState } from "./app";
+import { api } from "../api";
+import { createAppStore, readPersistedConns, readPersistedTabs, sqlEditorKey, statusConnId, tabReadOnly, wasTabDisposed, type AppState } from "./app";
 
 const CONN = "c1";
+/** Second profile on the same database with writes allowed. */
+const CONN2 = "c2";
 
 function page(rows: string[][], more: boolean, sql = "SELECT 1"): Page {
   return {
@@ -25,9 +28,17 @@ interface Pending {
   reject: (e: unknown) => void;
 }
 
+const profile = (id: string, name: string, readOnly: boolean, color: string | null) => ({
+  id, name, host: "localhost", port: 5432, database: "db", user: "u", ssl: "disable", readOnly, color, statementTimeoutMs: 0, timeZone: null, sslRootCert: null, ssh: null,
+});
+const PROFILES = [profile(CONN, "local", true, null), profile(CONN2, "local (writes)", false, "#22a06b")];
+
 interface Ipc {
   pending: Pending[];
   cancelled: string[];
+  /** connId → read-only flag of the open session. */
+  sessions: Map<string, boolean>;
+  disconnected: string[];
   /** Pending get_function_definition / get_object_definition calls. */
   definitions: { cmd: string; oid: number; resolve: (sql: string) => void }[];
 }
@@ -37,13 +48,30 @@ function installIpc(): Ipc {
   const pending: Pending[] = [];
   const cancelled: string[] = [];
   const definitions: Ipc["definitions"] = [];
+  const sessions = new Map<string, boolean>();
+  const disconnected: string[] = [];
   mockIPC((cmd, args) => {
     const a = args as Record<string, any>;
     switch (cmd) {
       case "list_profiles":
-        return [{ id: CONN, name: "local", host: "localhost", port: 5432, database: "db", user: "u", ssl: "disable", readOnly: true, color: null, statementTimeoutMs: 0, timeZone: null }];
-      case "connect":
-        return { version: "PostgreSQL 18", database: "db", user: "u", readOnly: true };
+        return PROFILES;
+      case "connect": {
+        const p = PROFILES.find((x) => x.id === a.connId)!;
+        sessions.set(p.id, p.readOnly);
+        return { version: "PostgreSQL 18", database: "db", user: "u", readOnly: p.readOnly };
+      }
+      case "disconnect":
+        sessions.delete(a.connId);
+        disconnected.push(a.connId);
+        return null;
+      case "run_sql": {
+        // Mirrors the engine: each request runs on its own profile's session, in that session's mode.
+        const readOnly = sessions.get(a.connId);
+        if (readOnly === undefined) throw { kind: "notConnected" };
+        if (readOnly && /^\s*(insert|update|delete)/i.test(a.sql))
+          throw { kind: "sql", code: "25006", message: "cannot execute DELETE in a read-only transaction", detail: null, hint: null, position: null };
+        return [{ statement: a.sql, columns: [], rows: [], rowsAffected: 1, truncated: false, elapsedMs: 1 }];
+      }
       case "list_schema_tree":
         return { schemas: [], extensions: [] };
       case "cancel_query":
@@ -58,7 +86,7 @@ function installIpc(): Ipc {
         throw new Error(`unexpected ${cmd}`);
     }
   });
-  return { pending, cancelled, definitions };
+  return { pending, cancelled, definitions, sessions, disconnected };
 }
 
 /** Flush pending promise callbacks (mockIPC + store awaits settle within a few microtask hops). */
@@ -183,7 +211,7 @@ describe("tab persistence", () => {
     const b = createAppStore(window.localStorage);
     await b.getState().init();
     const s = b.getState();
-    expect(s.conn?.status).toBe("connected");
+    expect(s.conns[CONN]?.status).toBe("connected");
     expect(s.tabs.map((t) => t.kind)).toEqual(["table", "sql", "structure"]);
     expect(s.activeTabId).toBe(tableTab.id);
     const restored = s.tabs[0];
@@ -392,5 +420,187 @@ describe("preview tabs", () => {
       }),
     );
     expect(readPersistedTabs(window.localStorage, CONN).tabs.map((t) => t.preview)).toEqual([false, true, false]);
+  });
+});
+
+describe("several connections", () => {
+  let ipc: Ipc;
+  beforeEach(() => {
+    ipc = installIpc();
+    window.localStorage.clear();
+  });
+  afterEach(() => clearMocks());
+
+  async function twoConns() {
+    const store = createAppStore(window.localStorage);
+    await store.getState().loadProfiles();
+    await store.getState().connect(CONN);
+    store.getState().openTable("public", "orders");
+    await store.getState().connect(CONN2);
+    store.getState().openTable("public", "orders");
+    return store;
+  }
+  const strip = (store: StoreApi<AppState>) => store.getState().tabs.map((t) => `${t.connId}:${t.title}${t.preview ? "*" : ""}`).join(",");
+
+  it("keeps both connections open and tags every tab with its connection", async () => {
+    const store = await twoConns();
+    const s = store.getState();
+    expect(Object.keys(s.conns)).toEqual([CONN, CONN2]);
+    expect(Object.values(s.conns).map((c) => c.status)).toEqual(["connected", "connected"]);
+    expect(ipc.disconnected).toEqual([]);
+    expect(strip(store)).toBe("c1:orders,c2:orders");
+    expect(s.activeConnId).toBe(CONN2);
+    // Each tab's requests go to its own connection.
+    for (const tab of s.tabs) void store.getState().loadFirst(tab.id);
+    await tick();
+    expect(ipc.pending.map((p) => p.req.connId)).toEqual([CONN, CONN2]);
+  });
+
+  it("activating a tab switches the sidebar and status bar to the tab's connection", async () => {
+    const store = await twoConns();
+    const [first, second] = store.getState().tabs;
+    store.getState().activateTab(first.id);
+    expect(store.getState().activeConnId).toBe(CONN);
+    expect(statusConnId(store.getState())).toBe(CONN);
+    // Sidebar opens now target CONN.
+    store.getState().openSql();
+    expect(store.getState().tabs.find((t) => t.id === store.getState().activeTabId)?.connId).toBe(CONN);
+    store.getState().activateTab(second.id);
+    expect(store.getState().activeConnId).toBe(CONN2);
+    expect(statusConnId(store.getState())).toBe(CONN2);
+  });
+
+  it("switching connection in the sidebar restores that connection's last active tab", async () => {
+    const store = await twoConns();
+    store.getState().openTable("public", "customers");
+    const c2Active = store.getState().activeTabId;
+    store.getState().setActiveConn(CONN);
+    expect(store.getState().tabs.find((t) => t.id === store.getState().activeTabId)?.connId).toBe(CONN);
+    store.getState().setActiveConn(CONN2);
+    expect(store.getState().activeTabId).toBe(c2Active);
+  });
+
+  it("disconnecting one connection closes only its tabs, cancelling their requests", async () => {
+    const store = await twoConns();
+    store.getState().openSql("SELECT 2");
+    const [c1Tab, c2Tab] = store.getState().tabs;
+    const sqlTab = store.getState().activeTabId!;
+    window.localStorage.setItem(sqlEditorKey(sqlTab), "SELECT 2");
+    void store.getState().loadFirst(c1Tab.id);
+    void store.getState().loadFirst(c2Tab.id);
+    await tick();
+    const [c1Req, c2Req] = ipc.pending;
+    await store.getState().disconnect(CONN2);
+    const s = store.getState();
+    expect(strip(store)).toBe("c1:orders");
+    expect(Object.keys(s.conns)).toEqual([CONN]);
+    expect(s.activeConnId).toBe(CONN);
+    expect(s.activeTabId).toBe(c1Tab.id);
+    expect(ipc.cancelled).toEqual([c2Req.requestId]);
+    expect(ipc.cancelled).not.toContain(c1Req.requestId);
+    expect(s.tableData[c2Tab.id]).toBeUndefined();
+    expect(s.tableData[c1Tab.id]).toBeDefined();
+    expect(ipc.disconnected).toEqual([CONN2]);
+    // The closed connection's tabs stay saved for its next connect, editor text included.
+    expect(readPersistedTabs(window.localStorage, CONN2).tabs.map((t) => t.title)).toEqual(["orders", "Query 1"]);
+    expect(window.localStorage.getItem(sqlEditorKey(sqlTab))).toBe("SELECT 2");
+    await store.getState().connect(CONN2);
+    expect(strip(store)).toBe("c1:orders,c2:orders,c2:Query 1");
+  });
+
+  it("closing the last tab of one connection leaves the other's alone", async () => {
+    const store = await twoConns();
+    const [c1Tab, c2Tab] = store.getState().tabs;
+    store.getState().closeTab(c2Tab.id);
+    expect(strip(store)).toBe("c1:orders");
+    expect(store.getState().activeTabId).toBe(c1Tab.id);
+    expect(store.getState().activeConnId).toBe(CONN);
+    expect(readPersistedTabs(window.localStorage, CONN2).tabs).toEqual([]);
+    expect(readPersistedTabs(window.localStorage, CONN).tabs.map((t) => t.title)).toEqual(["orders"]);
+  });
+
+  it("keeps one preview tab per connection", async () => {
+    const store = await twoConns();
+    store.getState().setActiveConn(CONN);
+    store.getState().openTable("public", "a", "preview");
+    store.getState().setActiveConn(CONN2);
+    store.getState().openTable("public", "b", "preview");
+    expect(strip(store)).toBe("c1:orders,c1:a*,c2:orders,c2:b*");
+    // A new preview on CONN2 replaces only CONN2's preview.
+    store.getState().openTable("public", "c", "preview");
+    expect(strip(store)).toBe("c1:orders,c1:a*,c2:orders,c2:c*");
+    // The same item open on the other connection is a separate tab.
+    store.getState().openTable("public", "a", "preview");
+    expect(strip(store)).toBe("c1:orders,c1:a*,c2:orders,c2:a*");
+  });
+
+  it("restores both connections and their tabs on start", async () => {
+    const a = await twoConns();
+    a.getState().openSql("SELECT 1");
+    a.getState().activateTab(a.getState().tabs[0].id);
+    expect(readPersistedConns(window.localStorage)).toEqual({ ids: [CONN, CONN2], active: CONN });
+
+    const b = createAppStore(window.localStorage);
+    await b.getState().init();
+    const s = b.getState();
+    expect(Object.keys(s.conns)).toEqual([CONN, CONN2]);
+    expect(Object.values(s.conns).every((c) => c.status === "connected")).toBe(true);
+    expect(strip(b)).toBe("c1:orders,c2:orders,c2:Query 1");
+    expect(s.activeConnId).toBe(CONN);
+    expect(s.tabs.find((t) => t.id === s.activeTabId)?.connId).toBe(CONN);
+  });
+
+  it("loads tabs saved before multi-connection under the profile they were saved for", async () => {
+    // Pre-multi-connection layout: single `lastConn`, tabs without connId.
+    window.localStorage.setItem("slonview.lastConn", CONN);
+    window.localStorage.setItem(
+      `slonview.tabs.${CONN}`,
+      JSON.stringify({
+        tabs: [
+          { id: "x", kind: "table", title: "orders", query: { schema: "public", table: "orders", filters: [], rawWhere: "", sort: [] }, preview: false },
+          { id: "y", kind: "sql", title: "Query 1", preview: false },
+        ],
+        activeTabId: "y",
+      }),
+    );
+    const store = createAppStore(window.localStorage);
+    await store.getState().init();
+    const s = store.getState();
+    expect(Object.keys(s.conns)).toEqual([CONN]);
+    expect(s.tabs.map((t) => t.connId)).toEqual([CONN, CONN]);
+    expect(s.activeTabId).toBe("y");
+    // Migrated to the new key on the first write.
+    expect(window.localStorage.getItem("slonview.lastConn")).toBeNull();
+    expect(readPersistedConns(window.localStorage)).toEqual({ ids: [CONN], active: CONN });
+  });
+
+  it("a failed connection is not reopened on the next start", async () => {
+    const store = createAppStore(window.localStorage);
+    await store.getState().loadProfiles();
+    await store.getState().connect(CONN);
+    clearMocks();
+    mockIPC((cmd) => {
+      if (cmd === "connect") throw { kind: "connect", message: "refused" };
+      throw new Error(`unexpected ${cmd}`);
+    });
+    await store.getState().connect(CONN2);
+    expect(store.getState().conns[CONN2].status).toBe("failed");
+    expect(readPersistedConns(window.localStorage).ids).toEqual([CONN]);
+  });
+
+  it("read-only safety: a write from the read-only tab is refused while the allow-writes one is open", async () => {
+    const store = await twoConns();
+    const [roTab, rwTab] = store.getState().tabs;
+    const s = store.getState();
+    expect(s.conns[CONN].server?.readOnly).toBe(true);
+    expect(s.conns[CONN2].server?.readOnly).toBe(false);
+    expect(tabReadOnly(s, roTab)).toBe(true);
+    expect(tabReadOnly(s, rwTab)).toBe(false);
+    // Each tab sends its own connId, so the request runs on its own profile's session and mode.
+    await expect(api.runSql("r1", roTab.connId, "DELETE FROM orders")).rejects.toMatchObject({ kind: "sql", code: "25006" });
+    await expect(api.runSql("r2", rwTab.connId, "DELETE FROM orders")).resolves.toHaveLength(1);
+    // Activating the writable tab does not change the read-only tab's mode.
+    store.getState().activateTab(rwTab.id);
+    expect(tabReadOnly(store.getState(), roTab)).toBe(true);
   });
 });

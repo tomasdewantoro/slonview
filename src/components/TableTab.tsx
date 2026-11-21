@@ -2,7 +2,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { Ban, FileDown, Filter, LoaderCircle, PanelRight, RefreshCw, Sigma, TableProperties } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage, newRequestId } from "../api";
-import { appStore, emptyTableData, useApp, type TableTab as TableTabInfo } from "../store/app";
+import { appStore, emptyTableData, tabReadOnly, useApp, type TableTab as TableTabInfo } from "../store/app";
 import { buildPageRequest, filtersToRequest, nextSort, normalizeRawWhere } from "../store/queries";
 import { CellInspector } from "./CellInspector";
 import { ErrorPanel } from "./ErrorPanel";
@@ -21,7 +21,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
   const [inspecting, setInspecting] = useState<CellRef | null>(null);
   const shiftDown = useRef(false);
   const [exporting, setExporting] = useState(false);
-  const readOnly = useApp(s => s.conn?.server?.readOnly !== false);
+  const readOnly = useApp((s) => tabReadOnly(s, tab));
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const edits = useRowEdits(connId, tab.query.schema, tab.query.table, data.columns, data.rows, data.truncated, readOnly, () => refreshTab(tab.id));
 

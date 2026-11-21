@@ -651,7 +651,7 @@ try {
   });
 
   await check("A allow writes, then UPDATE scratch_insert_target", async () => {
-    await page.click('[aria-label="Disconnect"]');
+    await page.click('[aria-label="Disconnect E2E Fixture"]');
     await until(() => document.body.innerText.includes("E2E Fixture"));
     await page.evaluate(() => {
       const li = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.includes("E2E Fixture"));
@@ -744,7 +744,7 @@ try {
       ["UTC", "+00"],
       ["Asia/Jakarta", "+07"],
     ]) {
-      await page.click('[aria-label="Disconnect"]');
+      await page.click('[aria-label="Disconnect E2E Fixture"]');
       await until(() => document.body.innerText.includes("E2E Fixture"));
       await page.evaluate(() => {
         const li = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.includes("E2E Fixture"));
@@ -968,13 +968,74 @@ try {
     return `types integer|numeric(5,2)|text|integer[]; o. offers ${options.length} columns; plan: ${nodes.join(" > ")}`;
   });
 
+  await check("Multi-connection: two connections, orders in each, disconnect closes only its tabs", async () => {
+    // Second profile on the same fixture DB, read-only and in another colour. Trust auth; the
+    // password argument is omitted so the credential store is not touched.
+    const base = (await bridge("list_profiles")).find((p) => p.id === connId);
+    const secondId = crypto.randomUUID();
+    await bridge("save_profile", { profile: { ...base, id: secondId, name: "E2E Second", readOnly: true, color: "#8e4ec6" } });
+    try {
+      // Reload picks up the new profile; E2E Fixture reconnects on its own.
+      await page.reload({ waitUntil: "networkidle0" });
+      await until(() => document.querySelectorAll('[role="group"] button[role="treeitem"]').length > 5);
+      await clickText("Open another connection…");
+      await page.waitForSelector('[role="listbox"][aria-label="Saved connections"]');
+      await page.evaluate(() => {
+        const li = [...document.querySelectorAll('[role="option"]')].find((x) => x.innerText.includes("E2E Second"));
+        li.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      });
+      await until(() => document.querySelectorAll('[role="group"] button[role="treeitem"]').length > 5 && !document.querySelector('[aria-label="Saved connections"]'));
+      const open = await page.$$eval('[aria-label="Open connections"] li', (lis) => lis.map((l) => l.innerText.replace(/\s+/g, " ").trim()));
+      eq(JSON.stringify(open), JSON.stringify(["E2E Fixture WRITE", "E2E Second READ-ONLY"]), "open connections in the switcher");
+      await openRel("orders");
+      eq(await page.$eval('[data-testid="status-conn"]', (e) => e.innerText.includes("E2E Second")), true, "status bar shows E2E Second");
+      // Back to E2E Fixture via the switcher, then orders there too.
+      await page.evaluate(() =>
+        [...document.querySelectorAll('[aria-label="Open connections"] button[aria-current], [aria-label="Open connections"] li > button:first-child')]
+          .find((b) => b.innerText.includes("E2E Fixture"))
+          .click(),
+      );
+      await until(() => !!document.querySelector('[aria-label="Open connections"] button[aria-current="true"]')?.innerText.includes("E2E Fixture"));
+      await openRel("orders");
+      const ordersTabs = () =>
+        page.$$eval('[role="tab"]', (tabs) =>
+          tabs
+            .filter((t) => t.innerText.trim() === "orders")
+            .map((t) => ({ conn: t.dataset.conn, dot: getComputedStyle(t.querySelector("span.rounded-full")).backgroundColor, tip: t.title })),
+        );
+      const both = await ordersTabs();
+      eq(both.length, 2, "two orders tabs in one strip");
+      eq(new Set(both.map((t) => t.conn)).size, 2, "orders tabs belong to different connections");
+      assert(both[0].dot !== both[1].dot, `dots should differ: ${both.map((t) => t.dot)}`);
+      assert(both.some((t) => t.tip.includes("E2E Second")) && both.some((t) => t.tip.includes("E2E Fixture")), `tooltips name the connection: ${both.map((t) => t.tip)}`);
+      eq(await page.$eval('[data-testid="status-conn"]', (e) => e.innerText.includes("E2E Fixture")), true, "status bar follows the active tab");
+      // Activating the E2E Second tab switches the sidebar to it.
+      await page.evaluate((id) => {
+        const el = [...document.querySelectorAll('[role="tab"]')].find((x) => x.dataset.conn === id);
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      }, secondId);
+      await until(() => !!document.querySelector('[aria-label="Open connections"] button[aria-current="true"]')?.innerText.includes("E2E Second"));
+      await page.screenshot({ path: `${SHOTS}/multi-conn.png` });
+      const fixtureTabs = await page.$$eval('[role="tab"]', (tabs, id) => tabs.filter((t) => t.dataset.conn === id).length, connId);
+      await page.click('[aria-label="Disconnect E2E Second"]');
+      await until((id) => ![...document.querySelectorAll('[role="tab"]')].some((t) => t.dataset.conn === id), 5000, secondId);
+      const left = await page.$$eval('[role="tab"]', (tabs, id) => tabs.filter((t) => t.dataset.conn === id).length, connId);
+      eq(left, fixtureTabs, "E2E Fixture tabs untouched");
+      const switcher = await page.$$eval('[aria-label="Open connections"] li', (lis) => lis.map((l) => l.innerText.replace(/\s+/g, " ").trim()));
+      eq(JSON.stringify(switcher), JSON.stringify(["E2E Fixture WRITE"]), "only E2E Fixture stays open");
+      return `two orders tabs (dots ${both.map((t) => t.dot).join(" vs ")}); disconnecting E2E Second closed its tab, ${left} E2E Fixture tabs kept`;
+    } finally {
+      await bridge("delete_profile", { id: secondId });
+    }
+  });
+
   await check("A zero console errors", async () => {
     eq(consoleErrors.length, 0, `console errors: ${consoleErrors.join(" | ")}`);
     return "0 console/page errors";
   });
 
   // Cleanup: profile + credential-store entry.
-  await page.click('[aria-label="Disconnect"]').catch(() => {});
+  await page.click('[aria-label="Disconnect E2E Fixture"]').catch(() => {});
   if (connId) await bridge("delete_profile", { id: connId });
 } finally {
   await browser.close();

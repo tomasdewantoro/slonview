@@ -22,7 +22,7 @@ export function ColorDot({ color, className = "" }: { color: string | null; clas
 export function ConnectionList() {
   const profiles = useApp((s) => s.profiles);
   const selected = useApp((s) => s.selectedProfileId);
-  const conn = useApp((s) => s.conn);
+  const conns = useApp((s) => s.conns);
   const [editing, setEditing] = useState<ConnProfile | "new" | null>(null);
   const [deleting, setDeleting] = useState<ConnProfile | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; profile: ConnProfile } | null>(null);
@@ -64,7 +64,7 @@ export function ConnectionList() {
       >
         {profiles.map((p) => {
           const isSel = p.id === selected;
-          const state = conn?.profileId === p.id ? conn.status : null;
+          const state = conns[p.id]?.status ?? null;
           return (
             <li
               key={p.id}
@@ -95,6 +95,7 @@ export function ConnectionList() {
               </div>
               {state === "connecting" && <LoaderCircle size={14} className="animate-spin text-muted" aria-label="Connecting" />}
               {state === "failed" && <span className="text-[11px] text-error">failed</span>}
+              {state === "connected" && <span className="text-[11px] text-muted">open</span>}
               <div className="hidden items-center group-hover:flex">
                 <button className="icon-btn" aria-label={`Edit ${p.name}`} onClick={() => setEditing(p)}>
                   <Pencil size={13} />

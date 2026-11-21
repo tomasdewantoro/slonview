@@ -1,6 +1,7 @@
 import { Plus, SquareTerminal, Table2, TableProperties, X } from "lucide-react";
 import { useState } from "react";
 import { appStore, useApp, type Tab } from "../store/app";
+import { ColorDot } from "./ConnectionList";
 import { ContextMenu } from "./ContextMenu";
 
 const ICON = { table: Table2, structure: TableProperties, sql: SquareTerminal } as const;
@@ -9,7 +10,8 @@ const PREVIEW_HINT = "Preview, double-click to keep open";
 export function TabBar() {
   const tabs = useApp((s) => s.tabs);
   const active = useApp((s) => s.activeTabId);
-  const connected = useApp((s) => s.conn?.status === "connected");
+  const connected = useApp((s) => !!s.activeConnId && s.conns[s.activeConnId]?.status === "connected");
+  const profiles = useApp((s) => s.profiles);
   const { activateTab, closeTab, openSql, pinTab } = appStore.getState();
   const [menu, setMenu] = useState<{ x: number; y: number; tab: Tab } | null>(null);
 
@@ -19,6 +21,8 @@ export function TabBar() {
         {tabs.map((t: Tab, i) => {
           const Icon = ICON[t.kind];
           const isActive = t.id === active;
+          const profile = profiles.find((p) => p.id === t.connId);
+          const connName = profile?.name ?? "Closed connection";
           return (
             <div
               key={t.id}
@@ -26,8 +30,9 @@ export function TabBar() {
               aria-selected={isActive}
               aria-label={t.preview ? `${t.title}${t.kind === "structure" ? " · structure" : ""} (${PREVIEW_HINT})` : undefined}
               data-preview={t.preview || undefined}
+              data-conn={t.connId}
               tabIndex={isActive ? 0 : -1}
-              title={`${t.title}${i < 9 ? `  ⌘${i + 1}` : ""}${t.preview ? `\n${PREVIEW_HINT}` : ""}`}
+              title={`${t.title}${i < 9 ? `  ⌘${i + 1}` : ""}\n${connName}${t.preview ? `\n${PREVIEW_HINT}` : ""}`}
               onMouseDown={(e) => {
                 if (e.button === 1) {
                   e.preventDefault();
@@ -44,6 +49,7 @@ export function TabBar() {
               }`}
             >
               {isActive && <span aria-hidden className="absolute inset-x-0 bottom-[-1px] h-px bg-paper" />}
+              <ColorDot color={profile?.color ?? null} className="size-2" />
               <Icon size={13} className={`shrink-0 ${t.kind === "table" ? "" : "text-accent"}`} aria-hidden />
               <span className={`min-w-0 flex-1 truncate text-[12.5px] ${t.preview ? "italic" : ""}`}>
                 {t.title}

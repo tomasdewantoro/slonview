@@ -2,7 +2,7 @@
 //! the cancel registry.
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use deadpool::managed::{Hook, HookError, PoolError};
 use deadpool::Runtime;
@@ -324,7 +324,13 @@ pub(crate) fn map_pool_error(e: PoolError<AppError>) -> AppError {
 struct RegistryInner {
     tokens: HashMap<String, (CancelToken, Transport)>,
     cancelled: HashSet<String>,
+    /// Cancels that arrived before their request registered (it was still waiting for a pooled
+    /// client or reading table metadata), with when they arrived.
+    early: HashMap<String, Instant>,
 }
+
+/// How long an early cancel waits for its request; ids of requests that already finished expire.
+const EARLY_CANCEL_TTL: Duration = Duration::from_secs(60);
 
 /// In-flight requests by `request_id`, plus which of them the user cancelled.
 #[derive(Default)]
@@ -333,17 +339,28 @@ pub(crate) struct CancelRegistry {
 }
 
 impl CancelRegistry {
-    pub(crate) fn register(&self, request_id: &str, token: CancelToken, transport: Transport) -> CancelGuard<'_> {
+    /// Registers a request about to run. Err(Cancelled) when its cancel already arrived, so the
+    /// query is never sent.
+    pub(crate) fn register(&self, request_id: &str, token: CancelToken, transport: Transport) -> AppResult<CancelGuard<'_>> {
         let mut inner = self.inner.lock().expect("cancel registry poisoned");
+        if inner.early.remove(request_id).is_some() {
+            return Err(AppError::Cancelled);
+        }
         inner.cancelled.remove(request_id);
         inner.tokens.insert(request_id.to_owned(), (token, transport));
-        CancelGuard { registry: self, request_id: request_id.to_owned() }
+        Ok(CancelGuard { registry: self, request_id: request_id.to_owned() })
     }
 
-    /// Marks the request cancelled and returns its token, if it is in flight.
+    /// Marks the request cancelled and returns its token, if it is in flight. A request not
+    /// registered yet is remembered, and `register` refuses it.
     pub(crate) fn begin_cancel(&self, request_id: &str) -> Option<(CancelToken, Transport)> {
         let mut inner = self.inner.lock().expect("cancel registry poisoned");
-        let token = inner.tokens.get(request_id).cloned()?;
+        let Some(token) = inner.tokens.get(request_id).cloned() else {
+            let now = Instant::now();
+            inner.early.retain(|_, at| now.duration_since(*at) < EARLY_CANCEL_TTL);
+            inner.early.insert(request_id.to_owned(), now);
+            return None;
+        };
         inner.cancelled.insert(request_id.to_owned());
         Some(token)
     }
