@@ -690,13 +690,10 @@ try {
       await openRel("scratch_insert_target");
       // Edit permissions load asynchronously; "Add row" is enabled only once editing is allowed.
       await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Add row" && !b.disabled), 10000);
-      const y = await gridTop();
-      await page.mouse.click(330, y + HEADER + 12);
-      // The grid can keep a horizontal scroll offset, so the click may land on any column.
-      // Walk to column 0 (ArrowLeft stops there), then to `note` (id, customer_id, status, amount, note).
-      for (let i = 0; i < 8; i++) await page.keyboard.press("ArrowLeft");
-      for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
-      await page.keyboard.press("Enter");
+      // Activate the `note` cell (column 4, row 0) through Glide's accessible cell mirror:
+      // its click sends Enter to exactly that cell, whatever the grid's scroll position.
+      await until(() => !!document.querySelector('[data-testid="glide-cell-4-0"]'), 10000);
+      await page.evaluate(() => document.querySelector('[data-testid="glide-cell-4-0"]').click());
       await page.waitForSelector('[aria-label="Edit note"]');
       await page.$eval("#edit-value", e => e.select());
       await page.type("#edit-value", "grid-after 'quoted'");
