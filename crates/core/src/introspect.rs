@@ -8,8 +8,9 @@ use tokio_postgres::types::Oid;
 
 use crate::model::{
     Column, ColumnDetail, ForeignKeyInfo, FunctionInfo, FunctionKind, IndexInfo, Relation, RelationKind, SchemaNode,
-    TableDescription,
+    SchemaTree, TableDescription,
 };
+use crate::objects;
 use crate::{AppError, AppResult};
 
 /// Schemas shown in the tree (`n` = pg_namespace).
@@ -47,11 +48,11 @@ fn function_kind(prokind: &str) -> AppResult<FunctionKind> {
     })
 }
 
-fn db_err(e: tokio_postgres::Error) -> AppError {
+pub(crate) fn db_err(e: tokio_postgres::Error) -> AppError {
     crate::conn::map_query_error(e, false)
 }
 
-pub(crate) async fn schema_tree(client: &Client) -> AppResult<Vec<SchemaNode>> {
+pub(crate) async fn schema_tree(client: &Client) -> AppResult<SchemaTree> {
     let relations_sql = format!(
         "SELECT n.nspname::text, c.relname::text, c.relkind::text, {STATS_COLUMNS}
          FROM pg_namespace n
@@ -71,14 +72,33 @@ pub(crate) async fn schema_tree(client: &Client) -> AppResult<Vec<SchemaNode>> {
          WHERE {SCHEMA_FILTER}
          ORDER BY p.proname, args"
     );
-    // Both queries are pipelined on the one connection: a single round trip of latency.
-    let (rel_rows, fn_rows) =
-        futures_util::try_join!(client.query(&relations_sql, &[]), client.query(&functions_sql, &[])).map_err(db_err)?;
+    let (sequences_sql, types_sql, triggers_sql) = (
+        objects::sequences_sql(SCHEMA_FILTER),
+        objects::types_sql(SCHEMA_FILTER),
+        objects::triggers_sql(SCHEMA_FILTER),
+    );
+    // All queries are pipelined on the one connection: a single round trip of latency.
+    let (rel_rows, fn_rows, seq_rows, type_rows, trigger_rows, ext_rows) = futures_util::try_join!(
+        client.query(&relations_sql, &[]),
+        client.query(&functions_sql, &[]),
+        client.query(&sequences_sql, &[]),
+        client.query(&types_sql, &[]),
+        client.query(&triggers_sql, &[]),
+        client.query(objects::EXTENSIONS_SQL, &[]),
+    )
+    .map_err(db_err)?;
     let mut out: Vec<SchemaNode> = Vec::new();
     for row in rel_rows {
         let schema: String = row.get(0);
         if out.last().is_none_or(|n| n.name != schema) {
-            out.push(SchemaNode { name: schema.clone(), relations: Vec::new(), functions: Vec::new() });
+            out.push(SchemaNode {
+                name: schema.clone(),
+                relations: Vec::new(),
+                functions: Vec::new(),
+                sequences: Vec::new(),
+                types: Vec::new(),
+                triggers: Vec::new(),
+            });
         }
         let Some(name) = row.get::<_, Option<String>>(1) else {
             continue; // schema without relations
@@ -108,7 +128,24 @@ pub(crate) async fn schema_tree(client: &Client) -> AppResult<Vec<SchemaNode>> {
             language: row.get(6),
         });
     }
-    Ok(out)
+    // Same rule for the other groups: rows of an unknown schema are skipped.
+    for row in seq_rows {
+        if let Some(&i) = index.get(&objects::row_schema(&row)) {
+            out[i].sequences.push(objects::sequence(row)?);
+        }
+    }
+    for row in type_rows {
+        if let Some(&i) = index.get(&objects::row_schema(&row)) {
+            out[i].types.push(objects::type_info(row)?);
+        }
+    }
+    for row in trigger_rows {
+        if let Some(&i) = index.get(&objects::row_schema(&row)) {
+            out[i].triggers.push(objects::trigger(row)?);
+        }
+    }
+    let extensions = ext_rows.into_iter().map(objects::extension).collect::<AppResult<_>>()?;
+    Ok(SchemaTree { schemas: out, extensions })
 }
 
 /// `CREATE OR REPLACE …` text for functions, procedures and window functions. Aggregates,

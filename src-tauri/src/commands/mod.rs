@@ -5,5 +5,6 @@ pub mod conn;
 pub mod data;
 pub mod export;
 pub mod history;
+pub mod objects;
 pub mod schema;
 pub mod sql;

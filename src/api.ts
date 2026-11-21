@@ -10,7 +10,8 @@ import type { Page } from "./bindings/Page";
 import type { PageRequest } from "./bindings/PageRequest";
 import type { ParsedConn } from "./bindings/ParsedConn";
 import type { QueryResult } from "./bindings/QueryResult";
-import type { SchemaNode } from "./bindings/SchemaNode";
+import type { ObjectKind } from "./bindings/ObjectKind";
+import type { SchemaTree } from "./bindings/SchemaTree";
 import type { ServerInfo } from "./bindings/ServerInfo";
 import type { TableDescription } from "./bindings/TableDescription";
 import type { Filter } from "./bindings/Filter";
@@ -56,7 +57,8 @@ export const api = {
   disconnect: (connId: string) => invoke<void>("disconnect", { connId }),
 
   // Schema
-  listSchemaTree: (connId: string) => invoke<SchemaNode[]>("list_schema_tree", { connId }),
+  /** Schemas with relations, functions, sequences, types and triggers, plus extensions. */
+  listSchemaTree: (connId: string) => invoke<SchemaTree>("list_schema_tree", { connId }),
   describeTable: (connId: string, schema: string, table: string) =>
     invoke<TableDescription>("describe_table", { connId, schema, table }),
   /** `CREATE OR REPLACE …` text; aggregates get an SQL comment block instead. */
@@ -81,4 +83,7 @@ export const api = {
   listHistory: (connId: string | null, search: string | null, limit?: number) =>
     invoke<HistoryEntry[]>("list_history", { connId, search, limit: limit ?? null }),
   clearHistory: () => invoke<void>("clear_history"),
+
+  // Sidebar objects: SQL text (definition, or a runnable query plus comments) for an oid from SchemaTree.
+  getObjectDefinition: (connId: string, kind: ObjectKind, oid: number) => invoke<string>("get_object_definition", { connId, kind, oid }),
 };

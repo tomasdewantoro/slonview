@@ -97,6 +97,9 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
             ok(ops::list_history(engine, arg(a, "connId")?, search.as_deref(), arg(a, "limit")?).await?)
         }
         "clear_history" => ok(ops::clear_history(engine).await?),
+        "get_object_definition" => {
+            ok(ops::get_object_definition(engine, arg(a, "connId")?, arg(a, "kind")?, arg(a, "oid")?).await?)
+        }
         // Test-only probe: reads the Keychain from this process (which created the item), so
         // E2E scripts never run `security -w`, which can raise an access prompt.
         "e2e_keychain_get" => ok(engine.secrets.get(arg(a, "id")?)?),

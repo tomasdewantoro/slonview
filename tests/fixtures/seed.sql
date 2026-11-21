@@ -91,6 +91,7 @@ CREATE TABLE events_2025 PARTITION OF events FOR VALUES FROM ('2025-01-01') TO (
 INSERT INTO events SELECT g, date '2024-01-01' + (g % 700), jsonb_build_object('n', g) FROM generate_series(1, 5000) g;
 
 CREATE TABLE scratch_insert_target (LIKE orders INCLUDING DEFAULTS);
+ALTER TABLE scratch_insert_target ADD PRIMARY KEY (id);
 
 -- Routines for the sidebar's Functions group: an overloaded SQL pair, plpgsql, a procedure,
 -- a custom aggregate, and a function in a quoted schema.
@@ -119,6 +120,50 @@ CREATE OR REPLACE AGGREGATE comma_join(text) (SFUNC = text_concat_step, STYPE = 
 CREATE OR REPLACE FUNCTION "Sales Data"."Weird Total"("Region Code" text, include_tax boolean DEFAULT true)
   RETURNS TABLE("Region" text, total numeric)
   LANGUAGE sql STABLE AS $$ SELECT "Region Code", 0::numeric WHERE include_tax IS NOT NULL $$;
+
+-- Objects for the sidebar's Sequences, Types, Triggers and Extensions groups. Written to be
+-- re-runnable (IF NOT EXISTS / OR REPLACE / duplicate_object guards).
+CREATE SEQUENCE IF NOT EXISTS invoice_number_seq AS integer START WITH 1000 INCREMENT BY 10;
+SELECT setval('invoice_number_seq', 1010);
+CREATE SEQUENCE IF NOT EXISTS "Sales Data"."Ticket Seq";
+DO $$ BEGIN
+  CREATE DOMAIN positive_amount AS numeric(12,2) DEFAULT 0 NOT NULL
+    CONSTRAINT positive_amount_check CHECK (VALUE >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+COMMENT ON DOMAIN positive_amount IS 'Money amount, never negative';
+DO $$ BEGIN
+  CREATE TYPE money_range AS (low numeric(12,2), high numeric(12,2), currency text COLLATE "C");
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE TYPE "Sales Data"."Region Kind" AS ENUM ('north', 'south''s', 'East West');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+CREATE OR REPLACE FUNCTION customers_email_check() RETURNS trigger
+  LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.email NOT LIKE '%@%' THEN
+    RAISE EXCEPTION 'invalid email: %', NEW.email;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE OR REPLACE TRIGGER customers_email_check BEFORE INSERT OR UPDATE OF email ON customers
+  FOR EACH ROW EXECUTE FUNCTION customers_email_check();
+CREATE OR REPLACE FUNCTION forbid_truncate() RETURNS trigger
+  LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'TRUNCATE is not allowed on %', TG_TABLE_NAME; END; $$;
+CREATE OR REPLACE TRIGGER orders_no_truncate BEFORE TRUNCATE ON orders
+  FOR EACH STATEMENT EXECUTE FUNCTION forbid_truncate();
+ALTER TABLE orders DISABLE TRIGGER orders_no_truncate;
+-- AFTER row triggers whose function does nothing; the one on the partitioned table is cloned
+-- onto each partition, and those clones must not show up in the tree.
+CREATE OR REPLACE FUNCTION "Sales Data"."Weird Audit Fn"() RETURNS trigger
+  LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$;
+CREATE OR REPLACE TRIGGER "Weird Audit" AFTER INSERT OR DELETE ON "Sales Data"."Weird ""Name"" Table"
+  FOR EACH ROW EXECUTE FUNCTION "Sales Data"."Weird Audit Fn"();
+CREATE OR REPLACE TRIGGER events_audit AFTER INSERT ON events
+  FOR EACH ROW EXECUTE FUNCTION "Sales Data"."Weird Audit Fn"();
 
 ANALYZE;
 
