@@ -8,3 +8,4 @@ pub mod history;
 pub mod objects;
 pub mod schema;
 pub mod sql;
+pub mod grid;

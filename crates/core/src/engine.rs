@@ -19,7 +19,7 @@ use crate::{AppError, AppResult, export, query};
 
 /// One connected profile.
 pub(crate) struct Session {
-    profile: ConnProfile,
+    pub(crate) profile: ConnProfile,
     pool: Pool,
 }
 
@@ -28,7 +28,7 @@ pub struct Engine {
     pub secrets: Arc<dyn SecretStore>,
     pub history: HistoryStore,
     sessions: RwLock<HashMap<ConnId, Arc<Session>>>,
-    cancels: CancelRegistry,
+    pub(crate) cancels: CancelRegistry,
 }
 
 impl Engine {
@@ -118,9 +118,13 @@ impl Engine {
 
         let mut rows = Vec::with_capacity(limit as usize + 1);
         let mut truncated = Vec::new();
+        let mut cursor_values = Vec::new();
         for msg in messages {
             let SimpleQueryMessage::Row(row) = msg else { continue };
             let row_index = rows.len() as u32;
+            if rows.len() + 1 == limit as usize {
+                cursor_values = q.pk_indexes.iter().map(|&i| row.get(i).map(str::to_owned)).collect();
+            }
             let mut values = Vec::with_capacity(row.len());
             for (col_index, column) in meta.columns.iter().enumerate() {
                 let mut value = row.get(col_index).map(str::to_owned);
@@ -143,8 +147,7 @@ impl Engine {
         let next_cursor = match (has_more, q.mode) {
             (false, _) => None,
             (true, PageMode::Keyset) => {
-                let last = rows.last().expect("has_more implies rows");
-                Some(Cursor::Keyset { values: q.pk_indexes.iter().map(|&i| last[i].clone()).collect() })
+                Some(Cursor::Keyset { values: cursor_values })
             }
             (true, PageMode::Offset(offset)) => Some(Cursor::Offset { offset: offset + u64::from(limit) }),
         };
@@ -398,7 +401,7 @@ async fn server_info(client: &Client) -> AppResult<ServerInfo> {
 
 /// Ends any transaction the user left open and undoes their SETs, re-applying the
 /// profile's session settings. A session that cannot be reset is dropped from the pool.
-async fn restore_session(client: Object, profile: &ConnProfile) {
+pub(crate) async fn restore_session(client: Object, profile: &ConnProfile) {
     let reset = format!("ROLLBACK; RESET ALL; {}", conn::session_setup_sql(profile));
     if let Err(e) = client.batch_execute(&reset).await {
         tracing::warn!("discarding session that failed to reset: {e}");

@@ -612,6 +612,38 @@ try {
     return "Keychain password kept on edit; INSERT 1, UPDATE 1 verified in psql; row removed";
   });
 
+  await check("Grid edits: review SQL, apply transaction, verify psql", async () => {
+    psql("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='scratch_insert_target'::regclass AND contype='p') THEN ALTER TABLE scratch_insert_target ADD PRIMARY KEY(id); END IF; END $$");
+    await openRel("no_pk");
+    const copyY = await gridTop();
+    await page.mouse.click(350, copyY + 17, { button: "right" });
+    await clickText("Copy as JSON", '[role="menuitem"], button');
+    await until(() => { try { return JSON.parse(window.__clipboard).length === 1200; } catch { return false; } });
+    eq(JSON.parse(await page.evaluate(() => window.__clipboard)).length, 1200, "whole column includes unloaded rows");
+    psql("INSERT INTO scratch_insert_target(id,customer_id,status,amount,note,created_at) VALUES (900000004,1,'paid',1.00,'grid-before',now())");
+    try {
+      await openRel("scratch_insert_target");
+      const y = await gridTop();
+      await page.mouse.click(330, y + HEADER + 12);
+      for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector('[aria-label="Edit note"]');
+      await page.$eval("#edit-value", e => e.select());
+      await page.type("#edit-value", "grid-after 'quoted'");
+      await clickText("Stage change");
+      await clickText("Review changes");
+      await page.waitForSelector('[aria-label="SQL to apply"]');
+      const sql = await page.$eval('[aria-label="SQL to apply"]', e => e.textContent);
+      assert(sql.includes('UPDATE "public"."scratch_insert_target"') && sql.includes("IS NOT DISTINCT FROM 'grid-before'") && sql.includes("grid-after ''quoted''"), sql);
+      await page.screenshot({ path: `${SHOTS}/grid-edit-review.png` });
+      await clickText("Apply");
+      await until(() => document.body.innerText.includes("Applied 1 changes"));
+      eq(psql("SELECT note FROM scratch_insert_target WHERE id=900000004"), "grid-after 'quoted'", "grid edit committed");
+      await page.screenshot({ path: `${SHOTS}/grid-edit-applied.png` });
+      return "reviewed Rust-generated SQL, transaction applied, psql confirmed quoted value";
+    } finally { psql("DELETE FROM scratch_insert_target WHERE id=900000004"); }
+  });
+
   await check("A connection time zone applies to browsing", async () => {
     // UTC first: the fixture server's own default may be Asia/Jakarta, so +00 proves the
     // zone comes from the profile.

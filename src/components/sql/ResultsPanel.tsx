@@ -85,7 +85,7 @@ function ResultTabs({ connId, results, maxRows }: { connId: string; results: Que
       )}
       <div className="flex min-h-0 flex-1 flex-col">
         {result.columns.length > 0 ? (
-          <ResultGrid columns={result.columns} rows={result.rows} />
+          <ResultGrid columns={result.columns} rows={result.rows} resultTruncated={result.truncated} />
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-1">
             <span className="text-sm font-medium text-ink tabular-nums">{affectedMessage(result)}</span>

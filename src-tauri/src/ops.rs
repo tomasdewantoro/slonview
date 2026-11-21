@@ -170,6 +170,25 @@ pub async fn get_object_definition(engine: &Engine, conn_id: ConnId, kind: Objec
     engine.get_object_definition(conn_id, kind, oid).await
 }
 
+pub async fn stream_columns(engine: &Engine, request_id: &str, req: &slonview_core::model::ColumnCopyRequest, emit: impl FnMut(slonview_core::model::ColumnCopyChunk) -> AppResult<()> + Send) -> AppResult<slonview_core::model::ColumnCopySummary> {
+    engine.stream_columns(request_id, req, emit).await
+}
+
+pub async fn edit_info(engine: &Engine, conn_id: ConnId, schema: &str, table: &str) -> AppResult<slonview_core::model::EditInfo> {
+    engine.edit_info(conn_id, schema, table).await
+}
+
+pub async fn get_edit_row(engine: &Engine, req: &CellRequest) -> AppResult<Vec<slonview_core::model::EditValue>> {
+    engine.get_edit_row(req).await
+}
+
+pub async fn review_edits(engine: &Engine, req: &slonview_core::model::EditRequest) -> AppResult<Vec<String>> {
+    engine.review_edits(req).await
+}
+
+pub async fn apply_edits(engine: &Engine, request_id: &str, req: &slonview_core::model::EditRequest) -> AppResult<u32> {
+    engine.apply_edits(request_id, req).await
+}
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -272,7 +291,7 @@ mod tests {
         };
         let page = fetch_page(&engine, &"p".into(), &req).await.unwrap();
         assert_eq!(page.rows.len(), 10);
-        assert!(matches!(page.next_cursor, Some(Cursor::Offset { offset: 10 })));
+        assert!(matches!(page.next_cursor, Some(Cursor::Keyset { .. })));
         let n = count_exact(&engine, &"c".into(), id, "public", "orders", &req.filters, None).await.unwrap();
         let psql = run_sql(&engine, &"s".into(), id, "select count(*) from orders where status = 'paid'", None).await.unwrap();
         assert_eq!(psql[0].rows[0][0].as_deref(), Some(n.to_string().as_str()));
@@ -300,3 +319,4 @@ mod tests {
         disconnect(&engine, id).await.unwrap();
     }
 }
+

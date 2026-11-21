@@ -15,6 +15,13 @@ import type { SchemaTree } from "./bindings/SchemaTree";
 import type { ServerInfo } from "./bindings/ServerInfo";
 import type { TableDescription } from "./bindings/TableDescription";
 import type { Filter } from "./bindings/Filter";
+import { Channel } from "@tauri-apps/api/core";
+import type { ColumnCopyChunk } from "./bindings/ColumnCopyChunk";
+import type { ColumnCopyRequest } from "./bindings/ColumnCopyRequest";
+import type { ColumnCopySummary } from "./bindings/ColumnCopySummary";
+import type { EditInfo } from "./bindings/EditInfo";
+import type { EditRequest } from "./bindings/EditRequest";
+import type { EditValue } from "./bindings/EditValue";
 
 export function isAppError(e: unknown): e is AppError {
   return typeof e === "object" && e !== null && "kind" in e;
@@ -86,4 +93,38 @@ export const api = {
 
   // Sidebar objects: SQL text (definition, or a runnable query plus comments) for an oid from SchemaTree.
   getObjectDefinition: (connId: string, kind: ObjectKind, oid: number) => invoke<string>("get_object_definition", { connId, kind, oid }),
+  streamColumns: streamColumnValues,
+  editInfo: (connId: string, schema: string, table: string) => invoke<EditInfo>("edit_info", { connId, schema, table }),
+  getEditRow: (req: CellRequest) => invoke<EditValue[]>("get_edit_row", { req }),
+  reviewEdits: (req: EditRequest) => invoke<string[]>("review_edits", { req }),
+  applyEdits: (requestId: string, req: EditRequest) => invoke<number>("apply_edits", { requestId, req }),
 };
+
+async function streamColumnValues(requestId: string, req: ColumnCopyRequest, onChunk: (chunk: ColumnCopyChunk) => void): Promise<ColumnCopySummary> {
+  if (import.meta.env.VITE_BRIDGE === "1") {
+    const response = await fetch("http://127.0.0.1:1499/invoke/stream_columns", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId, req }),
+    });
+    if (!response.ok) throw await response.json();
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        let end: number;
+        while ((end = pending.indexOf("\n")) >= 0) {
+          const message = JSON.parse(pending.slice(0, end)) as { chunk?: ColumnCopyChunk; done?: ColumnCopySummary; error?: AppError };
+          pending = pending.slice(end + 1);
+          if (message.error) throw message.error;
+          if (message.chunk) onChunk(message.chunk);
+          if (message.done) return message.done;
+        }
+        if (done) throw new Error("Column stream ended without a result");
+      }
+    } finally { reader.releaseLock(); }
+  }
+  const onChunkChannel = new Channel<ColumnCopyChunk>(onChunk);
+  return invoke<ColumnCopySummary>("stream_columns", { requestId, req, onChunk: onChunkChannel });
+}

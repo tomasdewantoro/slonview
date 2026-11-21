@@ -712,6 +712,13 @@ export function installMockBackend(): void {
         requireConn(a.connId);
         await delay(null, 60);
         return objectDefinition(a.kind, a.oid);
+      case "edit_info":
+        return { disabledReason: "Row editing requires a live database connection.", blockedColumns: [] };
+      case "get_edit_row":
+      case "review_edits":
+      case "apply_edits":
+      case "stream_columns":
+        throw err({ kind: "invalid", message: "This operation requires a live database connection.", position: null });
       case "fetch_page":
         return fetchPage(a.requestId, a.req);
       case "count_exact": {

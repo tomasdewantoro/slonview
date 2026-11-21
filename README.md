@@ -21,7 +21,7 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 
 **Small, and quick on big tables.**
 - Slonview is about 8 MB on disk.
-- Tables load 500 rows at a time: in primary-key order it uses keyset paging, and sorted views use offset paging.
+- Tables load 500 rows at a time with keyset paging, including user sorts, when a primary key exists. Keyless relations use offset paging.
 - Exports stream straight to disk. In our tests, a 1,000,000-row table took about 0.44 s on a local PostgreSQL 18.4 and was byte-identical to `psql \copy`.
 - Esc cancels a running query on the server.
 
@@ -43,12 +43,13 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 ## Features
 
 - **Read-only by default.** New connections run with `default_transaction_read_only = on`. In read-only mode, everything you run from the SQL editor or type into a filter or Raw WHERE runs inside a read-only transaction, and commands that could leave it (`BEGIN`, `COMMIT`, `SET TRANSACTION`, `LOCK`, `VACUUM`, …) are refused before anything runs. To write, turn on **Allow writes** for that connection.
-- **Large tables.** Pages arrive 500 rows at a time. Keyset paging is used in primary-key order when you haven't sorted; sorted views and tables without a primary key use offset paging. The grid is canvas-rendered.
+- **Large tables.** Pages arrive 500 rows at a time. Tables with a primary key use keyset paging in primary-key order or user-selected sort order, with NULL-aware mixed-direction comparisons and primary-key tie-breakers. Relations without a primary key use offset paging. The grid is canvas-rendered.
 - **Filters and sorting** built server-side with properly quoted identifiers and parameters, plus an optional raw `WHERE` expression.
 - **SQL editor** with autocomplete, multiple statements, per-query history, a row limit, and cancel (`Esc`) that stops the query on the server.
 - **Functions in the sidebar:** each schema has a collapsible **Functions** group listing functions, procedures, aggregates and window functions (extension functions such as `uuid-ossp` included), with argument lists so overloads stay distinct. Click one to open its `CREATE OR REPLACE` definition in a new SQL tab; right-click to copy its name or signature.
 - **Sequences, types, triggers and extensions in the sidebar:** each schema also has **Sequences** (data type and last value, or `?` when your role can't read it), **Types** (enum labels, domain base type and checks, composite attributes) and **Triggers** (`table.trigger` with timing, events, and disabled state) groups; an **Extensions** group at the top lists installed extensions with version and schema. Empty groups are hidden, and the filter matches every object name and opens the groups that contain a match. Click a sequence to get `SELECT * FROM` it with its definition as a comment; click a type, trigger or extension to open its `CREATE` statement in a new SQL tab; right-click to copy its name. The whole tree still loads in one round trip.
-- **Copy and export:** copy selections as CSV, TSV, JSON, or `INSERT` statements; stream a whole table or query result to CSV.
+- **Copy and export:** copy selections as CSV, TSV, JSON, or `INSERT` statements; stream a whole table or query result to CSV. Right-click a column header (or ⌘/Ctrl-click to select, then Copy) to copy every matching table row, with progress, cancel, a warning above 100,000 rows, and a 1,000,000-row cap. SQL column copies use the held result and report when its max-row limit truncated it.
+- **Reviewable row editing:** on Allow writes connections, tables with a primary key support cell edits, SQL NULL, JSON text, new rows with database defaults, and selected-row deletion. Modified/new/deleted rows are marked separately. Review shows exact Rust-generated SQL; Apply commits one transaction or rolls everything back on an optimistic-concurrency conflict. Bytea, generated and identity-always columns cannot be edited. Discard clears pending changes.
 - **Connections:** paste a `postgres://` URL, import from `~/.pgpass`, or fill the form. TLS (`prefer`/`require`) for hosted Postgres such as Supabase, Neon, or RDS.
 - **Per-connection time zone:** set an IANA zone such as `Asia/Jakarta` on a connection and every session (table browsing and the SQL editor) shows `timestamptz` values in that zone, whatever the server default is. A `postgres://` URL with `options=-c timezone=...` fills it in.
 - **Small:** about 8 MB on disk.

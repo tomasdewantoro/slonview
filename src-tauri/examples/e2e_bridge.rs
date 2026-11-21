@@ -103,6 +103,10 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
         // Test-only probe: reads the Keychain from this process (which created the item), so
         // E2E scripts never run `security -w`, which can raise an access prompt.
         "e2e_keychain_get" => ok(engine.secrets.get(arg(a, "id")?)?),
+        "edit_info" => ok(ops::edit_info(engine, arg(a, "connId")?, &arg::<String>(a, "schema")?, &arg::<String>(a, "table")?).await?),
+        "get_edit_row" => ok(ops::get_edit_row(engine, &arg(a, "req")?).await?),
+        "review_edits" => ok(ops::review_edits(engine, &arg(a, "req")?).await?),
+        "apply_edits" => ok(ops::apply_edits(engine, &arg::<String>(a, "requestId")?, &arg(a, "req")?).await?),
         other => Err(AppError::invalid(format!("unknown command {other}"))),
     }
 }
@@ -174,6 +178,30 @@ async fn handle(engine: Arc<Engine>, mut stream: TcpStream) -> std::io::Result<(
             }
         }
     };
+    if cmd == "stream_columns" {
+        let request_id: String = arg(&args, "requestId").map_err(std::io::Error::other)?;
+        let req = arg(&args, "req").map_err(std::io::Error::other)?;
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n").await?;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let produce = async {
+            let result = ops::stream_columns(&engine, &request_id, &req, |chunk| {
+                tx.send(serde_json::json!({ "chunk": chunk })).map_err(|_| AppError::Cancelled)
+            }).await;
+            let last = match result { Ok(summary) => serde_json::json!({ "done": summary }), Err(error) => serde_json::json!({ "error": error }) };
+            let _ = tx.send(last);
+            drop(tx);
+        };
+        let consume = async {
+            while let Some(value) = rx.recv().await {
+                let mut bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
+                bytes.push(b'\n');
+                stream.write_all(&bytes).await?;
+            }
+            stream.shutdown().await
+        };
+        let (_, result) = tokio::join!(produce, consume);
+        return result;
+    }
     let result = dispatch(&engine, cmd, &args).await;
     match &result {
         Ok(_) => tracing::info!(cmd, "ok"),

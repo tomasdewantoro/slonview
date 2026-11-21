@@ -40,6 +40,11 @@ pub fn run() {
             commands::history::list_history,
             commands::history::clear_history,
             commands::objects::get_object_definition,
+            commands::grid::stream_columns,
+            commands::grid::edit_info,
+            commands::grid::get_edit_row,
+            commands::grid::review_edits,
+            commands::grid::apply_edits,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

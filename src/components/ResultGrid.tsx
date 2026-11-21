@@ -1,5 +1,4 @@
-// Generic read-only data grid (Glide Data Grid). Owned by WP-FE-BROWSE; used by table
-// browsing and by SQL results (WP-FE-SQL). Props are a contract: change only with both owners.
+// Canvas data grid shared by table browsing and SQL results.
 import "@glideapps/glide-data-grid/dist/index.css";
 import {
   CompactSelection,
@@ -19,6 +18,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type { Column } from "../bindings/Column";
 import { serializeRows, type CopyFormat } from "../lib/format";
 import { useColorScheme } from "./useColorScheme";
+import type { PageRequest } from "../bindings/PageRequest";
+import { useColumnCopy } from "./edit/useColumnCopy";
+import { appStore } from "../store/app";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 
 export interface CellRef {
@@ -44,6 +46,12 @@ export interface ResultGridProps {
   onOpenCell?: (cell: CellRef) => void;
   /** Schema/table for "Copy as INSERT"; when absent INSERT uses table name "result". */
   insertTarget?: { schema: string; table: string };
+  /** Whole-column table copy streams all matching rows, not just loaded pages. */
+  copyPage?: PageRequest;
+  resultTruncated?: boolean;
+  onEditCell?: (cell: CellRef) => void;
+  onSelectedRows?: (rows: number[]) => void;
+  rowChanges?: ReadonlyMap<number, "modified" | "new" | "deleted">;
 }
 
 const NEAR_END_ROWS = 100;
@@ -101,6 +109,9 @@ const PALETTE_TOKENS = {
   accentFg: "--sv-accent-fg",
   accentFgMuted: "--sv-accent-fg-muted",
   selection: "--sv-selection",
+  modified: "--sv-accent-soft",
+  added: "--sv-warn-soft",
+  error: "--sv-error",
   selectionFgMuted: "--sv-selection-fg-muted",
   pk: "--sv-warn",
   mono: "--sv-font-mono",
@@ -164,6 +175,11 @@ export function ResultGrid({
   onSelectCell,
   onOpenCell,
   insertTarget,
+  copyPage,
+  resultTruncated,
+  onEditCell,
+  onSelectedRows,
+  rowChanges,
 }: ResultGridProps) {
   const scheme = useColorScheme();
   // Re-read on appearance change; the token values themselves switch in CSS.
@@ -172,6 +188,7 @@ export function ResultGrid({
   const [selection, setSelection] = useState<GridSelection>(emptySelection);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [widths, setWidths] = useState<Record<string, number>>({});
+  const columnCopy = useColumnCopy(copyPage);
 
   // Truncated cells as a Set of row*colCount+col keys: O(1) lookup in getCellContent.
   const colCount = columns.length;
@@ -306,6 +323,13 @@ export function ResultGrid({
   // Truncated cells: paint a "…" marker over the right edge so it shows even when the text overflows.
   const drawCell: DrawCellCallback = useCallback(
     (args, drawContent) => {
+      const change = rowChanges?.get(args.row);
+      if (change && !args.highlighted) {
+        args.ctx.save();
+        args.ctx.fillStyle = change === "new" ? palette.added : change === "deleted" ? palette.bg : palette.modified;
+        args.ctx.fillRect(args.rect.x, args.rect.y, args.rect.width, args.rect.height);
+        args.ctx.restore();
+      }
       const { ctx } = args;
       if (args.highlighted && args.cell.kind === GridCellKind.Text && args.cell.themeOverride === nullTheme) {
         const prev = ctx.fillStyle;
@@ -314,6 +338,16 @@ export function ResultGrid({
         ctx.fillStyle = prev;
       } else {
         drawContent();
+      }
+      if (change) {
+        ctx.save();
+        ctx.strokeStyle = change === "deleted" ? palette.error : change === "new" ? palette.pk : palette.accent;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(args.rect.x + 2, args.rect.y + (change === "deleted" ? args.rect.height / 2 : args.rect.height - 2));
+        ctx.lineTo(args.rect.x + args.rect.width - 2, args.rect.y + (change === "deleted" ? args.rect.height / 2 : args.rect.height - 2));
+        ctx.stroke();
+        ctx.restore();
       }
       if (!truncatedSet.has(args.row * colCount + args.col)) return;
       const { rect } = args;
@@ -330,7 +364,7 @@ export function ResultGrid({
       ctx.fillText("…", rect.x + rect.width - w / 2 - 1, rect.y + rect.height / 2);
       ctx.restore();
     },
-    [truncatedSet, colCount, palette, nullTheme],
+    [truncatedSet, colCount, palette, nullTheme, rowChanges],
   );
 
   const onVisibleRegionChanged = useCallback(
@@ -360,8 +394,9 @@ export function ResultGrid({
       setSelection(s);
       const cell = s.current?.cell;
       onSelectCell?.(cell ? { col: cell[0], row: cell[1] } : null);
+      onSelectedRows?.(s.rows.toArray());
     },
-    [onSelectCell],
+    [onSelectCell, onSelectedRows],
   );
 
   /** Rectangular slice for the current selection: row selection = full rows, column selection = full columns. */
@@ -382,16 +417,21 @@ export function ResultGrid({
   const copy = useCallback(
     async (format: CopyFormat) => {
       const block = selectedBlock();
+      if (selection.columns.length > 0 && copyPage) {
+        await columnCopy.copy(format, selection.columns.toArray().map(i => columns[i]));
+        return;
+      }
       if (!block || block.rowIdx.length === 0) return;
       const cols = block.cols.map((i) => columns[i]);
       const data = block.rowIdx.map((r) => block.cols.map((c) => rows[r][c]));
       try {
         await writeText(serializeRows(format, cols, data, insertTarget));
+        if (selection.columns.length > 0 && resultTruncated) appStore.getState().pushToast("info", `Copied ${rows.length.toLocaleString()} held result rows. This SQL result was truncated at its max rows; rerun with a higher limit or export the query for all rows.`);
       } catch (e) {
         console.error("copy failed", e);
       }
     },
-    [selectedBlock, columns, rows, insertTarget],
+    [selectedBlock, columns, rows, insertTarget, selection.columns, copyPage, columnCopy.copy, resultTruncated],
   );
 
   // Cmd+C: our serializer (NULL handling, quoting) instead of Glide's built-in copy.
@@ -433,6 +473,7 @@ export function ResultGrid({
   if (onOpenCell && selection.current) {
     const [col, row] = selection.current.cell;
     menuItems.push({ separator: true }, { label: "Inspect cell", shortcut: "↵", onSelect: () => onOpenCell({ col, row }) });
+    if (onEditCell) menuItems.push({ label: "Edit cell", onSelect: () => onEditCell({ col, row }) });
   }
 
   const containerStyle = { "--gdg-font-family": "var(--sv-font-mono)" } as CSSProperties;
@@ -451,19 +492,24 @@ export function ResultGrid({
         rowHeight={ROW_HEIGHT}
         rowMarkers={{ kind: "clickable-number", width: Math.max(44, String(rows.length).length * 8 + 20) }}
         rowSelect="multi"
-        columnSelect={onSortColumn ? "none" : "multi"}
+        columnSelect="multi"
         rangeSelect="multi-rect"
         gridSelection={selection}
         onGridSelectionChange={onGridSelectionChange}
         onVisibleRegionChanged={trackRegion}
         onHeaderClicked={(colIndex, e) => {
-          if (!onSortColumn) return;
+          if (!onSortColumn || e.ctrlKey || e.metaKey) return;
           e.preventDefault();
           onSortColumn(columns[colIndex].name);
         }}
+        onHeaderContextMenu={(col, e) => {
+          e.preventDefault();
+          setSelection({ columns: CompactSelection.fromSingleSelection(col), rows: CompactSelection.empty() });
+          setMenu({ x: e.bounds.x + e.localEventX, y: e.bounds.y + e.localEventY });
+        }}
         drawHeader={drawHeader}
         drawCell={drawCell}
-        onCellActivated={([col, row]) => onOpenCell?.({ col, row })}
+        onCellActivated={([col, row]) => (onEditCell ?? onOpenCell)?.({ col, row })}
         onCellContextMenu={onCellContextMenu}
         onKeyDown={onKeyDown}
         onColumnResize={(_c, size, i) => setWidths((w) => ({ ...w, [columns[i].name]: size }))}
@@ -475,6 +521,7 @@ export function ResultGrid({
         keybindings={{ search: false, copy: false }}
       />
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+      {columnCopy.progress && <div role="status" className="absolute inset-x-0 bottom-0 flex items-center justify-between border-t border-border bg-surface px-3 py-2 text-xs"><span>{columnCopy.progress}</span><button className="btn" onClick={columnCopy.cancel}>Cancel copy</button></div>}
     </div>
   );
 }
