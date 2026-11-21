@@ -3,16 +3,17 @@ import { useState } from "react";
 import { errorMessage } from "../api";
 import type { ConnProfile } from "../bindings/ConnProfile";
 import { appStore, useApp } from "../store/app";
-import { ConnectionDialog } from "./ConnectionDialog";
+import { ConnectionDialog, profileColor } from "./ConnectionDialog";
 import { ConfirmDialog } from "./Dialog";
 import { ContextMenu } from "./ContextMenu";
 
 export function ColorDot({ color, className = "" }: { color: string | null; className?: string }) {
+  const shown = profileColor(color);
   return (
     <span
       aria-hidden
-      className={`inline-block size-2.5 shrink-0 rounded-full ${color ? "" : "border border-faint"} ${className}`}
-      style={color ? { background: color } : undefined}
+      className={`inline-block size-2.5 shrink-0 rounded-full ${shown ? "" : "border border-border-strong"} ${className}`}
+      style={shown ? { background: shown } : undefined}
     />
   );
 }
@@ -37,7 +38,7 @@ export function ConnectionList() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-9 items-center justify-between border-b border-line px-3">
+      <div className="flex h-9 items-center justify-between border-b border-border px-3">
         <span className="text-xs font-semibold text-muted">Connections</span>
         <button className="icon-btn" aria-label="New connection" title="New connection" onClick={() => setEditing("new")}>
           <Plus size={15} />
@@ -79,21 +80,21 @@ export function ConnectionList() {
                 setMenu({ x: e.clientX, y: e.clientY, profile: p });
               }}
               className={`group mx-1.5 flex items-center gap-2.5 rounded-md px-2 py-1.5 outline-none ${
-                isSel ? "bg-accent-soft" : "hover:bg-hover"
-              } focus-visible:ring-2 focus-visible:ring-accent`}
+                isSel ? "bg-accent-soft" : "hover:bg-surface-2"
+              } focus-visible:ring-2 focus-visible:ring-focus-ring`}
             >
               <ColorDot color={p.color} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="truncate font-medium">{p.name}</span>
-                  {!p.readOnly && <span className="rounded-sm bg-danger px-1 text-[10px] leading-4 font-semibold text-white">WRITE</span>}
+                  {!p.readOnly && <span className="badge-write">WRITE</span>}
                 </div>
                 <div className="truncate font-mono text-[11px] text-muted">
                   {p.user}@{p.host}:{p.port}/{p.database}
                 </div>
               </div>
               {state === "connecting" && <LoaderCircle size={14} className="animate-spin text-muted" aria-label="Connecting" />}
-              {state === "failed" && <span className="text-[11px] text-danger">failed</span>}
+              {state === "failed" && <span className="text-[11px] text-error">failed</span>}
               <div className="hidden items-center group-hover:flex">
                 <button className="icon-btn" aria-label={`Edit ${p.name}`} onClick={() => setEditing(p)}>
                   <Pencil size={13} />

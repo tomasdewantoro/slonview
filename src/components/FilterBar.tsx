@@ -37,7 +37,7 @@ export function FilterBar({ columns, filters, rawWhere, onApply }: Props) {
   };
 
   return (
-    <div className="shrink-0 border-b border-line bg-side px-2 py-1.5" onKeyDown={onEnter}>
+    <div className="shrink-0 border-b border-border bg-surface px-2 py-1.5" onKeyDown={onEnter}>
       {draft.map((f) => (
         <div key={f.id} className="mb-1 flex items-center gap-1.5">
           <label className="sr-only" htmlFor={`fc-${f.id}`}>

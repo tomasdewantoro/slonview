@@ -173,12 +173,12 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
   };
 
   const toolbarButton =
-    "flex h-6 items-center gap-1 rounded px-2 hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-blue-500 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-neutral-800";
+    "flex h-6 items-center gap-1 rounded px-2 hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-focus-ring disabled:opacity-40 disabled:hover:bg-transparent";
 
   return (
-    <div className="flex h-full min-h-0 bg-white text-[13px] text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <div className="flex h-full min-h-0 bg-paper text-[13px] text-ink">
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-9 shrink-0 items-center gap-1 border-b border-neutral-200 bg-neutral-50 px-2 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-surface px-2">
           <button
             type="button"
             className={toolbarButton}
@@ -186,7 +186,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
             onClick={() => runFromEditor("cursor")}
             title="Run selection or statement at cursor (⌘↵)"
           >
-            <Play className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+            <Play className="size-3.5 text-ok" />
             Run
           </button>
           <button
@@ -201,18 +201,18 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
           </button>
           {running && (
             <>
-              <button type="button" className={`${toolbarButton} text-red-600 dark:text-red-400`} onClick={cancel} title="Cancel query (Esc)">
+              <button type="button" className={`${toolbarButton} text-error`} onClick={cancel} title="Cancel query (Esc)">
                 <Square className="size-3.5 fill-current" />
                 Cancel
               </button>
-              <span className="flex items-center gap-1 px-1 text-neutral-500 tabular-nums">
+              <span className="flex items-center gap-1 px-1 text-muted tabular-nums">
                 <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
                 {formatElapsed(Math.max(0, now - running.startedAt))}
               </span>
             </>
           )}
           <span className="flex-1" />
-          <label className="flex items-center gap-1.5 text-neutral-600 dark:text-neutral-400">
+          <label className="flex items-center gap-1.5 text-muted">
             Max rows
             <select
               value={maxRows}
@@ -221,7 +221,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
                 setMaxRows(n);
                 localStorage.setItem(MAX_ROWS_KEY, String(n));
               }}
-              className="h-6 rounded border border-neutral-300 bg-white px-1 text-neutral-900 tabular-nums focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+              className="h-6 rounded border border-border-strong bg-paper px-1 text-ink tabular-nums focus-visible:outline-2 focus-visible:outline-focus-ring"
             >
               {MAX_ROWS_OPTIONS.map((n) => (
                 <option key={n} value={n}>
@@ -232,7 +232,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
           </label>
           <button
             type="button"
-            className={`${toolbarButton} ${historyOpen ? "bg-neutral-200 dark:bg-neutral-800" : ""}`}
+            className={`${toolbarButton} ${historyOpen ? "bg-surface-2" : ""}`}
             aria-pressed={historyOpen}
             onClick={() => setHistoryOpen((o) => !o)}
           >
@@ -256,7 +256,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
             aria-orientation="horizontal"
             aria-label="Resize editor and results"
             onPointerDown={startDrag}
-            className="h-1 shrink-0 cursor-row-resize border-y border-neutral-200 bg-neutral-100 hover:bg-blue-500/40 dark:border-neutral-800 dark:bg-neutral-900"
+            className="h-1 shrink-0 cursor-row-resize border-y border-border bg-surface-2 hover:bg-splitter-hover"
           />
           <div className="min-h-0 flex-1">
             <ResultsPanel connId={connId} outcome={outcome} running={!!running} />

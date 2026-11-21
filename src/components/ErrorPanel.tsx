@@ -17,11 +17,11 @@ export function ErrorPanel({ error, onRetry }: { error: unknown; onRetry?: () =>
   const title = isAppError(error) ? (KIND_LABEL[error.kind] ?? "Error") : "Error";
   const sql = isAppError(error) && error.kind === "sql" ? error : null;
   return (
-    <div role="alert" className="m-3 flex gap-2.5 rounded-md border border-danger/40 bg-danger-soft p-3 text-fg">
-      <TriangleAlert size={16} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+    <div role="alert" className="m-3 flex gap-2.5 rounded-md border border-error bg-error-soft p-3 text-ink">
+      <TriangleAlert size={16} className="mt-0.5 shrink-0 text-error" aria-hidden />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="font-semibold text-danger">{title}</span>
+          <span className="font-semibold text-error">{title}</span>
           {sql && <span className="font-mono text-xs text-muted">SQLSTATE {sql.code}</span>}
           {sql?.position != null && <span className="font-mono text-xs text-muted">at position {sql.position}</span>}
         </div>

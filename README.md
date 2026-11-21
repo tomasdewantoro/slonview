@@ -1,13 +1,49 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/identity/readme/readme-header-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/brand/identity/readme/readme-header-light.png">
+  <img src="docs/brand/identity/readme/readme-header-light.png" width="1280" alt="Slonview. About 8 MB. Ready for a million rows. 1,000,000-row CSV export in about 0.44 s (local benchmark: PostgreSQL 18.4, Unix socket, MacBook Air Mac17,3, Apple M5). Look first. Write on purpose.">
+</picture>
+
 # Slonview
 
-A fast, native-feeling desktop viewer for PostgreSQL. Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Windows later.
+**About 8 MB. Ready for a million rows.**
 
-Slonview is for looking at data quickly: connect, browse schemas, page through million-row tables, filter and sort, run ad-hoc SQL, and copy or export the results. Sessions are read-only by default.
+A small, open-source viewer for PostgreSQL®: about 8 MB on disk, pages through
+million-row tables, and read-only by default.
+
+On a local database, Slonview exports a 1,000,000-row table to CSV in about 0.44 s,
+byte-identical to `psql \copy`. Connections open read-only by default, enforced by the
+PostgreSQL server. Look first. Write on purpose.
+
+Slonview (SLON-view; *slon*, as in elephant) is not related to Slony-I or the slonik library.
+
+Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Windows later.
+
+**Small, and quick on big tables.**
+- Slonview is about 8 MB on disk.
+- Tables load 500 rows at a time: in primary-key order it uses keyset paging, and sorted views use offset paging.
+- Exports stream straight to disk. In our tests, a 1,000,000-row table took about 0.44 s on a local PostgreSQL 18.4 and was byte-identical to `psql \copy`.
+- Esc cancels a running query on the server.
+
+**Read-only by default.**
+- New connections open read-only, and the PostgreSQL server enforces it, so a stray `DELETE` is rejected.
+- To write, turn on **Allow writes** for that connection. A red **WRITE** badge stays on while it's on.
+- Every run ends with a rollback, so no transaction stays open holding locks after a run.
+- Read-only is a default, not a lock. For a hard guarantee, connect as a read-only role.
+
+**Free, with no catches.**
+- MIT OR Apache-2.0.
+- No paid tier, no tab limits.
+- Copy as CSV, TSV, JSON or INSERT.
+- No telemetry: Slonview only talks to the PostgreSQL servers you configure.
+- Passwords stay in your macOS Keychain.
+
+**No telemetry.** Slonview contains no analytics, crash reporting, or update checks. The only network connections it makes are to the PostgreSQL servers you configure (plus the DNS lookups needed to find them). Your passwords stay in your macOS Keychain.
 
 ## Features
 
 - **Read-only by default.** New connections run with `default_transaction_read_only = on`. In read-only mode, everything you run from the SQL editor or type into a filter or Raw WHERE runs inside a read-only transaction, and commands that could leave it (`BEGIN`, `COMMIT`, `SET TRANSACTION`, `LOCK`, `VACUUM`, …) are refused before anything runs. To write, turn on **Allow writes** for that connection.
-- **Large tables.** Keyset paging (offset paging for tables without a usable key) and a canvas-rendered grid keep scrolling smooth through millions of rows.
+- **Large tables.** Pages arrive 500 rows at a time. Keyset paging is used in primary-key order when you haven't sorted; sorted views and tables without a primary key use offset paging. The grid is canvas-rendered.
 - **Filters and sorting** built server-side with properly quoted identifiers and parameters, plus an optional raw `WHERE` expression.
 - **SQL editor** with autocomplete, multiple statements, per-query history, a row limit, and cancel (`Esc`) that stops the query on the server.
 - **Copy and export:** copy selections as CSV, TSV, JSON, or `INSERT` statements; stream a whole table or query result to CSV.
@@ -66,7 +102,9 @@ tests/e2e/run.sh
 
 ## Trademark
 
-Slonview is an independent project. It is not affiliated with, endorsed by, or sponsored by the PostgreSQL Global Development Group or the PostgreSQL Community Association. PostgreSQL and Postgres are trademarks of the PostgreSQL Community Association, used here only to describe what the software works with.
+Slonview is an independent project. It is not affiliated with, endorsed by, or sponsored by the PostgreSQL Global Development Group or the PostgreSQL Community Association of Canada. PostgreSQL, Postgres and the Slonik logo are trademarks of the PostgreSQL Community Association of Canada, used here only to describe what the software works with.
+
+Fonts: Hanken Grotesk and JetBrains Mono are bundled under the SIL Open Font License 1.1 (`src/assets/fonts/`).
 
 ## License
 

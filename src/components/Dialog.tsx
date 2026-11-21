@@ -28,12 +28,12 @@ export function Dialog({ title, onClose, children, footer, width = "w-[520px]", 
         onClose();
       }}
       onKeyDown={(e) => e.stopPropagation()}
-      className={`${width} m-auto max-h-[85dvh] overflow-hidden rounded-lg border border-line bg-raised p-0 text-fg shadow-xl backdrop:bg-black/30`}
+      className={`${width} m-auto max-h-[85dvh] overflow-hidden rounded-[var(--sv-radius-dialog)] border border-border bg-raised p-0 text-ink shadow-xl backdrop:bg-scrim`}
     >
       <div className="flex max-h-[85dvh] flex-col">
-        <h2 className="border-b border-line px-4 py-2.5 text-[13px] font-semibold">{title}</h2>
+        <h2 className="border-b border-border px-4 py-2.5 text-[15px] font-semibold">{title}</h2>
         <div className="min-h-0 flex-1 overflow-auto px-4 py-3">{children}</div>
-        <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">{footer}</div>
+        <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2.5">{footer}</div>
       </div>
     </dialog>
   );

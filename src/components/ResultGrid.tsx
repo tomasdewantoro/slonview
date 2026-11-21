@@ -49,7 +49,6 @@ export interface ResultGridProps {
 const NEAR_END_ROWS = 100;
 const HEADER_HEIGHT = 34;
 const ROW_HEIGHT = 24;
-const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
 const DISPLAY_CHARS = 300;
 
 const NUMERIC_TYPE = /^(smallint|integer|bigint|numeric|decimal|real|double precision|money|oid)\b/;
@@ -87,65 +86,57 @@ function defaultWidth(c: Column, rows: (string | null)[][], index: number): numb
   return Math.min(420, Math.max(w, headerChars * 7 + 24));
 }
 
-interface Palette {
-  bg: string;
-  bgAlt: string;
-  header: string;
-  text: string;
-  muted: string;
-  faint: string;
-  border: string;
-  accent: string;
-  accentLight: string;
-  pk: string;
-}
+/** Brand tokens the canvas needs as concrete colours (canvas can't resolve CSS variables). */
+const PALETTE_TOKENS = {
+  bg: "--sv-paper",
+  header: "--sv-grid-header",
+  headerFg: "--sv-grid-header-fg",
+  headerHover: "--sv-surface-2",
+  text: "--sv-ink",
+  muted: "--sv-muted",
+  faint: "--sv-faint",
+  nullFg: "--sv-null-fg",
+  border: "--sv-border",
+  accent: "--sv-accent",
+  accentFg: "--sv-accent-fg",
+  accentFgMuted: "--sv-accent-fg-muted",
+  selection: "--sv-selection",
+  selectionFgMuted: "--sv-selection-fg-muted",
+  pk: "--sv-warn",
+  mono: "--sv-font-mono",
+} as const;
 
-const PALETTES: Record<"light" | "dark", Palette> = {
-  light: {
-    bg: "#ffffff",
-    bgAlt: "#f6f7f9",
-    header: "#f1f2f4",
-    text: "#1c1f24",
-    muted: "#5e6570",
-    faint: "#a0a6b0",
-    border: "#e3e5e9",
-    accent: "#2563eb",
-    accentLight: "rgba(37, 99, 235, 0.14)",
-    pk: "#b7791f",
-  },
-  dark: {
-    bg: "#1b1d21",
-    bgAlt: "#202227",
-    header: "#24272c",
-    text: "#dfe2e7",
-    muted: "#9198a3",
-    faint: "#5f6670",
-    border: "#30343a",
-    accent: "#5b8def",
-    accentLight: "rgba(91, 141, 239, 0.22)",
-    pk: "#e0b45c",
-  },
-};
+type Palette = Record<keyof typeof PALETTE_TOKENS, string>;
+
+/** Reads the current values of the grid's tokens (src/styles/tokens.css); they switch with the OS appearance. */
+function readPalette(): Palette {
+  const css = getComputedStyle(document.documentElement);
+  const out = {} as Palette;
+  for (const [key, name] of Object.entries(PALETTE_TOKENS)) out[key as keyof Palette] = css.getPropertyValue(name).trim();
+  return out;
+}
 
 function gridTheme(p: Palette): Partial<Theme> {
   return {
     accentColor: p.accent,
-    accentLight: p.accentLight,
-    accentFg: "#ffffff",
+    // Opaque selection fill, so text contrast on a selection is what the tokens specify.
+    accentLight: p.selection,
+    accentFg: p.accentFg,
     textDark: p.text,
     textMedium: p.muted,
     textLight: p.faint,
-    textHeader: p.muted,
-    textHeaderSelected: "#ffffff",
+    textHeader: p.headerFg,
+    textHeaderSelected: p.accentFg,
     bgCell: p.bg,
-    bgCellMedium: p.bgAlt,
+    bgCellMedium: p.headerHover,
     bgHeader: p.header,
-    bgHeaderHasFocus: p.border,
-    bgHeaderHovered: p.border,
+    // surface-2, not border: faint type names and the PK marker stay ≥ 4.5:1 on a hovered header.
+    bgHeaderHasFocus: p.headerHover,
+    bgHeaderHovered: p.headerHover,
     borderColor: p.border,
     horizontalBorderColor: p.border,
     headerBottomBorderColor: p.border,
-    fontFamily: MONO,
+    fontFamily: p.mono,
     baseFontStyle: "12px",
     headerFontStyle: "600 12px",
     markerFontStyle: "11px",
@@ -175,7 +166,8 @@ export function ResultGrid({
   insertTarget,
 }: ResultGridProps) {
   const scheme = useColorScheme();
-  const palette = PALETTES[scheme];
+  // Re-read on appearance change; the token values themselves switch in CSS.
+  const palette = useMemo(readPalette, [scheme]);
   const theme = useMemo(() => gridTheme(palette), [palette]);
   const [selection, setSelection] = useState<GridSelection>(emptySelection);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -223,7 +215,7 @@ export function ResultGrid({
 
   const numericCols = useMemo(() => columns.map((c) => isNumericType(c.typeName)), [columns]);
 
-  const nullTheme = useMemo<Partial<Theme>>(() => ({ textDark: palette.faint, baseFontStyle: "italic 12px" }), [palette]);
+  const nullTheme = useMemo<Partial<Theme>>(() => ({ textDark: palette.nullFg, baseFontStyle: "italic 12px" }), [palette]);
 
   const getCellContent = useCallback(
     ([col, row]: Item): GridCell => {
@@ -266,18 +258,18 @@ export function ResultGrid({
       ctx.save();
       ctx.textBaseline = "middle";
       if (c.isPk) {
-        ctx.fillStyle = isSelected ? "#ffffff" : palette.pk;
-        ctx.font = `600 10px ${MONO}`;
+        ctx.fillStyle = isSelected ? palette.accentFg : palette.pk;
+        ctx.font = `600 10px ${palette.mono}`;
         ctx.fillText("PK", x, midY);
         x += ctx.measureText("PK").width + 6;
       }
       const s = sortIndex.get(c.name);
       let sortLabel = "";
       if (s) sortLabel = (s.desc ? "▼" : "▲") + ((sort?.length ?? 0) > 1 ? String(s.order) : "");
-      ctx.font = `10px ${MONO}`;
+      ctx.font = `10px ${palette.mono}`;
       const sortW = sortLabel ? ctx.measureText(sortLabel).width + 6 : 0;
-      ctx.font = `600 12px ${MONO}`;
-      ctx.fillStyle = isSelected ? "#ffffff" : palette.text;
+      ctx.font = `600 12px ${palette.mono}`;
+      ctx.fillStyle = isSelected ? palette.accentFg : palette.text;
       const avail = right - sortW - x;
       let name = c.name;
       if (ctx.measureText(name).width > avail) {
@@ -286,8 +278,8 @@ export function ResultGrid({
       }
       ctx.fillText(name, x, midY);
       const nameW = ctx.measureText(name).width;
-      ctx.font = `11px ${MONO}`;
-      ctx.fillStyle = isSelected ? "rgba(255,255,255,0.75)" : palette.faint;
+      ctx.font = `11px ${palette.mono}`;
+      ctx.fillStyle = isSelected ? palette.accentFgMuted : palette.faint;
       const typeX = x + nameW + 6;
       const typeAvail = right - sortW - typeX;
       if (typeAvail > 20) {
@@ -299,8 +291,8 @@ export function ResultGrid({
         ctx.fillText(t, typeX, midY);
       }
       if (sortLabel) {
-        ctx.font = `10px ${MONO}`;
-        ctx.fillStyle = isSelected ? "#ffffff" : palette.accent;
+        ctx.font = `10px ${palette.mono}`;
+        ctx.fillStyle = isSelected ? palette.accentFg : palette.accent;
         ctx.textAlign = "right";
         ctx.fillText(sortLabel, right, midY);
       }
@@ -309,26 +301,36 @@ export function ResultGrid({
     [columns, palette, sortIndex, sort],
   );
 
+  // NULL cells inside a selection switch to selection-fg-muted (null-fg is too faint on the selection fill).
+  // Glide sets the text colour in drawPrep and caches it across cells, so restore it after drawing.
   // Truncated cells: paint a "…" marker over the right edge so it shows even when the text overflows.
   const drawCell: DrawCellCallback = useCallback(
     (args, drawContent) => {
-      drawContent();
+      const { ctx } = args;
+      if (args.highlighted && args.cell.kind === GridCellKind.Text && args.cell.themeOverride === nullTheme) {
+        const prev = ctx.fillStyle;
+        ctx.fillStyle = palette.selectionFgMuted;
+        drawContent();
+        ctx.fillStyle = prev;
+      } else {
+        drawContent();
+      }
       if (!truncatedSet.has(args.row * colCount + args.col)) return;
-      const { ctx, rect } = args;
+      const { rect } = args;
       const w = 18;
       ctx.save();
-      ctx.fillStyle = palette.bg;
+      ctx.fillStyle = args.highlighted ? palette.selection : palette.bg;
       ctx.fillRect(rect.x + rect.width - w - 2, rect.y + 1, w + 1, rect.height - 2);
-      ctx.fillStyle = palette.accentLight;
+      ctx.fillStyle = args.highlighted ? palette.bg : palette.selection;
       ctx.fillRect(rect.x + rect.width - w, rect.y + 3, w - 3, rect.height - 6);
       ctx.fillStyle = palette.accent;
-      ctx.font = `600 12px ${MONO}`;
+      ctx.font = `600 12px ${palette.mono}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillText("…", rect.x + rect.width - w / 2 - 1, rect.y + rect.height / 2);
       ctx.restore();
     },
-    [truncatedSet, colCount, palette],
+    [truncatedSet, colCount, palette, nullTheme],
   );
 
   const onVisibleRegionChanged = useCallback(
@@ -433,7 +435,7 @@ export function ResultGrid({
     menuItems.push({ separator: true }, { label: "Inspect cell", shortcut: "↵", onSelect: () => onOpenCell({ col, row }) });
   }
 
-  const containerStyle = { "--gdg-font-family": MONO } as CSSProperties;
+  const containerStyle = { "--gdg-font-family": "var(--sv-font-mono)" } as CSSProperties;
 
   return (
     <div className="relative min-h-0 flex-1" style={containerStyle}>

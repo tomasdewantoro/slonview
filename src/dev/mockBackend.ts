@@ -472,6 +472,13 @@ async function runSql(requestId: string, connId: string, sql: string, maxRows: n
   await delay(requestId, /pg_sleep/i.test(sql) ? 60_000 : 150);
   const entry: HistoryEntry = { id: crypto.randomUUID(), connId, sql, executedAt: new Date().toISOString(), elapsedMs: Date.now() - started, error: null };
   history.unshift(entry);
+  // A misspelt leading keyword fails like Postgres does, with a 1-based error position.
+  const first = /^\s*(\w+)/.exec(sql);
+  if (first && !/^(select|with|values|table|show|explain|delete|update|insert)$/i.test(first[1])) {
+    const e = err({ kind: "sql", code: "42601", message: `syntax error at or near "${first[1]}"`, detail: null, hint: null, position: sql.indexOf(first[1]) + 1 });
+    entry.error = errorText(e);
+    throw e;
+  }
   const m = /from\s+("?)([\w ]+)\1\s*\.\s*("?)([\w "]+?)\3(\s|;|$)/i.exec(sql) ?? /from\s+("?)(\w+)\1/i.exec(sql);
   const t = m ? tables.find((x) => (m[4] ? x.schema === m[2] && x.name === m[4] : x.name === m[2])) : undefined;
   if (/^\s*(delete|update|insert)/i.test(sql)) {

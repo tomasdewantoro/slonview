@@ -72,8 +72,8 @@ export function CellInspector({ connId, schema, table, columns, row, col, trunca
   const display = value === null ? null : isJson ? formatJson(value) : value;
 
   return (
-    <aside aria-label="Cell inspector" className="flex w-[360px] shrink-0 flex-col border-l border-line bg-side">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line pr-1.5 pl-3">
+    <aside aria-label="Cell inspector" className="flex w-[360px] shrink-0 flex-col border-l border-border bg-surface">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border pr-1.5 pl-3">
         <span className="min-w-0 truncate font-mono text-xs font-semibold">{column.name}</span>
         <span className="min-w-0 truncate font-mono text-[11px] text-faint">{column.typeName}</span>
         <span className="flex-1" />
@@ -93,7 +93,7 @@ export function CellInspector({ connId, schema, table, columns, row, col, trunca
           <X size={14} />
         </button>
       </div>
-      <div className="flex shrink-0 flex-wrap gap-x-3 border-b border-line px-3 py-1 text-[11px] text-muted tabular-nums">
+      <div className="flex shrink-0 flex-wrap gap-x-3 border-b border-border px-3 py-1 text-[11px] text-muted tabular-nums">
         {value !== null && <span>{value.length.toLocaleString()} chars</span>}
         {bytes !== null && <span>{bytes.toLocaleString()} bytes</span>}
         {isJson && value !== null && display !== value && <span>formatted</span>}
@@ -104,16 +104,16 @@ export function CellInspector({ connId, schema, table, columns, row, col, trunca
         )}
       </div>
       {truncated && pkIdx.length === 0 && (
-        <p className="shrink-0 border-b border-line bg-danger-soft px-3 py-1.5 text-xs text-pretty">
+        <p className="shrink-0 border-b border-border bg-error-soft px-3 py-1.5 text-xs text-pretty">
           Value truncated to 2,048 characters. This relation has no primary key, so the full value can't be fetched here; query it in a SQL tab.
         </p>
       )}
       {full?.state === "error" && (
-        <p className="shrink-0 border-b border-line bg-danger-soft px-3 py-1.5 text-xs text-danger">Couldn't load full value: {full.message}</p>
+        <p className="shrink-0 border-b border-border bg-error-soft px-3 py-1.5 text-xs text-error">Couldn't load full value: {full.message}</p>
       )}
       <div className="min-h-0 flex-1 overflow-auto">
         {display === null ? (
-          <div className="p-3 font-mono text-xs text-faint italic">NULL</div>
+          <div className="p-3 font-mono text-xs text-null-fg italic">NULL</div>
         ) : (
           <pre className={`p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap ${bytes !== null ? "break-all" : "break-words"}`}>{display}</pre>
         )}

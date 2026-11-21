@@ -1,60 +1,66 @@
 @import "tailwindcss";
+@import "./styles/tokens.css";
 
-/* Semantic color tokens; values switch with the OS appearance below. */
-@theme {
-  --color-app: var(--app);
-  --color-side: var(--side);
-  --color-raised: var(--raised);
-  --color-hover: var(--hover);
-  --color-line: var(--line);
-  --color-fg: var(--fg);
-  --color-muted: var(--muted);
-  --color-faint: var(--faint);
-  --color-accent: var(--accent);
-  --color-accent-soft: var(--accent-soft);
-  --color-danger: var(--danger);
-  --color-danger-soft: var(--danger-soft);
-  --color-ok: var(--ok);
-  --color-warn: var(--warn);
-  --font-ui: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+/* Bundled brand fonts (OFL 1.1, see src/assets/fonts/). No network fonts. */
+@font-face {
+  font-family: "Hanken Grotesk";
+  src: url("./assets/fonts/HankenGrotesk-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./assets/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Utilities read the brand tokens (src/styles/tokens.css); values switch with the OS appearance.
+   The default Tailwind palette is removed so only brand colours can be used. */
+@theme inline {
+  --color-*: initial;
+  --color-accent: var(--sv-accent);
+  --color-accent-hover: var(--sv-accent-hover);
+  --color-accent-fg: var(--sv-accent-fg);
+  --color-accent-fg-muted: var(--sv-accent-fg-muted);
+  --color-accent-soft: var(--sv-accent-soft);
+  --color-ink: var(--sv-ink);
+  --color-paper: var(--sv-paper);
+  --color-raised: var(--sv-raised);
+  --color-surface: var(--sv-surface);
+  --color-surface-2: var(--sv-surface-2);
+  --color-border: var(--sv-border);
+  --color-border-strong: var(--sv-border-strong);
+  --color-muted: var(--sv-muted);
+  --color-faint: var(--sv-faint);
+  --color-selection: var(--sv-selection);
+  --color-selection-fg-muted: var(--sv-selection-fg-muted);
+  --color-row-highlight: var(--sv-row-highlight);
+  --color-null-fg: var(--sv-null-fg);
+  --color-focus-ring: var(--sv-focus-ring);
+  --color-splitter-hover: var(--sv-splitter-hover);
+  --color-readonly-fg: var(--sv-readonly-fg);
+  --color-readonly-border: var(--sv-readonly-border);
+  --color-write-bg: var(--sv-write-bg);
+  --color-write-fg: var(--sv-write-fg);
+  --color-error: var(--sv-error);
+  --color-error-hover: var(--sv-error-hover);
+  --color-error-fg: var(--sv-error-fg);
+  --color-error-soft: var(--sv-error-soft);
+  --color-error-meta: var(--sv-error-meta);
+  --color-ok: var(--sv-ok);
+  --color-warn: var(--sv-warn);
+  --color-warn-soft: var(--sv-warn-soft);
+  --color-scrim: var(--sv-scrim);
+  --font-sans: var(--sv-font-ui);
+  --font-ui: var(--sv-font-ui);
+  --font-mono: var(--sv-font-mono);
 }
 
 :root {
   color-scheme: light dark;
-  --app: #ffffff;
-  --side: #f3f4f6;
-  --raised: #ffffff;
-  --hover: #e8eaee;
-  --line: #e1e4e8;
-  --fg: #1c1f24;
-  --muted: #5e6570;
-  --faint: #9aa1ab;
-  --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, 0.12);
-  --danger: #d1343b;
-  --danger-soft: rgba(209, 52, 59, 0.08);
-  --ok: #1f8a4c;
-  --warn: #b7791f;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --app: #1b1d21;
-    --side: #212328;
-    --raised: #2a2d33;
-    --hover: #2e3137;
-    --line: #33373e;
-    --fg: #dfe2e7;
-    --muted: #9198a3;
-    --faint: #626973;
-    --accent: #5b8def;
-    --accent-soft: rgba(91, 141, 239, 0.18);
-    --danger: #f2656b;
-    --danger-soft: rgba(242, 101, 107, 0.1);
-    --ok: #4cc38a;
-    --warn: #e0b45c;
-  }
 }
 
 html,
@@ -65,15 +71,20 @@ body,
 
 body {
   margin: 0;
-  font-family: var(--font-ui);
+  font-family: var(--sv-font-ui);
   font-size: 13px;
   line-height: 1.4;
-  background: var(--app);
-  color: var(--fg);
+  background: var(--sv-paper);
+  color: var(--sv-ink);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   -webkit-user-select: none;
   overflow: hidden;
+}
+
+/* Mono text is data: uniform figures and a slashed zero, as in the grid. */
+.font-mono {
+  font-variant-numeric: tabular-nums slashed-zero;
 }
 
 input,
@@ -85,12 +96,17 @@ pre,
   -webkit-user-select: text;
 }
 
+input::placeholder,
+textarea::placeholder {
+  color: var(--sv-faint);
+}
+
 button {
   cursor: default;
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--sv-focus-ring);
   outline-offset: -1px;
 }
 
@@ -99,17 +115,17 @@ button {
 .field {
   height: 26px;
   padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--app);
-  color: var(--fg);
+  border: 1px solid var(--sv-border-strong);
+  border-radius: var(--sv-radius-control);
+  background: var(--sv-paper);
+  color: var(--sv-ink);
   font: inherit;
   min-width: 0;
 }
 .field:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--sv-focus-ring);
+  box-shadow: 0 0 0 3px var(--sv-accent-soft);
 }
 select.field {
   padding-right: 4px;
@@ -121,35 +137,35 @@ select.field {
   gap: 5px;
   height: 26px;
   padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--raised);
-  color: var(--fg);
+  border: 1px solid var(--sv-border);
+  border-radius: var(--sv-radius-control);
+  background: var(--sv-raised);
+  color: var(--sv-ink);
   white-space: nowrap;
 }
 .btn:hover:not(:disabled) {
-  background: var(--hover);
+  background: var(--sv-surface-2);
 }
 .btn:disabled {
   opacity: 0.45;
 }
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--sv-accent);
+  border-color: var(--sv-accent);
+  color: var(--sv-accent-fg);
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.08);
+  background: var(--sv-accent-hover);
+  border-color: var(--sv-accent-hover);
 }
 .btn-danger {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
+  background: var(--sv-error);
+  border-color: var(--sv-error);
+  color: var(--sv-error-fg);
 }
 .btn-danger:hover:not(:disabled) {
-  background: var(--danger);
-  filter: brightness(1.08);
+  background: var(--sv-error-hover);
+  border-color: var(--sv-error-hover);
 }
 
 .icon-btn {
@@ -158,15 +174,35 @@ select.field {
   justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: 5px;
-  color: var(--muted);
+  border-radius: var(--sv-radius-control);
+  color: var(--sv-muted);
 }
 .icon-btn:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--fg);
+  background: var(--sv-surface-2);
+  color: var(--sv-ink);
 }
 .icon-btn:disabled {
   opacity: 0.4;
+}
+
+/* Status badges. Red is reserved for WRITE and errors. */
+.badge-write,
+.badge-readonly {
+  border-radius: var(--sv-radius-badge);
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.badge-write {
+  background: var(--sv-write-bg);
+  color: var(--sv-write-fg);
+}
+.badge-readonly {
+  border: 1px solid var(--sv-readonly-border);
+  color: var(--sv-readonly-fg);
+  line-height: 14px;
 }
 }
 
@@ -175,7 +211,7 @@ select.field {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--line);
+  background: var(--sv-border);
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: content-box;

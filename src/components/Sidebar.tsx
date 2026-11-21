@@ -48,24 +48,24 @@ export const Sidebar = forwardRef<HTMLInputElement>(function Sidebar(_props, sea
   const profile = useApp((s) => s.profiles.find((p) => p.id === s.conn?.profileId));
   if (!conn || conn.status === "failed" || !profile) {
     return (
-      <aside className="flex w-full flex-col bg-side">
+      <aside className="flex w-full flex-col bg-surface">
         <ConnectionList />
       </aside>
     );
   }
   return (
-    <aside className="flex w-full flex-col bg-side">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line pr-1.5 pl-3">
+    <aside className="flex w-full flex-col bg-surface">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border pr-1.5 pl-3">
         <ColorDot color={profile.color} />
         <span className="min-w-0 flex-1 truncate font-semibold" title={`${profile.user}@${profile.host}:${profile.port}/${profile.database}`}>
           {profile.name}
         </span>
         {profile.readOnly ? (
-          <span className="rounded-sm border border-line px-1 text-[10px] leading-4 text-muted" title="Session is read-only">
+          <span className="badge-readonly" title="Session is read-only">
             READ-ONLY
           </span>
         ) : (
-          <span className="rounded-sm bg-danger px-1 text-[10px] leading-4 font-semibold text-white" title="Writes are allowed on this connection">
+          <span className="badge-write" title="Writes are allowed on this connection">
             WRITE
           </span>
         )}
@@ -111,7 +111,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
 
   return (
     <>
-      <div className="flex shrink-0 items-center gap-1 border-b border-line px-2 py-1.5">
+      <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
         <div className="relative flex-1">
           <Search size={13} className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-faint" aria-hidden />
           <input
@@ -131,7 +131,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
             spellCheck={false}
           />
           {query && (
-            <button className="absolute top-1/2 right-1 -translate-y-1/2 text-faint hover:text-fg" aria-label="Clear filter" onClick={() => setQuery("")}>
+            <button className="absolute top-1/2 right-1 -translate-y-1/2 text-faint hover:text-ink" aria-label="Clear filter" onClick={() => setQuery("")}>
               <X size={13} />
             </button>
           )}
@@ -151,11 +151,11 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
           return (
             <div key={s.name} role="treeitem" aria-expanded={open} aria-selected={false}>
               <button
-                className="flex w-full items-center gap-1 px-1.5 py-[3px] text-left text-muted hover:bg-hover"
+                className="flex w-full items-center gap-1 px-1.5 py-[3px] text-left text-muted hover:bg-surface-2"
                 onClick={() => toggle(s.name)}
               >
                 {open ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
-                <span className="truncate font-medium text-fg">{s.name}</span>
+                <span className="truncate font-medium text-ink">{s.name}</span>
                 <span className="ml-auto pr-1.5 text-[11px] text-faint tabular-nums">{s.relations.length}</span>
               </button>
               {open && (
@@ -169,7 +169,7 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                         key={r.name}
                         role="treeitem"
                         aria-selected={active}
-                        className={`flex w-full items-center gap-1.5 py-[3px] pr-2 pl-6 text-left ${active ? "bg-accent-soft" : "hover:bg-hover"}`}
+                        className={`flex w-full items-center gap-1.5 py-[3px] pr-2 pl-6 text-left ${active ? "bg-accent-soft" : "hover:bg-surface-2"}`}
                         title={`${k.label} · ${formatBytes(r.sizeBytes)} · ~${r.estRows < 0 ? "never analyzed" : r.estRows.toLocaleString()} rows`}
                         onClick={() => openTable(r.schema, r.name)}
                         onContextMenu={(e) => {
@@ -177,9 +177,9 @@ const SchemaTree = forwardRef<HTMLInputElement>(function SchemaTree(_props, sear
                           setMenu({ x: e.clientX, y: e.clientY, rel: r });
                         }}
                       >
-                        <Icon size={13} className={r.kind === "table" ? "shrink-0 text-faint" : "shrink-0 text-accent"} aria-label={k.label} />
+                        <Icon size={13} className={r.kind === "table" ? `shrink-0 ${active ? "text-muted" : "text-faint"}` : "shrink-0 text-accent"} aria-label={k.label} />
                         <span className="min-w-0 flex-1 truncate">{r.name}</span>
-                        <span className="shrink-0 font-mono text-[11px] text-faint tabular-nums">{formatCount(r.estRows)}</span>
+                        <span className={`shrink-0 font-mono text-[11px] tabular-nums ${active ? "text-muted" : "text-faint"}`}>{formatCount(r.estRows)}</span>
                       </button>
                     );
                   })}

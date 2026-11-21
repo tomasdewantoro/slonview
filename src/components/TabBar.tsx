@@ -10,7 +10,7 @@ export function TabBar() {
   const { activateTab, closeTab, openSql } = appStore.getState();
 
   return (
-    <div className="flex h-9 shrink-0 items-stretch border-b border-line bg-side">
+    <div className="flex h-9 shrink-0 items-stretch border-b border-border bg-surface">
       <div role="tablist" aria-label="Open tabs" className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
         {tabs.map((t: Tab, i) => {
           const Icon = ICON[t.kind];
@@ -28,11 +28,11 @@ export function TabBar() {
                   closeTab(t.id);
                 } else if (e.button === 0) activateTab(t.id);
               }}
-              className={`group relative flex max-w-56 min-w-28 shrink-0 items-center gap-1.5 border-r border-line pr-1 pl-2.5 ${
-                isActive ? "bg-app text-fg" : "text-muted hover:bg-hover"
+              className={`group relative flex max-w-56 min-w-28 shrink-0 items-center gap-1.5 border-r border-border pr-1 pl-2.5 ${
+                isActive ? "bg-paper text-ink" : "text-muted hover:bg-surface-2"
               }`}
             >
-              {isActive && <span aria-hidden className="absolute inset-x-0 bottom-[-1px] h-px bg-app" />}
+              {isActive && <span aria-hidden className="absolute inset-x-0 bottom-[-1px] h-px bg-paper" />}
               <Icon size={13} className={`shrink-0 ${t.kind === "table" ? "" : "text-accent"}`} aria-hidden />
               <span className="min-w-0 flex-1 truncate text-[12.5px]">
                 {t.title}

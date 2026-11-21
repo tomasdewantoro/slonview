@@ -28,8 +28,8 @@ function Section({ title, count, children }: { title: string; count?: number; ch
   );
 }
 
-const th = "border-b border-line px-2.5 py-1 text-left text-[11px] font-semibold text-muted";
-const td = "border-b border-line px-2.5 py-1 align-top";
+const th = "border-b border-border px-2.5 py-1 text-left text-[11px] font-semibold text-muted";
+const td = "border-b border-border px-2.5 py-1 align-top";
 
 export function StructureTab({ tab, connId }: { tab: StructureTabInfo; connId: string }) {
   const nonce = useApp((s) => s.structureNonce[tab.id] ?? 0);
@@ -68,7 +68,7 @@ export function StructureTab({ tab, connId }: { tab: StructureTabInfo; connId: s
       </header>
 
       <Section title="Columns" count={d.columns.length}>
-        <table className="w-full border-collapse border-t border-line text-xs">
+        <table className="w-full border-collapse border-t border-border text-xs">
           <thead>
             <tr>
               <th className={`${th} w-8 text-right`}>#</th>
@@ -81,11 +81,11 @@ export function StructureTab({ tab, connId }: { tab: StructureTabInfo; connId: s
           </thead>
           <tbody>
             {d.columns.map((c, i) => (
-              <tr key={c.name} className="hover:bg-hover">
+              <tr key={c.name} className="hover:bg-surface-2">
                 <td className={`${td} text-right text-faint tabular-nums`}>{i + 1}</td>
                 <td className={`${td} font-mono`}>
                   {c.name}
-                  {c.isPk && <span className="ml-1.5 rounded-sm bg-warn/15 px-1 text-[10px] font-semibold text-warn">PK</span>}
+                  {c.isPk && <span className="ml-1.5 rounded-sm bg-warn-soft px-1 text-[10px] font-semibold text-warn">PK</span>}
                 </td>
                 <td className={`${td} font-mono text-muted`}>{c.typeName}</td>
                 <td className={`${td} ${c.nullable ? "text-muted" : ""}`}>{c.nullable ? "null" : "not null"}</td>
@@ -99,7 +99,7 @@ export function StructureTab({ tab, connId }: { tab: StructureTabInfo; connId: s
 
       {d.viewDefinition !== null && (
         <Section title="Definition">
-          <pre className="overflow-auto rounded-md border border-line bg-side p-3 font-mono text-xs leading-relaxed">{d.viewDefinition.trim()}</pre>
+          <pre className="overflow-auto rounded-md border border-border bg-surface p-3 font-mono text-xs leading-relaxed">{d.viewDefinition.trim()}</pre>
         </Section>
       )}
 
@@ -108,10 +108,10 @@ export function StructureTab({ tab, connId }: { tab: StructureTabInfo; connId: s
           {d.indexes.length === 0 ? (
             <p className="text-xs text-muted">No indexes.</p>
           ) : (
-            <table className="w-full border-collapse border-t border-line text-xs">
+            <table className="w-full border-collapse border-t border-border text-xs">
               <tbody>
                 {d.indexes.map((ix) => (
-                  <tr key={ix.name} className="hover:bg-hover">
+                  <tr key={ix.name} className="hover:bg-surface-2">
                     <td className={`${td} w-56 font-mono`}>
                       {ix.name}
                       {ix.isPrimary ? (
@@ -134,10 +134,10 @@ export function StructureTab({ tab, connId }: { tab: StructureTabInfo; connId: s
           {d.foreignKeys.length === 0 ? (
             <p className="text-xs text-muted">No foreign keys.</p>
           ) : (
-            <table className="w-full border-collapse border-t border-line text-xs">
+            <table className="w-full border-collapse border-t border-border text-xs">
               <tbody>
                 {d.foreignKeys.map((fk) => (
-                  <tr key={fk.name} className="hover:bg-hover">
+                  <tr key={fk.name} className="hover:bg-surface-2">
                     <td className={`${td} w-56 font-mono`}>{fk.name}</td>
                     <td className={`${td} font-mono break-all text-muted`}>{fk.definition}</td>
                   </tr>

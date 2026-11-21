@@ -17,7 +17,7 @@ export function StatusBar() {
       dot = "bg-warn";
     } else if (conn.status === "failed") {
       connLabel = `${profile.name}: connection failed`;
-      dot = "bg-danger";
+      dot = "bg-error";
     } else {
       connLabel = `${profile.user}@${profile.host}:${profile.port}/${profile.database}`;
       dot = "bg-ok";
@@ -26,7 +26,7 @@ export function StatusBar() {
   const version = conn?.server?.version.split(" on ")[0];
 
   return (
-    <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-side px-3 text-[11px] text-muted tabular-nums">
+    <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-border bg-surface px-3 text-[11px] text-muted tabular-nums">
       {tab?.kind === "table" && data && (
         <>
           <span className="flex shrink-0 items-center gap-1">

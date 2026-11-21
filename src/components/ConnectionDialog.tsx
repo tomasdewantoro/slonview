@@ -8,7 +8,16 @@ import type { SslMode } from "../bindings/SslMode";
 import { appStore } from "../store/app";
 import { Dialog } from "./Dialog";
 
-export const PROFILE_COLORS = ["#3b82f6", "#22a06b", "#e5484d", "#f59e0b", "#8e4ec6", "#0ea5a4", "#6b7280"];
+/** User-chosen connection dot colours (user data, not brand tokens). No red: red means WRITE or an error. */
+export const PROFILE_COLORS = ["#3b82f6", "#22a06b", "#f59e0b", "#8e4ec6", "#0ea5a4", "#6b7280"];
+
+/** Colours earlier versions offered and no longer do, mapped to the nearest remaining one (CIE ΔE76). */
+const RETIRED_COLORS: Record<string, string> = { "#e5484d": "#f59e0b" };
+
+/** The colour to draw for a stored profile colour; retired values render as their replacement. */
+export function profileColor(color: string | null): string | null {
+  return color === null ? null : (RETIRED_COLORS[color.toLowerCase()] ?? color);
+}
 
 /** Suggestions only; any IANA name Postgres accepts is allowed. */
 export const COMMON_TIME_ZONES = [
@@ -173,11 +182,11 @@ export function ConnectionDialog({ existing, onClose }: Props) {
               </span>
             )}
             {test.kind === "error" && (
-              <span className="text-danger" title={test.message}>
+              <span className="text-error" title={test.message}>
                 {test.message}
               </span>
             )}
-            {saveError && <span className="text-danger">{saveError}</span>}
+            {saveError && <span className="text-error">{saveError}</span>}
           </div>
           <button className="btn" onClick={runTest} disabled={!valid || test.kind === "running"}>
             {test.kind === "running" && <LoaderCircle size={13} className="animate-spin" aria-hidden />}
@@ -241,15 +250,15 @@ export function ConnectionDialog({ existing, onClose }: Props) {
               Import ~/.pgpass
             </button>
           </div>
-          {urlError && <p className="mt-1 text-xs text-danger">{urlError}</p>}
-          {pgpassError && <p className="mt-1 text-xs text-danger">{pgpassError}</p>}
+          {urlError && <p className="mt-1 text-xs text-error">{urlError}</p>}
+          {pgpassError && <p className="mt-1 text-xs text-error">{pgpassError}</p>}
         </div>
 
         {pgpass && (
           <>
             <span />
-            <div className="rounded-md border border-line">
-              <div className="flex items-center justify-between border-b border-line px-2 py-1 text-xs text-muted">
+            <div className="rounded-md border border-border">
+              <div className="flex items-center justify-between border-b border-border px-2 py-1 text-xs text-muted">
                 <span>{pgpass.length === 0 ? "No concrete entries in ~/.pgpass" : "Pick an entry to fill the form"}</span>
                 <button type="button" className="text-xs text-accent" onClick={() => setPgpass(null)}>
                   Close
@@ -260,7 +269,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
                   <li key={i}>
                     <button
                       type="button"
-                      className="w-full truncate px-2 py-1 text-left font-mono text-xs hover:bg-hover"
+                      className="w-full truncate px-2 py-1 text-left font-mono text-xs hover:bg-surface-2"
                       onClick={() => {
                         applyParsed(entry);
                         setPgpass(null);
@@ -275,7 +284,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
           </>
         )}
 
-        <div className="col-span-2 my-1 h-px bg-line" />
+        <div className="col-span-2 my-1 h-px bg-border" />
 
         <label htmlFor="cd-name" className="text-muted">
           Name
@@ -432,17 +441,17 @@ export function ConnectionDialog({ existing, onClose }: Props) {
             aria-checked={p.color === null}
             aria-label="No color"
             onClick={() => update({ color: null })}
-            className={`size-5 rounded-full border-2 border-dashed border-faint ${p.color === null ? "ring-2 ring-accent ring-offset-1 ring-offset-raised" : ""}`}
+            className={`size-5 rounded-full border-2 border-dashed border-border-strong ${p.color === null ? "ring-2 ring-focus-ring ring-offset-1 ring-offset-raised" : ""}`}
           />
           {PROFILE_COLORS.map((c) => (
             <button
               key={c}
               type="button"
               role="radio"
-              aria-checked={p.color === c}
+              aria-checked={profileColor(p.color) === c}
               aria-label={`Color ${c}`}
               onClick={() => update({ color: c })}
-              className={`size-5 rounded-full ${p.color === c ? "ring-2 ring-accent ring-offset-1 ring-offset-raised" : ""}`}
+              className={`size-5 rounded-full ${profileColor(p.color) === c ? "ring-2 ring-focus-ring ring-offset-1 ring-offset-raised" : ""}`}
               style={{ background: c }}
             />
           ))}

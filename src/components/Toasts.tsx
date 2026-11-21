@@ -12,9 +12,9 @@ function ToastItem({ toast }: { toast: Toast }) {
   return (
     <div
       role={toast.kind === "error" ? "alert" : "status"}
-      className="flex w-[360px] items-start gap-2 rounded-md border border-line bg-raised p-2.5 shadow-lg"
+      className="flex w-[360px] items-start gap-2 rounded-md border border-border bg-raised p-2.5 shadow-lg"
     >
-      {toast.kind === "error" && <TriangleAlert size={15} className="mt-0.5 shrink-0 text-danger" aria-hidden />}
+      {toast.kind === "error" && <TriangleAlert size={15} className="mt-0.5 shrink-0 text-error" aria-hidden />}
       <p className="min-w-0 flex-1 text-xs break-words text-pretty">{toast.message}</p>
       <button className="icon-btn size-5" aria-label="Dismiss" onClick={() => appStore.getState().dismissToast(toast.id)}>
         <X size={12} />

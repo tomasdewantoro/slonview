@@ -74,15 +74,15 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
         shiftDown.current = e.shiftKey;
       }}
     >
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-line px-2">
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
         <button
-          className={`btn h-6 px-2 text-xs ${showFilters ? "bg-hover" : ""}`}
+          className={`btn h-6 px-2 text-xs ${showFilters ? "bg-surface-2" : ""}`}
           onClick={() => setShowFilters((v) => !v)}
           aria-pressed={showFilters}
           title="Toggle filters"
         >
           <Filter size={12} aria-hidden /> Filters
-          {activeFilters > 0 && <span className="rounded-full bg-accent px-1.5 text-[10px] leading-4 text-white tabular-nums">{activeFilters}</span>}
+          {activeFilters > 0 && <span className="rounded-full bg-accent px-1.5 text-[10px] leading-4 text-accent-fg tabular-nums">{activeFilters}</span>}
         </button>
         <button className="btn h-6 px-2 text-xs" onClick={() => openStructure(tab.query.schema, tab.query.table)}>
           <TableProperties size={12} aria-hidden /> Structure
@@ -96,7 +96,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
           ) : data.exactCount !== null ? (
             `${data.exactCount.toLocaleString()} rows`
           ) : data.countError ? (
-            <span className="text-danger" title={errorMessage(data.countError)}>
+            <span className="text-error" title={errorMessage(data.countError)}>
               count failed
             </span>
           ) : null}
@@ -127,7 +127,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
           {exporting ? <LoaderCircle size={12} className="animate-spin" aria-hidden /> : <FileDown size={12} aria-hidden />} Export CSV
         </button>
         <button
-          className={`icon-btn ${inspecting ? "bg-hover text-fg" : ""}`}
+          className={`icon-btn ${inspecting ? "bg-surface-2 text-ink" : ""}`}
           aria-label="Toggle cell inspector"
           aria-pressed={inspecting !== null}
           title="Cell inspector (double-click or ↵ on a cell)"
@@ -177,7 +177,7 @@ export function TableTab({ tab, connId }: { tab: TableTabInfo; connId: string })
             </div>
           )}
           {data.cancelled && !data.loading && (
-            <div className="shrink-0 border-t border-line bg-side px-3 py-1 text-xs text-muted">
+            <div className="shrink-0 border-t border-border bg-surface px-3 py-1 text-xs text-muted">
               Load cancelled.{" "}
               <button className="text-accent" onClick={() => (loaded ? void loadMore(tab.id) : refreshTab(tab.id))}>
                 Resume

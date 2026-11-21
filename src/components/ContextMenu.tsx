@@ -62,12 +62,12 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
       role="menu"
       onKeyDown={onKeyDown}
       onContextMenu={(e) => e.preventDefault()}
-      className="fixed z-50 min-w-44 rounded-md border border-line bg-raised py-1 shadow-lg"
+      className="fixed z-50 min-w-44 rounded-md border border-border bg-raised py-1 shadow-lg"
       style={{ left: pos.x, top: pos.y }}
     >
       {items.map((item, i) =>
         item.separator ? (
-          <div key={i} className="my-1 h-px bg-line" />
+          <div key={i} className="my-1 h-px bg-border" />
         ) : (
           <button
             key={i}
@@ -77,10 +77,12 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
               onClose();
               item.onSelect();
             }}
-            className="flex w-full items-center justify-between gap-6 px-3 py-1 text-left text-fg outline-none hover:bg-accent hover:text-white focus-visible:bg-accent focus-visible:text-white disabled:opacity-40"
+            className="group flex w-full items-center justify-between gap-6 px-3 py-1 text-left text-ink outline-none hover:bg-accent hover:text-accent-fg focus-visible:bg-accent focus-visible:text-accent-fg disabled:opacity-40"
           >
             <span>{item.label}</span>
-            {item.shortcut && <span className="text-xs opacity-60">{item.shortcut}</span>}
+            {item.shortcut && (
+              <span className="text-xs text-muted group-hover:text-accent-fg-muted group-focus-visible:text-accent-fg-muted">{item.shortcut}</span>
+            )}
           </button>
         ),
       )}

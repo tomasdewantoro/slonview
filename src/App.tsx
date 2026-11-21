@@ -97,7 +97,7 @@ export default function App() {
   return (
     <div className="flex h-dvh flex-col">
       <div className="flex min-h-0 flex-1">
-        <div className="flex w-[264px] shrink-0 border-r border-line">
+        <div className="flex w-[264px] shrink-0 border-r border-border">
           <Sidebar ref={searchRef} />
         </div>
         <main className="flex min-w-0 flex-1 flex-col">

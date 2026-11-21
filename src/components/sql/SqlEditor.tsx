@@ -4,7 +4,8 @@ import { basicSetup } from "codemirror";
 import { Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, EditorView, keymap, type DecorationSet } from "@codemirror/view";
 import { PostgreSQL, sql } from "@codemirror/lang-sql";
-import { oneDark } from "@codemirror/theme-one-dark";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags as t } from "@lezer/highlight";
 import type { SchemaNode } from "../../bindings/SchemaNode";
 import { completionNamespace } from "../../lib/sqlResult";
 
@@ -39,18 +40,55 @@ export function clearSqlError(view: EditorView) {
   view.dispatch({ effects: setErrorMark.of(null) });
 }
 
-const baseTheme = EditorView.theme({
-  "&": { height: "100%", fontSize: "13px" },
+// Brand editor theme (brand guidelines §11.2). Every colour is a CSS token from src/styles/tokens.css,
+// so light and dark follow prefers-color-scheme without rebuilding the theme.
+const brandTheme = EditorView.theme({
+  "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--sv-editor-bg)", color: "var(--sv-editor-fg)" },
   "&.cm-focused": { outline: "none" },
-  ".cm-scroller": { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: "1.5" },
-  ".cm-gutters": { borderRight: "none" },
+  ".cm-scroller": {
+    fontFamily: "var(--sv-font-mono)",
+    lineHeight: "1.5",
+    fontVariantLigatures: "none",
+    fontFeatureSettings: '"calt" 0, "zero" 1',
+  },
+  ".cm-content": { caretColor: "var(--sv-editor-cursor)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeft: "2px solid var(--sv-editor-cursor)" },
+  ".cm-gutters": { backgroundColor: "var(--sv-editor-gutter-bg)", color: "var(--sv-editor-gutter-fg)", borderRight: "none" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--sv-editor-active-line)", color: "var(--sv-editor-gutter-active-fg)" },
+  ".cm-activeLine": { backgroundColor: "var(--sv-editor-active-line)" },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "var(--sv-editor-selection)",
+  },
+  ".cm-selectionMatch": { backgroundColor: "var(--sv-accent-soft)" },
+  "&.cm-focused .cm-matchingBracket": { backgroundColor: "var(--sv-accent-soft)", outline: "1px solid var(--sv-border-strong)" },
+  "&.cm-focused .cm-nonmatchingBracket": { backgroundColor: "var(--sv-error-soft)" },
+  ".cm-foldPlaceholder": { backgroundColor: "var(--sv-surface-2)", border: "none", color: "var(--sv-muted)" },
+  ".cm-tooltip": { backgroundColor: "var(--sv-raised)", color: "var(--sv-ink)", border: "1px solid var(--sv-border)" },
+  ".cm-tooltip-autocomplete ul li[aria-selected]": { backgroundColor: "var(--sv-accent)", color: "var(--sv-accent-fg)" },
+  ".cm-tooltip-autocomplete ul li[aria-selected] .cm-completionDetail": { color: "var(--sv-accent-fg-muted)" },
+  ".cm-completionDetail": { color: "var(--sv-muted)" },
+  ".cm-completionMatchedText": { textDecoration: "none", fontWeight: "600" },
+  ".cm-panels": { backgroundColor: "var(--sv-surface)", color: "var(--sv-ink)" },
+  ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--sv-border)" },
+  ".cm-panels.cm-panels-bottom": { borderTop: "1px solid var(--sv-border)" },
+  ".cm-searchMatch": { backgroundColor: "var(--sv-warn-soft)", outline: "1px solid var(--sv-warn)" },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--sv-selection)" },
   ".cm-sql-error": {
-    textDecoration: "underline wavy #ef4444",
+    textDecoration: "underline wavy var(--sv-editor-error-underline)",
     textDecorationSkipInk: "none",
     textUnderlineOffset: "3px",
-    backgroundColor: "rgba(239, 68, 68, 0.12)",
+    backgroundColor: "var(--sv-editor-error-bg)",
   },
 });
+
+// Replaces basicSetup's fallback highlight style; untagged text keeps editor-fg.
+const brandHighlight = HighlightStyle.define([
+  { tag: t.keyword, color: "var(--sv-syntax-keyword)" },
+  { tag: [t.string, t.special(t.string)], color: "var(--sv-syntax-string)" },
+  { tag: [t.number, t.bool, t.null], color: "var(--sv-syntax-number)" },
+  { tag: [t.lineComment, t.blockComment, t.comment], color: "var(--sv-syntax-comment)", fontStyle: "italic" },
+  { tag: [t.operator, t.punctuation, t.paren, t.squareBracket, t.brace, t.separator], color: "var(--sv-syntax-operator)" },
+]);
 
 const darkQuery = "(prefers-color-scheme: dark)";
 function subscribeDark(onChange: () => void) {
@@ -78,7 +116,8 @@ export function SqlEditor({ viewRef, storageKey, initialSql, schema, onRun, onCa
   const handlers = useRef({ onRun, onCancel });
   handlers.current = { onRun, onCancel };
   const language = useRef(new Compartment());
-  const theme = useRef(new Compartment());
+  // Tells CodeMirror's own base styles (tooltips, panels) which scheme is active; colours come from tokens.
+  const scheme = useRef(new Compartment());
   const dark = useSyncExternalStore(subscribeDark, () => window.matchMedia(darkQuery).matches);
   const initial = useRef({ initialSql, schema, dark });
 
@@ -103,8 +142,9 @@ export function SqlEditor({ viewRef, storageKey, initialSql, schema, onRun, onCa
           ),
           basicSetup,
           language.current.of(languageFor(initial.current.schema)),
-          theme.current.of(initial.current.dark ? oneDark : []),
-          baseTheme,
+          scheme.current.of(EditorView.darkTheme.of(initial.current.dark)),
+          brandTheme,
+          syntaxHighlighting(brandHighlight),
           errorField,
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return;
@@ -129,8 +169,8 @@ export function SqlEditor({ viewRef, storageKey, initialSql, schema, onRun, onCa
   }, [schema, viewRef]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: theme.current.reconfigure(dark ? oneDark : []) });
+    viewRef.current?.dispatch({ effects: scheme.current.reconfigure(EditorView.darkTheme.of(dark)) });
   }, [dark, viewRef]);
 
-  return <div ref={hostRef} className="h-full min-h-0 bg-white dark:bg-[#282c34]" />;
+  return <div ref={hostRef} className="h-full min-h-0 bg-paper" />;
 }
