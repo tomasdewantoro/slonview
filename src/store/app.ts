@@ -272,7 +272,8 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         const profiles = await api.setTimeZone(connId, timeZone);
         if (connectedId() !== connId) return;
         set({ profiles });
-        await Promise.all(get().tabs.filter((tab) => tab.kind === "table").map((tab) => get().loadFirst(tab.id)));
+        // Reload table tabs in the background; the picker shouldn't wait on slow pages.
+        for (const tab of get().tabs) if (tab.kind === "table") void get().loadFirst(tab.id);
       },
 
       async deleteProfile(id) {

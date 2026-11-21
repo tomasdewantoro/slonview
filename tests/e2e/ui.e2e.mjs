@@ -623,6 +623,8 @@ try {
     psql("INSERT INTO scratch_insert_target(id,customer_id,status,amount,note,created_at) VALUES (900000004,1,'paid',1.00,'grid-before',now())");
     try {
       await openRel("scratch_insert_target");
+      // Edit permissions load asynchronously; "Add row" is enabled only once editing is allowed.
+      await until(() => [...document.querySelectorAll("button")].some((b) => b.innerText.trim() === "Add row" && !b.disabled), 10000);
       const y = await gridTop();
       await page.mouse.click(330, y + HEADER + 12);
       for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
