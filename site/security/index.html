@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security · Slonview</title>
+<meta name="description" content="How to report a security vulnerability in Slonview.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="canonical" href="https://slonview.com/security">
+<style>
+@font-face { font-family: "Hanken Grotesk"; src: url("/assets/fonts/HankenGrotesk-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/assets/fonts/JetBrainsMono-Variable.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+:root { --accent: #6E2366; --ink: #16181D; --paper: #FFFFFF; --border: #E1E4E8; --muted: #4F5661; }
+@media (prefers-color-scheme: dark) { :root { --accent: #D9A8FA; --ink: #DFE2E7; --paper: #1B1D21; --border: #33373E; --muted: #ADB3BD; } }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 "Hanken Grotesk", -apple-system, system-ui, sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 40px 24px 64px; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+h1 { font-size: 36px; letter-spacing: -0.01em; margin: 24px 0 16px; }
+h2 { font-size: 21px; margin: 32px 0 8px; }
+p, li { color: var(--muted); }
+code { font: 0.9em "JetBrains Mono", ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <a href="/">← Slonview</a>
+  <h1>Reporting a vulnerability</h1>
+  <p>Email <a href="mailto:security@slonview.com">security@slonview.com</a>. Please don't open a public GitHub issue for security problems.</p>
+  <p>Include the Slonview version, your operating system, steps to reproduce, and what an attacker could do with it. You'll get a reply within 7 days. Slonview is maintained by one person, so fixes ship as fast as that allows, and you'll be credited in the release notes unless you ask not to be.</p>
+
+  <h2>In scope</h2>
+  <ul>
+    <li>The Slonview desktop app and its release builds.</li>
+    <li>Ways around read-only mode that use ordinary SQL, such as committing a write while a connection shows <code>READ-ONLY</code>.</li>
+    <li>Credential handling: passwords leaving the OS credential store, or being written to disk or logs.</li>
+    <li>TLS or SSH host-key checks that accept what they should refuse.</li>
+  </ul>
+
+  <h2>Known limits, not vulnerabilities</h2>
+  <ul>
+    <li>Read-only mode is a guard, not a permission system. Functions with effects outside the transaction (for example <code>pg_advisory_lock</code>, <code>dblink</code> or <code>postgres_fdw</code>) can still act. Use a role with only <code>SELECT</code> for a hard guarantee.</li>
+    <li><code>prefer</code> and <code>require</code> TLS modes encrypt but don't verify the server certificate, as in libpq. Use <code>verify-full</code> on untrusted networks.</li>
+  </ul>
+</main>
+</body>
+</html>
