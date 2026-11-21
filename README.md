@@ -36,9 +36,9 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 - No paid tier, no tab limits.
 - Copy as CSV, TSV, JSON or INSERT.
 - No telemetry: Slonview only talks to the PostgreSQL servers you configure.
-- Passwords stay in your macOS Keychain.
+- Passwords stay in the OS credential store (Keychain on macOS).
 
-**No telemetry.** Slonview contains no analytics, crash reporting, or update checks. The only network connections it makes are to the PostgreSQL servers you configure (plus the DNS lookups needed to find them). Your passwords stay in your macOS Keychain.
+**No telemetry.** Slonview contains no analytics, crash reporting, or update checks. The only network connections it makes are to the PostgreSQL servers you configure (plus the DNS lookups needed to find them). Your passwords stay in the OS credential store (Keychain on macOS).
 
 ## Features
 
@@ -92,7 +92,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-The Rust workspace has two crates: `crates/core` (`slonview-core`: all PostgreSQL, config, and Keychain logic, no Tauri dependency) and `src-tauri` (`slonview`: the Tauri app and command layer). The React frontend lives in `src/`.
+The Rust workspace has two crates: `crates/core` (`slonview-core`: all PostgreSQL, config, and credential-store logic, no Tauri dependency) and `src-tauri` (`slonview`: the Tauri app and command layer). The React frontend lives in `src/`.
 
 ## Tests
 
@@ -112,14 +112,14 @@ pnpm test
 tests/e2e/run.sh
 ```
 
-`tests/e2e/run.sh` is fully headless. It starts a dev-only HTTP bridge to the real Rust engine and the real frontend in headless Chromium (set `CHROME=` to a Chromium headless shell binary), runs the engine and UI suites, and stops both servers. Profiles go to a temporary directory. The suite creates one Keychain entry and deletes it at the end.
+`tests/e2e/run.sh` is fully headless. It starts a dev-only HTTP bridge to the real Rust engine and the real frontend in headless Chromium (set `CHROME=` to a Chromium headless shell binary), runs the engine and UI suites, and stops both servers. Profiles go to a temporary directory. The suite creates one credential-store entry and deletes it at the end.
 
 ## Security notes
 
 - **Read-only mode is a guard, not a permission system.** It stops ordinary writes, transaction escapes, and multi-command text in Raw WHERE and filters. It does not stop functions with effects outside the transaction (for example `pg_advisory_lock`, or extensions such as `dblink` and `postgres_fdw` that open their own connections). For a hard guarantee, connect as a database role that only has `SELECT`.
-- **Passwords live in the macOS Keychain** (service `slonview`, one item per profile). Connection profiles are stored without passwords in `~/Library/Application Support/slonview/connections.toml` (file mode `0600`).
+- **Passwords live in the OS credential store (Keychain on macOS)** (service `slonview`, one item per profile). Connection profiles are stored without passwords in `connections.toml` (file mode `0600` on macOS and Linux) in the app data directory: `~/Library/Application Support/slonview` on macOS, `~/.local/share/slonview` on Linux, `%APPDATA%\slonview` on Windows.
 - **TLS modes.** `prefer` and `require` encrypt but do not verify the server certificate (libpq `sslmode=require` semantics), so they do not protect against an active man-in-the-middle. `verify-ca` validates the certificate chain against the system trust store (plus an optional per-profile CA PEM bundle) but skips the hostname check; `verify-full` also checks the hostname. **Use `verify-full` for production** connections to untrusted networks.
-- **SSH tunnels.** A profile can connect to PostgreSQL through an SSH server. The host key is always verified against `~/.ssh/known_hosts` (hashed entries included): an unknown host is refused with instructions to run `ssh <host>` once, and a changed key is a hard error. Each pooled session and each cancel request uses its own direct-tcpip channel; the SSH password or key passphrase lives in the macOS Keychain under a separate account from the database password.
+- **SSH tunnels.** A profile can connect to PostgreSQL through an SSH server. The host key is always verified against `~/.ssh/known_hosts` (hashed entries included): an unknown host is refused with instructions to run `ssh <host>` once, and a changed key is a hard error. Each pooled session and each cancel request uses its own direct-tcpip channel; the SSH password or key passphrase lives in the OS credential store under a separate account from the database password.
 - The frontend never builds SQL for table browsing; the Rust core quotes identifiers and binds values.
 
 ## Trademark

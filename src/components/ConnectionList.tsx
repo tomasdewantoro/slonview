@@ -141,7 +141,7 @@ export function ConnectionList() {
           title="Delete connection"
           message={
             <>
-              Delete <b>{deleting.name}</b>? Its saved password is removed from the Keychain. This can't be undone.
+              Delete <b>{deleting.name}</b>? Its saved password is removed from this computer’s password store. This can't be undone.
             </>
           }
           confirmLabel="Delete"

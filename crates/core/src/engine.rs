@@ -55,7 +55,7 @@ impl Engine {
         server_info(&client).await
     }
 
-    /// Load profile + Keychain password, build pool (max 4), verify with one query.
+    /// Load profile + stored password, build pool (max 4), verify with one query.
     /// Reconnecting replaces any existing pool for this id.
     pub async fn connect(&self, conn_id: ConnId) -> AppResult<ServerInfo> {
         let profile = self.profiles.get(conn_id)?;

@@ -6,7 +6,7 @@
 #   tests/e2e/bridge-smoke.sh
 #
 # Needs the seeded fixture DB (tests/fixtures/seed.sql) on local Postgres, psql, jq, curl.
-# Creates one profile + Keychain entry and deletes both at the end.
+# Creates one profile + credential-store entry and deletes both at the end.
 set -euo pipefail
 
 B=${SLONVIEW_BRIDGE:-http://127.0.0.1:1499/invoke}
@@ -30,7 +30,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# E2E-01: password goes to the Keychain, never to the TOML.
+# E2E-01: password goes to the OS credential store, never to the TOML.
 expect "save_profile" 200 "$(call save_profile "{\"profile\":$PROFILE,\"password\":\"smoke-s3cret\"}")"
 kc() { call e2e_keychain_get "{\"id\":\"$ID\"}" >/dev/null; jq -r . "$OUT/body"; }
 expect "keychain has password" smoke-s3cret "$(kc)"

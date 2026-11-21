@@ -1,5 +1,5 @@
 //! Connection profiles persisted as TOML (no passwords) at
-//! `~/Library/Application Support/slonview/connections.toml`.
+//! `<app data dir>/connections.toml` (see [`app_data_dir`]).
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::model::{ConnId, ConnProfile, SslMode};
 use crate::{AppError, AppResult};
 
-/// `~/Library/Application Support/slonview` (created if missing).
+/// The platform data dir plus `slonview` (created if missing): `~/Library/Application Support/slonview`
+/// on macOS, `~/.local/share/slonview` on Linux, `%APPDATA%\slonview` on Windows.
 pub fn app_data_dir() -> AppResult<PathBuf> {
     let base = directories::BaseDirs::new()
         .ok_or_else(|| AppError::internal("cannot determine the home directory"))?;

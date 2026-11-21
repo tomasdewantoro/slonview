@@ -4,7 +4,7 @@
 //! Tauri commands call. Errors are HTTP 400 with the serialized `AppError`.
 //!
 //! Profiles and history live in a temp dir (`SLONVIEW_E2E_DIR` or a fresh one), never in the
-//! real app data directory; passwords go to the real macOS Keychain.
+//! real app data directory; passwords go to the real OS credential store.
 //!
 //! Run: `cargo run -p slonview --example e2e_bridge`
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use slonview_core::config::ProfileStore;
 use slonview_core::history::HistoryStore;
-use slonview_core::secrets::KeychainStore;
+use slonview_core::secrets::OsSecretStore;
 use slonview_core::{AppError, Engine};
 use slonview_lib::ops::{self, PasswordUpdate};
 use serde::de::DeserializeOwned;
@@ -109,7 +109,7 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
             arg(a, "analyze")?,
         )
         .await?),
-        // Test-only probe: reads the Keychain from this process (which created the item), so
+        // Test-only probe: reads the credential store from this process (which created the item), so
         // E2E scripts never run `security -w`, which can raise an access prompt.
         "e2e_keychain_get" => ok(engine.secrets.get(arg(a, "id")?)?),
         "set_time_zone" => ok(ops::set_time_zone(engine, arg(a, "connId")?, arg(a, "timeZone")?).await?),
@@ -242,7 +242,7 @@ async fn main() -> std::io::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let engine = Arc::new(Engine::new(
         ProfileStore::new(dir.join("connections.toml")),
-        Arc::new(KeychainStore),
+        Arc::new(OsSecretStore),
         HistoryStore::new(dir.join("history.jsonl")),
     ));
     let listener = TcpListener::bind(ADDR).await?;

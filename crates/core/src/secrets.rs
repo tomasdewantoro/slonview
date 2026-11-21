@@ -1,4 +1,5 @@
-//! Passwords live in the macOS Keychain: service "slonview", account = profile id.
+//! Passwords live in the OS credential store (Keychain on macOS, Secret Service on Linux,
+//! Credential Manager on Windows): service "slonview", account = profile id.
 use crate::model::ConnId;
 use crate::{AppError, AppResult};
 
@@ -13,7 +14,8 @@ pub trait SecretStore: Send + Sync {
     fn set_ssh(&self, id: ConnId, passphrase: bool, value: Option<&str>) -> AppResult<()>;
 }
 
-pub struct KeychainStore;
+/// Secrets in the platform credential store via `keyring`.
+pub struct OsSecretStore;
 
 /// In-memory store for tests.
 #[derive(Default)]
@@ -22,45 +24,45 @@ pub struct MemorySecretStore {
     ssh: std::sync::Mutex<std::collections::HashMap<(ConnId, bool), String>>,
 }
 
-fn keychain_entry(id: ConnId) -> AppResult<keyring::Entry> {
-    keyring::Entry::new(SERVICE, &id.to_string()).map_err(keychain_error)
+fn os_entry(id: ConnId) -> AppResult<keyring::Entry> {
+    keyring::Entry::new(SERVICE, &id.to_string()).map_err(store_error)
 }
 
-fn keychain_error(err: keyring::Error) -> AppError {
-    AppError::internal(format!("keychain: {err}"))
+fn store_error(err: keyring::Error) -> AppError {
+    AppError::internal(format!("credential store: {err}"))
 }
 
-impl SecretStore for KeychainStore {
+impl SecretStore for OsSecretStore {
     fn get(&self, id: ConnId) -> AppResult<Option<String>> {
-        match keychain_entry(id)?.get_password() {
+        match os_entry(id)?.get_password() {
             Ok(password) => Ok(Some(password)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(keychain_error(e)),
+            Err(e) => Err(store_error(e)),
         }
     }
     fn set(&self, id: ConnId, password: &str) -> AppResult<()> {
-        keychain_entry(id)?.set_password(password).map_err(keychain_error)
+        os_entry(id)?.set_password(password).map_err(store_error)
     }
     fn delete(&self, id: ConnId) -> AppResult<()> {
-        match keychain_entry(id)?.delete_credential() {
+        match os_entry(id)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(keychain_error(e)),
+            Err(e) => Err(store_error(e)),
         }
     }
     fn get_ssh(&self, id: ConnId, passphrase: bool) -> AppResult<Option<String>> {
         match ssh_entry(id, passphrase)?.get_password() {
             Ok(value) => Ok(Some(value)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(keychain_error(e)),
+            Err(e) => Err(store_error(e)),
         }
     }
     fn set_ssh(&self, id: ConnId, passphrase: bool, value: Option<&str>) -> AppResult<()> {
         let entry = ssh_entry(id, passphrase)?;
         match value {
-            Some(value) => entry.set_password(value).map_err(keychain_error),
+            Some(value) => entry.set_password(value).map_err(store_error),
             None => match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-                Err(e) => Err(keychain_error(e)),
+                Err(e) => Err(store_error(e)),
             },
         }
     }
@@ -91,7 +93,7 @@ impl SecretStore for MemorySecretStore {
 
 fn ssh_entry(id: ConnId, passphrase: bool) -> AppResult<keyring::Entry> {
     let suffix = if passphrase { "ssh-key-passphrase" } else { "ssh-password" };
-    keyring::Entry::new(SERVICE, &format!("{id}:{suffix}")).map_err(keychain_error)
+    keyring::Entry::new(SERVICE, &format!("{id}:{suffix}")).map_err(store_error)
 }
 
 #[cfg(test)]
@@ -110,12 +112,12 @@ mod tests {
         assert_eq!(store.get(id).unwrap(), None);
     }
 
-    /// Touches the real login Keychain; run manually:
+    /// Touches the real OS credential store (login Keychain on macOS); run manually:
     /// `cargo test -p slonview-core secrets -- --ignored`
     #[test]
     #[ignore]
-    fn keychain_roundtrip() {
-        let store = KeychainStore;
+    fn os_store_roundtrip() {
+        let store = OsSecretStore;
         let id = uuid::Uuid::new_v4();
         assert_eq!(store.get(id).unwrap(), None);
         store.delete(id).unwrap();

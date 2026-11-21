@@ -368,7 +368,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
             className="field flex-1 font-mono text-xs"
             type={showPassword ? "text" : "password"}
             value={password}
-            placeholder={existing && !passwordTouched ? "Stored in Keychain (unchanged)" : "None"}
+            placeholder={existing && !passwordTouched ? "Saved password (unchanged)" : "None"}
             onChange={(e) => {
               setPassword(e.target.value);
               setPasswordTouched(true);
@@ -417,7 +417,7 @@ export function ConnectionDialog({ existing, onClose }: Props) {
           <label htmlFor="cd-ssh-auth" className="text-muted">Authenticate</label>
           <select id="cd-ssh-auth" className="field" value={p.ssh.auth.kind} onChange={(e) => { updateSsh({ auth: e.target.value === "key" ? { kind: "key", path: "~/.ssh/id_ed25519" } : { kind: e.target.value as "agent" | "password" } }); setSshSecret(""); setSshSecretTouched(false); }}><option value="agent">SSH agent</option><option value="key">Private key</option><option value="password">Password</option></select>
           {p.ssh.auth.kind === "key" && <><label htmlFor="cd-ssh-key" className="text-muted">Key path</label><input id="cd-ssh-key" className="field font-mono text-xs" value={p.ssh.auth.path} onChange={(e) => updateSsh({ auth: { kind: "key", path: e.target.value } })} /></>}
-          {p.ssh.auth.kind !== "agent" && <><label htmlFor="cd-ssh-secret" className="text-muted">{p.ssh.auth.kind === "key" ? "Passphrase" : "SSH password"}</label><input id="cd-ssh-secret" className="field" type="password" value={sshSecret} placeholder={existing && !sshSecretTouched ? "Keychain (unchanged)" : "Stored in Keychain"} onChange={(e) => { setSshSecret(e.target.value); setSshSecretTouched(true); setTest({ kind: "idle" }); }} autoComplete="off" /></>}
+          {p.ssh.auth.kind !== "agent" && <><label htmlFor="cd-ssh-secret" className="text-muted">{p.ssh.auth.kind === "key" ? "Passphrase" : "SSH password"}</label><input id="cd-ssh-secret" className="field" type="password" value={sshSecret} placeholder={existing && !sshSecretTouched ? "Saved (unchanged)" : "Saved securely"} onChange={(e) => { setSshSecret(e.target.value); setSshSecretTouched(true); setTest({ kind: "idle" }); }} autoComplete="off" /></>}
           <span /><p className="text-xs text-muted">The database host is reached from the SSH server. Host keys must already be trusted in ~/.ssh/known_hosts.</p>
         </>}
         <div className="col-span-2 my-1 h-px bg-border" />

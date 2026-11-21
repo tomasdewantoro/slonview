@@ -37,7 +37,7 @@ impl Tunnel {
         let options = client::Config { keepalive_interval: Some(std::time::Duration::from_secs(30)), keepalive_max: 3, ..Default::default() };
         let mut handle = client::connect(Arc::new(options), (config.host.as_str(), config.port), HostVerifier { host: config.host.clone(), port: config.port }).await?;
         let authenticated = match &config.auth {
-            SshAuth::Password => handle.authenticate_password(&config.user, secret.ok_or_else(|| ssh_error("SSH password is missing. Edit the connection to store it in Keychain."))?).await?.success(),
+            SshAuth::Password => handle.authenticate_password(&config.user, secret.ok_or_else(|| ssh_error("SSH password is missing. Edit the connection to save it."))?).await?.success(),
             SshAuth::Key { path } => {
                 let path = expand_home(path)?;
                 let key = russh::keys::load_secret_key(&path, secret).map_err(|e| ssh_error(format!("Cannot load SSH key {}: {e}", path.display())))?;

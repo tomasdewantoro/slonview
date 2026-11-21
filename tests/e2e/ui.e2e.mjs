@@ -5,7 +5,7 @@
 // Env: SLONVIEW_UI_URL (default http://localhost:1450/), CHROME (headless shell binary),
 //      SLONVIEW_E2E_SHOTS (screenshot dir, default /tmp/slonview-e2e).
 // Needs the seeded fixture DB and an empty profile dir in the bridge. Creates a profile +
-// Keychain entry and deletes both at the end; writes only to scratch_insert_target.
+// credential-store entry and deletes both at the end; writes only to scratch_insert_target.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -179,7 +179,7 @@ try {
     assert(!toml.includes(PASSWORD), "password found in connections.toml");
     const kc = await bridge("e2e_keychain_get", { id: connId });
     eq(kc, PASSWORD, "keychain password");
-    return `profile ${connId}; Keychain has password; TOML has none`;
+    return `profile ${connId}; credential store has password; TOML has none`;
   });
 
   await check("E2E-02 wrong password / host down", async () => {
@@ -680,7 +680,7 @@ try {
     await runAll();
     await until(() => document.body.innerText.includes("1 row affected"), 8000);
     eq(psql("select count(*) from scratch_insert_target"), "0", "scratch cleaned");
-    return "Keychain password kept on edit; INSERT 1, UPDATE 1 verified in psql; row removed";
+    return "Stored password kept on edit; INSERT 1, UPDATE 1 verified in psql; row removed";
   });
 
   await check("Grid edits: review SQL, apply transaction, verify psql", async () => {
@@ -973,7 +973,7 @@ try {
     return "0 console/page errors";
   });
 
-  // Cleanup: profile + Keychain entry.
+  // Cleanup: profile + credential-store entry.
   await page.click('[aria-label="Disconnect"]').catch(() => {});
   if (connId) await bridge("delete_profile", { id: connId });
 } finally {

@@ -50,7 +50,7 @@ export function errorMessage(e: unknown): string {
 export const newRequestId = (): string => crypto.randomUUID();
 
 export const api = {
-  // Profiles (TOML on disk; passwords in macOS Keychain)
+  // Profiles (TOML on disk; passwords in the OS credential store)
   listProfiles: () => invoke<ConnProfile[]>("list_profiles"),
   /** password: undefined = keep stored password, null = delete it, string = set it. */
   saveProfile: (profile: ConnProfile, password: string | null | undefined) =>
