@@ -261,7 +261,7 @@ impl Engine {
         sql.push_str(&clause);
         sql.push_str(&order_by(&rel, &meta, &p.sort)?);
         let _ = write!(sql, " LIMIT {}", CAP + 1);
-        let guard = self.cancels.register(request_id, client.cancel_token());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
         let result = async {
             query::require_single_statement(&client, &sql, &guard).await?;
             let start = query::begin_read_only(&client, &guard).await?;

@@ -4279,6 +4279,7 @@ dependencies = [
 name = "slonview-core"
 version = "0.1.0"
 dependencies = [
+ "deadpool",
  "deadpool-postgres",
  "directories",
  "futures-util",

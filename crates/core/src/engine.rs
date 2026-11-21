@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use deadpool_postgres::{Object, Pool};
+use crate::conn::{Object, Pool, Transport};
 use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::config::ProfileStore;
@@ -23,6 +23,7 @@ pub(crate) struct Session {
     pool: Pool,
     /// Result column type names seen on this connection (OIDs are per database).
     pub(crate) types: query::TypeNames,
+    pub(crate) transport: Transport,
 }
 
 pub struct Engine {
@@ -40,7 +41,8 @@ impl Engine {
 
     /// Connect with an unsaved profile + password; runs `SELECT version()`; closes after.
     pub async fn test_connection(&self, profile: &ConnProfile, password: Option<&str>) -> AppResult<ServerInfo> {
-        let (client, _) = conn::open_client(profile, password).await?;
+        let transport = Transport::new(profile).await?;
+        let (client, _) = conn::open_client(profile, password, &transport).await?;
         client
             .batch_execute(&conn::session_setup_sql(profile))
             .await
@@ -58,14 +60,15 @@ impl Engine {
 
     async fn connect_with(&self, profile: ConnProfile, password: Option<&str>) -> AppResult<ServerInfo> {
         // A standalone probe settles which TLS mode works (Prefer may fall back to plain).
-        let (probe, ssl) = conn::open_client(&profile, password).await?;
+        let transport = Transport::new(&profile).await?;
+        let (probe, ssl) = conn::open_client(&profile, password, &transport).await?;
         drop(probe);
-        let pool = conn::build_pool(&profile, password, ssl)?;
+        let pool = conn::build_pool(&profile, password, ssl, transport.clone())?;
         let info = {
             let client = pool.get().await.map_err(conn::map_pool_error)?;
             server_info(&client).await?
         };
-        let session = Arc::new(Session { profile, pool, types: query::TypeNames::default() });
+        let session = Arc::new(Session { profile, pool, types: query::TypeNames::default(), transport });
         let previous = self.sessions_write().insert(session.profile.id, session);
         if let Some(old) = previous {
             old.pool.close();
@@ -73,9 +76,8 @@ impl Engine {
         Ok(info)
     }
 
-    /// Atomically swaps the pool so a new session time zone applies without a full
-    /// disconnect; checked-out sessions and all open tabs keep working. The change is
-    /// persisted only after the new settings connect successfully.
+    /// Atomically swap pools, leaving checked-out sessions and all open tabs alive.
+    /// Probe the new settings before persisting; invalid zones leave the old pool intact.
     pub async fn set_time_zone(&self, conn_id: ConnId, time_zone: Option<String>) -> AppResult<Vec<ConnProfile>> {
         let mut profile = self.profiles.get(conn_id)?;
         profile.time_zone = time_zone.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
@@ -113,7 +115,7 @@ impl Engine {
         let meta = introspect::table_meta(&client, &req.schema, &req.table).await?;
         let limit = if req.limit == 0 { DEFAULT_PAGE_LIMIT } else { req.limit };
         let q = paging::page_query(req, &meta, limit)?;
-        let guard = self.cancels.register(request_id, client.cancel_token());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
         let messages = if q.raw_span.is_some() {
             // User text: same protection as the SQL editor, then reset the pooled session.
             let result = raw_where_query(&client, &session.profile, &q.sql, q.raw_span, &guard).await;
@@ -186,7 +188,7 @@ impl Engine {
         let (session, client) = self.client(conn_id).await?;
         let meta = introspect::table_meta(&client, schema, table).await?;
         let (sql, raw_span) = paging::count_query(schema, table, &meta, filters, raw_where)?;
-        let guard = self.cancels.register(request_id, client.cancel_token());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
         let messages = if raw_span.is_some() {
             let result = raw_where_query(&client, &session.profile, &sql, raw_span, &guard).await;
             drop(guard);
@@ -232,7 +234,7 @@ impl Engine {
             return Err(AppError::invalid("nothing to run"));
         }
         let (session, client) = self.client(conn_id).await?;
-        let guard = self.cancels.register(request_id, client.cancel_token());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
         let outcome = async {
             if session.profile.read_only {
                 // Preflight the entire script before any user command runs.
@@ -278,13 +280,11 @@ impl Engine {
 
     /// No-op if request_id unknown or already finished.
     pub async fn cancel_query(&self, request_id: &str) -> AppResult<()> {
-        let Some(token) = self.cancels.begin_cancel(request_id) else {
+        let Some((token, transport)) = self.cancels.begin_cancel(request_id) else {
             return Ok(());
         };
-        token
-            .cancel_query(conn::tls())
-            .await
-            .map_err(|e| AppError::Connect { message: format!("sending cancel request: {e}") })
+        tokio::time::timeout(conn::CONNECT_TIMEOUT, transport.cancel(&token)).await
+            .map_err(|_| AppError::Connect { message: "sending cancel request timed out".into() })?
     }
 
     /// Streams rows to a CSV file (header row first). Returns data rows written.
@@ -310,7 +310,7 @@ impl Engine {
                 (statement.text, Some(span))
             }
         };
-        let guard = self.cancels.register(request_id, client.cancel_token());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
         let result = async {
             // A long export must not hit the interactive statement_timeout.
             client.batch_execute("SET statement_timeout = 0").await.map_err(|e| guard.map_err(e))?;

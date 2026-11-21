@@ -108,7 +108,7 @@ impl Engine {
         let meta = introspect::table_meta(&client, &req.schema, &req.table).await?;
         writable(session.profile.read_only, &meta)?;
         let sql = statements(req, &meta, &blocked(&client, &req.schema, &req.table).await?)?;
-        let guard = self.cancels.register(request_id, client.cancel_token());
+        let guard = self.cancels.register(request_id, client.cancel_token(), session.transport.clone());
         let outcome = async {
             client.batch_execute("BEGIN").await.map_err(|e| guard.map_err(e))?;
             for (i, statement) in sql.iter().enumerate() {

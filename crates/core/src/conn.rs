@@ -4,7 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
-use deadpool_postgres::{Hook, HookError, Manager, ManagerConfig, Pool, PoolError, RecyclingMethod, Runtime};
+use deadpool::managed::{Hook, HookError, PoolError};
+use deadpool::Runtime;
+use deadpool_postgres::ClientWrapper;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, ring};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -76,9 +78,8 @@ static TLS: LazyLock<MakeRustlsConnect> = LazyLock::new(|| {
     MakeRustlsConnect::new(config)
 });
 
-pub(crate) fn tls() -> MakeRustlsConnect {
-    TLS.clone()
-}
+pub(crate) type Pool = deadpool::managed::Pool<ConnectionManager>;
+pub(crate) type Object = deadpool::managed::Object<ConnectionManager>;
 
 /// verify-ca differs from verify-full only by omitting the name check; all
 /// signature, validity, purpose and chain checks still run in WebPki.
@@ -109,11 +110,40 @@ fn verifier(profile: &ConnProfile) -> AppResult<Arc<dyn ServerCertVerifier>> {
     Ok(if profile.ssl == SslMode::VerifyCa { Arc::new(CaVerifier(verifier)) } else { verifier })
 }
 
-/// Per-profile TLS connector: encrypt-only for prefer/require, WebPki verification
-/// against system roots (plus an optional CA bundle) for verify-ca/verify-full.
 fn profile_tls(profile: &ConnProfile) -> AppResult<MakeRustlsConnect> {
     if !matches!(profile.ssl, SslMode::VerifyCa | SslMode::VerifyFull) { return Ok(TLS.clone()); }
     Ok(MakeRustlsConnect::new(rustls::ClientConfig::builder_with_provider(Arc::new(ring::default_provider())).with_safe_default_protocol_versions().expect("TLS versions").dangerous().with_custom_certificate_verifier(verifier(profile)?).with_no_client_auth()))
+}
+
+#[derive(Clone)]
+pub(crate) struct Transport {
+    tls: MakeRustlsConnect,
+}
+impl Transport {
+    pub(crate) async fn new(profile: &ConnProfile) -> AppResult<Self> {
+        let tls = profile_tls(profile)?;
+        Ok(Self { tls })
+    }
+    pub(crate) async fn cancel(&self, token: &CancelToken) -> AppResult<()> {
+        token.cancel_query(self.tls.clone()).await.map_err(map_connect_error)
+    }
+    async fn connect(&self, cfg: &Config) -> AppResult<(Client, tokio::task::JoinHandle<()>)> {
+        let (client, connection) = cfg.connect(self.tls.clone()).await.map_err(map_connect_error)?;
+        Ok((client, tokio::spawn(async move { if let Err(e) = connection.await { tracing::debug!("postgres connection closed: {e}"); } })))
+    }
+}
+
+pub(crate) struct ConnectionManager { config: Config, transport: Transport }
+impl deadpool::managed::Manager for ConnectionManager {
+    type Type = ClientWrapper;
+    type Error = AppError;
+    async fn create(&self) -> AppResult<ClientWrapper> {
+        let (client, task) = self.transport.connect(&self.config).await?;
+        Ok(ClientWrapper::new(client, task))
+    }
+    async fn recycle(&self, client: &mut ClientWrapper, _: &deadpool::managed::Metrics) -> deadpool::managed::RecycleResult<AppError> {
+        if client.is_closed() { Err(deadpool::managed::RecycleError::message("Connection closed")) } else { Ok(()) }
+    }
 }
 
 fn pg_config(profile: &ConnProfile, password: Option<&str>, ssl: PgSslMode) -> Config {
@@ -152,29 +182,14 @@ pub(crate) fn session_setup_sql(profile: &ConnProfile) -> String {
     sql
 }
 
-async fn connect_once(cfg: &Config, tls: MakeRustlsConnect) -> Result<Client, AppError> {
-    let fut = cfg.connect(tls);
-    let (client, connection) = match tokio::time::timeout(CONNECT_TIMEOUT, fut).await {
-        Ok(Ok(pair)) => pair,
-        Ok(Err(e)) => return Err(map_connect_error(e)),
-        Err(_) => {
-            return Err(AppError::Connect {
-                message: format!("timed out after {}s", CONNECT_TIMEOUT.as_secs()),
-            });
-        }
-    };
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            tracing::debug!("postgres connection closed: {e}");
-        }
-    });
+async fn connect_once(cfg: &Config, transport: &Transport) -> AppResult<Client> {
+    let (client, _) = tokio::time::timeout(CONNECT_TIMEOUT, transport.connect(cfg)).await.map_err(|_| AppError::Connect { message: "timed out after 10s".into() })??;
     Ok(client)
 }
 
 /// Opens one standalone session (no pool). For `Prefer`, a failed TLS handshake
 /// is retried without TLS. Returns the client and the ssl mode that worked.
-pub(crate) async fn open_client(profile: &ConnProfile, password: Option<&str>) -> AppResult<(Client, PgSslMode)> {
-    let tls = profile_tls(profile)?;
+pub(crate) async fn open_client(profile: &ConnProfile, password: Option<&str>, transport: &Transport) -> AppResult<(Client, PgSslMode)> {
     let modes: &[PgSslMode] = match profile.ssl {
         SslMode::Disable => &[PgSslMode::Disable],
         SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull => &[PgSslMode::Require],
@@ -182,7 +197,7 @@ pub(crate) async fn open_client(profile: &ConnProfile, password: Option<&str>) -
     };
     let mut last_err = None;
     for &mode in modes {
-        match connect_once(&pg_config(profile, password, mode), tls.clone()).await {
+        match connect_once(&pg_config(profile, password, mode), transport).await {
             Ok(client) => return Ok((client, mode)),
             Err(AppError::Connect { message }) if mode == PgSslMode::Prefer && message.starts_with(TLS_HANDSHAKE_ERR) => {
                 tracing::debug!("TLS handshake failed, retrying without TLS: {message}");
@@ -197,21 +212,17 @@ pub(crate) async fn open_client(profile: &ConnProfile, password: Option<&str>) -
 const TLS_HANDSHAKE_ERR: &str = "error performing TLS handshake";
 
 /// Pool of up to 4 sessions; each new session runs [`session_setup_sql`].
-pub(crate) fn build_pool(profile: &ConnProfile, password: Option<&str>, ssl: PgSslMode) -> AppResult<Pool> {
-    let manager = Manager::from_config(
-        pg_config(profile, password, ssl),
-        profile_tls(profile)?,
-        ManagerConfig { recycling_method: RecyclingMethod::Fast },
-    );
+pub(crate) fn build_pool(profile: &ConnProfile, password: Option<&str>, ssl: PgSslMode, transport: Transport) -> AppResult<Pool> {
+    let manager = ConnectionManager { config: pg_config(profile, password, ssl), transport };
     let setup: Arc<str> = session_setup_sql(profile).into();
     Pool::builder(manager)
         .max_size(POOL_MAX)
         .runtime(Runtime::Tokio1)
         .create_timeout(Some(CONNECT_TIMEOUT))
         .wait_timeout(Some(POOL_WAIT))
-        .post_create(Hook::async_fn(move |client, _| {
+        .post_create(Hook::async_fn(move |client: &mut ClientWrapper, _| {
             let setup = setup.clone();
-            Box::pin(async move { client.batch_execute(&setup).await.map_err(HookError::Backend) })
+            Box::pin(async move { client.batch_execute(&setup).await.map_err(map_connect_error).map_err(HookError::Backend) })
         }))
         .build()
         .map_err(|e| AppError::internal(format!("building connection pool: {e}")))
@@ -276,9 +287,9 @@ pub(crate) fn map_query_error(e: tokio_postgres::Error, user_cancelled: bool) ->
     }
 }
 
-pub(crate) fn map_pool_error(e: PoolError) -> AppError {
+pub(crate) fn map_pool_error(e: PoolError<AppError>) -> AppError {
     match e {
-        PoolError::Backend(e) | PoolError::PostCreateHook(HookError::Backend(e)) => map_connect_error(e),
+        PoolError::Backend(e) | PoolError::PostCreateHook(HookError::Backend(e)) => e,
         PoolError::PostCreateHook(HookError::Message(message)) => AppError::Connect { message: message.into_owned() },
         PoolError::Timeout(_) => AppError::Connect { message: "timed out waiting for a database session".into() },
         PoolError::Closed => AppError::NotConnected,
@@ -288,7 +299,7 @@ pub(crate) fn map_pool_error(e: PoolError) -> AppError {
 
 #[derive(Default)]
 struct RegistryInner {
-    tokens: HashMap<String, CancelToken>,
+    tokens: HashMap<String, (CancelToken, Transport)>,
     cancelled: HashSet<String>,
 }
 
@@ -299,15 +310,15 @@ pub(crate) struct CancelRegistry {
 }
 
 impl CancelRegistry {
-    pub(crate) fn register(&self, request_id: &str, token: CancelToken) -> CancelGuard<'_> {
+    pub(crate) fn register(&self, request_id: &str, token: CancelToken, transport: Transport) -> CancelGuard<'_> {
         let mut inner = self.inner.lock().expect("cancel registry poisoned");
         inner.cancelled.remove(request_id);
-        inner.tokens.insert(request_id.to_owned(), token);
+        inner.tokens.insert(request_id.to_owned(), (token, transport));
         CancelGuard { registry: self, request_id: request_id.to_owned() }
     }
 
     /// Marks the request cancelled and returns its token, if it is in flight.
-    pub(crate) fn begin_cancel(&self, request_id: &str) -> Option<CancelToken> {
+    pub(crate) fn begin_cancel(&self, request_id: &str) -> Option<(CancelToken, Transport)> {
         let mut inner = self.inner.lock().expect("cancel registry poisoned");
         let token = inner.tokens.get(request_id).cloned()?;
         inner.cancelled.insert(request_id.to_owned());
@@ -381,7 +392,6 @@ mod tests {
         p.time_zone = Some("x'; DROP TABLE t; --".into());
         assert!(session_setup_sql(&p).ends_with("; SET TIME ZONE 'x''; DROP TABLE t; --'"));
     }
-
     #[test]
     fn verified_tls_checks_chain_and_optional_hostname() {
         use rcgen::{CertificateParams, IsCa, BasicConstraints, KeyPair, Issuer};
@@ -410,5 +420,24 @@ mod tests {
             p.ssl = mode;
             assert!(matches!(verifier(&p).unwrap().verify_server_cert(cert.der(), &[], &valid, &[], UnixTime::now()), Err(rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer))));
         }
+    }
+
+    #[test]
+    fn cancel_connector_for_verify_full_is_webpki_not_encrypt_only() {
+        // Transport::cancel reuses profile_tls(profile), so a verify-full profile cancels
+        // through the WebPki connector, never the encrypt-only static TLS of prefer/require.
+        let mut p = profile(true);
+        p.ssl = SslMode::VerifyFull;
+        assert!(profile_tls(&p).is_ok());
+        let v = verifier(&p).unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["db.example.com".into()])
+            .unwrap()
+            .self_signed(&rcgen::KeyPair::generate().unwrap())
+            .unwrap();
+        let name = ServerName::try_from("db.example.com").unwrap();
+        assert!(matches!(
+            v.verify_server_cert(cert.der(), &[], &name, &[], UnixTime::now()),
+            Err(rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer))
+        ));
     }
 }
