@@ -19,7 +19,8 @@
 # already listening at $SLONVIEW_BRIDGE (default http://127.0.0.1:1499/invoke). A password in
 # the URL is stored in the OS credential store for the duration of the run (one temporary
 # profile) and deleted at the end.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "bench-remote.sh: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 usage() { echo "usage: $0 postgres://... [schema.]table [runs]" >&2; exit 2; }
 (($# >= 2)) || usage

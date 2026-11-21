@@ -13,7 +13,8 @@
 #   - the same for the app plus the WebKit helper processes (WebContent/Networking/GPU) that
 #     appeared during this launch. A WKWebView renders out of process, so the app process alone
 #     undercounts. Close Safari and other WebKit apps first or helpers they spawn may be counted.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "measure-app.sh: failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 APP=${1:-/Applications/Slonview.app}
 IDLE_SECONDS=${IDLE_SECONDS:-10}
@@ -32,12 +33,14 @@ if pgrep -f "^$BIN" >/dev/null; then
 fi
 
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
-webkit_pids() { pgrep -f 'com\.apple\.WebKit\.(WebContent|Networking|GPU)' | sort -n || true; }
+# comm needs lexical order, not numeric.
+webkit_pids() { pgrep -f 'com\.apple\.WebKit\.(WebContent|Networking|GPU)' | LC_ALL=C sort || true; }
 rss_kb() { # pids... -> summed RSS in KiB of those still alive (0 if none)
   if (($# == 0)); then echo 0; return; fi
   local list
   list=$(IFS=,; echo "$*")
-  ps -o rss= -p "$list" 2>/dev/null | awk '{ s += $1 } END { print s + 0 }'
+  # ps exits 1 if any listed pid has exited (helpers come and go); that is not an error here.
+  { ps -o rss= -p "$list" 2>/dev/null || true; } | awk '{ s += $1 } END { print s + 0 }'
 }
 stats() { # numbers on stdin -> "median peak"
   sort -n | awk '{ v[NR] = $1 } END {
