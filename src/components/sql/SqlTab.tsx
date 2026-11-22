@@ -1,8 +1,8 @@
 // SQL editor tab. Owned by WP-FE-SQL. Rendered by App for tabs with kind "sql".
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { EditorView } from "@codemirror/view";
-import { History, ListTree, ListVideo, LoaderCircle, Play, Square, WandSparkles } from "lucide-react";
-import { api, isAppError, newRequestId } from "../../api";
+import { Bookmark, History, ListTree, ListVideo, LoaderCircle, Play, Save, Square, WandSparkles } from "lucide-react";
+import { api, errorMessage, isAppError, newRequestId } from "../../api";
 import type { SchemaNode } from "../../bindings/SchemaNode";
 import { isDataModifying } from "../../lib/plan";
 import { formatElapsed } from "../../lib/sqlResult";
@@ -10,6 +10,7 @@ import { pgPositionToOffset, statementAt } from "../../lib/sqlSplit";
 import { appStore, sqlEditorKey, useApp, wasTabDisposed } from "../../store/app";
 import { ConfirmDialog } from "../Dialog";
 import { HistoryPanel } from "./HistoryPanel";
+import { SavedPanel, SaveQueryDialog } from "./SavedPanel";
 import { ResultsPanel, type RunOutcome } from "./ResultsPanel";
 import { clearSqlError, formatSqlInEditor, markSqlError, SqlEditor, type RunMode } from "./SqlEditor";
 import { useColumnIndex } from "./useColumnIndex";
@@ -57,8 +58,18 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
   const [now, setNow] = useState(0);
   const [outcome, setOutcome] = useState<RunOutcome | null>(null);
   const [maxRows, setMaxRows] = useState(() => storedNumber(MAX_ROWS_KEY, 10000, (n) => MAX_ROWS_OPTIONS.includes(n)));
-  const [historyOpen, setHistoryOpen] = useState(false);
+  /** At most one side drawer: query history or saved queries. */
+  const [drawer, setDrawer] = useState<"history" | "saved" | null>(null);
+  const historyOpen = drawer === "history";
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [savedVersion, setSavedVersion] = useState(0);
+  /** Save dialog: the text to save plus the prefill (name and scope of the linked saved query). */
+  const [saving, setSaving] = useState<{ sql: string; id: string | null; name: string; global: boolean } | null>(null);
+  const savedQueryId = useApp((s) => {
+    const t = s.tabs.find((x) => x.id === tabId);
+    return t?.kind === "sql" ? t.savedQueryId : undefined;
+  });
+  const tabTitle = useApp((s) => s.tabs.find((x) => x.id === tabId)?.title ?? "");
   const [split, setSplit] = useState(() => storedNumber(SPLIT_KEY, 0.45, (n) => n >= 0.1 && n <= 0.9));
   const [analyze, setAnalyze] = useState(() => localStorage.getItem(ANALYZE_KEY) === "1");
   /** ANALYZE of a data-modifying statement waiting for confirmation (allow-writes profiles). */
@@ -165,6 +176,27 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
     return true;
   }, []);
 
+  /** Save button / ⌘S: asks for a name, prefilled from the linked saved query (which it then updates). */
+  const openSave = useCallback(async () => {
+    const view = viewRef.current;
+    if (!view) return;
+    const sql = view.state.doc.toString();
+    if (sql.trim() === "") {
+      appStore.getState().pushToast("info", "Nothing to save: the editor is empty.");
+      return;
+    }
+    let linked = null;
+    if (savedQueryId) {
+      try {
+        linked = (await api.listSavedQueries(connId)).find((q) => q.id === savedQueryId) ?? null;
+      } catch (e) {
+        appStore.getState().pushToast("error", `Couldn't load saved queries: ${errorMessage(e)}`);
+        return;
+      }
+    }
+    setSaving(linked ? { sql, id: linked.id, name: linked.name, global: linked.connId === null } : { sql, id: null, name: /^Query \d+$/.test(tabTitle) ? "" : tabTitle, global: false });
+  }, [connId, savedQueryId, tabTitle]);
+
   const insertSql = useCallback((sql: string) => {
     const view = viewRef.current;
     if (!view) return;
@@ -208,12 +240,12 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
   };
 
   const toolbarButton =
-    "flex h-6 items-center gap-1 rounded px-2 hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-focus-ring disabled:opacity-40 disabled:hover:bg-transparent";
+    "flex h-6 shrink-0 items-center gap-1 rounded px-2 whitespace-nowrap hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-focus-ring disabled:opacity-40 disabled:hover:bg-transparent";
 
   return (
     <div className="flex h-full min-h-0 bg-paper text-[13px] text-ink">
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-surface px-2">
+        <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-surface px-2">
           <button
             type="button"
             className={toolbarButton}
@@ -258,7 +290,16 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
             <WandSparkles className="size-3.5" />
             Format
           </button>
-          <label className="flex h-6 items-center gap-1 rounded px-1 text-muted hover:text-ink" title="ANALYZE executes the statement inside a transaction that is always rolled back">
+          <button
+            type="button"
+            className={toolbarButton}
+            onClick={() => void openSave()}
+            title={savedQueryId ? "Update the saved query with the editor's SQL (⌘S)" : "Save the editor's SQL as a saved query (⌘S)"}
+          >
+            <Save className="size-3.5" />
+            Save
+          </button>
+          <label className="flex h-6 shrink-0 items-center gap-1 rounded px-1 whitespace-nowrap text-muted hover:text-ink" title="ANALYZE executes the statement inside a transaction that is always rolled back">
             <input
               type="checkbox"
               checked={analyze}
@@ -276,14 +317,14 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
                 <Square className="size-3.5 fill-current" />
                 Cancel
               </button>
-              <span className="flex items-center gap-1 px-1 text-muted tabular-nums">
+              <span className="flex shrink-0 items-center gap-1 px-1 text-muted tabular-nums">
                 <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
                 {formatElapsed(Math.max(0, now - running.startedAt))}
               </span>
             </>
           )}
           <span className="flex-1" />
-          <label className="flex items-center gap-1.5 text-muted">
+          <label className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-muted">
             Max rows
             <select
               value={maxRows}
@@ -305,10 +346,19 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
             type="button"
             className={`${toolbarButton} ${historyOpen ? "bg-surface-2" : ""}`}
             aria-pressed={historyOpen}
-            onClick={() => setHistoryOpen((o) => !o)}
+            onClick={() => setDrawer((d) => (d === "history" ? null : "history"))}
           >
             <History className="size-3.5" />
             History
+          </button>
+          <button
+            type="button"
+            className={`${toolbarButton} ${drawer === "saved" ? "bg-surface-2" : ""}`}
+            aria-pressed={drawer === "saved"}
+            onClick={() => setDrawer((d) => (d === "saved" ? null : "saved"))}
+          >
+            <Bookmark className="size-3.5" />
+            Saved
           </button>
         </div>
         <div ref={splitRef} className="flex min-h-0 flex-1 flex-col">
@@ -321,6 +371,7 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
               columns={columns}
               onRun={runFromEditor}
               onExplain={explainFromEditor}
+              onSave={() => void openSave()}
               onCancel={cancel}
               onEdit={() => appStore.getState().pinTab(tabId)}
               keepText={() => !wasTabDisposed(tabId)}
@@ -344,7 +395,36 @@ export function SqlTab({ tabId, connId, schema, initialSql }: SqlTabProps) {
           version={historyVersion}
           onInsert={insertSql}
           onRun={(sql) => execute({ text: sql, docOffset: null, doc: "" })}
-          onClose={() => setHistoryOpen(false)}
+          onClose={() => setDrawer(null)}
+        />
+      )}
+      {drawer === "saved" && (
+        <SavedPanel
+          connId={connId}
+          version={savedVersion}
+          onOpen={(q) => appStore.getState().openSavedQuery(q)}
+          onChanged={(id, saved) => {
+            const s = appStore.getState();
+            for (const t of s.tabs) if (t.kind === "sql" && t.savedQueryId === id) s.setTabSavedQuery(t.id, saved);
+          }}
+          onClose={() => setDrawer(null)}
+        />
+      )}
+      {saving && (
+        <SaveQueryDialog
+          title={saving.id ? "Update saved query" : "Save query"}
+          confirmLabel={saving.id ? "Update" : "Save"}
+          initialName={saving.name}
+          initialGlobal={saving.global}
+          onClose={() => setSaving(null)}
+          onSave={async (name, global) => {
+            const saved = await api.saveQuery({ id: saving.id, connId: global ? null : connId, name, sql: saving.sql });
+            setSaving(null);
+            const s = appStore.getState();
+            s.setTabSavedQuery(tabId, saved);
+            s.pushToast("info", saving.id ? `Updated “${saved.name}”` : `Saved “${saved.name}”`);
+            setSavedVersion((v) => v + 1);
+          }}
         />
       )}
       {confirmAnalyze && (
