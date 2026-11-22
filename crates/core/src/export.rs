@@ -172,7 +172,8 @@ pub(crate) fn unique_keys(names: &[&str]) -> Vec<String> {
 pub(crate) enum JsonKind {
     /// JSON string (every type not listed below).
     Text,
-    /// smallint/integer/bigint/oid: a JSON number when exactly representable as f64.
+    /// smallint/integer/bigint/oid: a JSON number when within ±(2^53 - 1), the range every
+    /// JSON reader holds exactly (JavaScript's safe integers).
     Integer,
     /// numeric: a JSON number when at most 15 significant digits and inside the f64 range.
     Numeric,
@@ -206,7 +207,7 @@ pub(crate) fn write_value(out: &mut Vec<u8>, kind: JsonKind, value: Option<&str>
     };
     let verbatim = match kind {
         JsonKind::Text => false,
-        JsonKind::Integer => is_json_number(v) && fits_f64_exactly(v),
+        JsonKind::Integer => is_json_number(v) && is_safe_integer(v),
         JsonKind::Numeric => is_json_number(v) && fits_f64_exactly(v),
         JsonKind::Float => is_json_number(v),
         JsonKind::Json => serde_json::from_str::<serde::de::IgnoredAny>(v).is_ok(),
@@ -268,6 +269,14 @@ fn is_json_number(s: &str) -> bool {
         }
     }
     i == b.len()
+}
+
+/// An integer with |n| <= 2^53 - 1 (`Number.MAX_SAFE_INTEGER`). Counting significant digits
+/// is not enough for integers: 1234567890123450000 has 15 but is not a safe integer.
+fn is_safe_integer(s: &str) -> bool {
+    const MAX_SAFE: i64 = 9_007_199_254_740_991;
+    s.parse::<i64>()
+        .is_ok_and(|n| (-MAX_SAFE..=MAX_SAFE).contains(&n))
 }
 
 /// True when a reader parsing the decimal `s` as an f64 gets the same value back: at most 15
@@ -353,6 +362,24 @@ mod tests {
             value(JsonKind::Integer, Some("9223372036854775807")),
             r#""9223372036854775807""#
         );
+        // Only safe integers (|n| <= 2^53 - 1) are numbers, whatever their digit count.
+        assert_eq!(
+            value(JsonKind::Integer, Some("1234567890123450000")),
+            r#""1234567890123450000""#
+        );
+        assert_eq!(
+            value(JsonKind::Integer, Some("9007199254740991")),
+            "9007199254740991"
+        );
+        assert_eq!(
+            value(JsonKind::Integer, Some("-9007199254740991")),
+            "-9007199254740991"
+        );
+        assert_eq!(
+            value(JsonKind::Integer, Some("-9007199254740992")),
+            r#""-9007199254740992""#
+        );
+        assert_eq!(value(JsonKind::Integer, Some("0")), "0");
         assert_eq!(value(JsonKind::Numeric, Some("3.14159")), "3.14159");
         assert_eq!(value(JsonKind::Numeric, Some("-0.000001")), "-0.000001");
         assert_eq!(value(JsonKind::Numeric, Some("0")), "0");
