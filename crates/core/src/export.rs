@@ -85,7 +85,7 @@ async fn copy_inner(
 }
 
 /// `[` newline, one object per line separated by `,` newline, then `]`. Keys are the column
-/// names in column order.
+/// names in column order, made unique by `unique_keys`.
 async fn json_inner(
     client: &Client,
     select: &str,
@@ -107,10 +107,11 @@ async fn json_inner(
     while let Some(message) = stream.try_next().await.map_err(|e| guard.map_err(e))? {
         match message {
             SimpleQueryMessage::RowDescription(columns) => {
-                keys = columns
+                let names: Vec<&str> = columns.iter().map(|c| c.name()).collect();
+                keys = unique_keys(&names)
                     .iter()
-                    .map(|c| {
-                        let mut k = json_string(c.name());
+                    .map(|name| {
+                        let mut k = json_string(name);
                         k.push(b':');
                         k
                     })
@@ -139,6 +140,31 @@ async fn json_inner(
         .map_err(|e| io_err(path, e))?;
     finish(out, path).await?;
     Ok(rows)
+}
+
+/// JSON object keys for a result's column names, so no reader drops a column. Going left to
+/// right, the first column with a name keeps it; each later duplicate becomes `name_N` with
+/// the smallest N >= 2 that is neither a column name in the result nor already taken.
+/// Example: `id, id, id_2` gives `id, id_3, id_2`; `?column?, ?column?` gives `?column?,
+/// ?column?_2`.
+pub(crate) fn unique_keys(names: &[&str]) -> Vec<String> {
+    let original: std::collections::HashSet<&str> = names.iter().copied().collect();
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    names
+        .iter()
+        .map(|&name| {
+            let key = if taken.contains(name) {
+                (2u64..)
+                    .map(|n| format!("{name}_{n}"))
+                    .find(|k| !original.contains(k.as_str()) && !taken.contains(k))
+                    .expect("an unused suffix exists")
+            } else {
+                name.to_owned()
+            };
+            taken.insert(key.clone());
+            key
+        })
+        .collect()
 }
 
 /// How a column's Postgres text output becomes a JSON value.
@@ -384,6 +410,23 @@ mod tests {
         ] {
             assert!(!is_json_number(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn duplicate_column_names_get_unique_keys() {
+        assert_eq!(unique_keys(&["a", "b"]), ["a", "b"]);
+        assert_eq!(unique_keys(&["id", "id", "id_2"]), ["id", "id_3", "id_2"]);
+        assert_eq!(unique_keys(&["id", "id", "id"]), ["id", "id_2", "id_3"]);
+        assert_eq!(
+            unique_keys(&["?column?", "?column?"]),
+            ["?column?", "?column?_2"]
+        );
+        // A later column literally named like a generated key keeps its own name.
+        assert_eq!(
+            unique_keys(&["x", "x", "x_2", "x_2"]),
+            ["x", "x_3", "x_2", "x_2_2"]
+        );
+        assert!(unique_keys(&[]).is_empty());
     }
 
     #[test]

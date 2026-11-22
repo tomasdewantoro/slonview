@@ -2197,6 +2197,37 @@ async fn export_json_all_types_parses_with_typed_values() {
                              "nan": "NaN", "ninf": "-Infinity", "f": 1.5, "n": null }])
     );
 
+    // Duplicate column names (joins, `SELECT 1, 2`) get unique keys; no value is dropped.
+    for (sql, expected) in [
+        (
+            "SELECT 1 AS id, 2 AS id, 3 AS id_2",
+            serde_json::json!([{ "id": 1, "id_3": 2, "id_2": 3 }]),
+        ),
+        (
+            "SELECT 1, 2",
+            serde_json::json!([{ "?column?": 1, "?column?_2": 2 }]),
+        ),
+    ] {
+        let src = ExportSource::Sql {
+            conn_id: f.conn,
+            sql: sql.into(),
+        };
+        f.engine
+            .export_rows("json-dup", &src, ExportFormat::Json, &path2)
+            .await
+            .unwrap();
+        let text = std::fs::read_to_string(&path2).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+            expected,
+            "{sql}"
+        );
+        // serde_json would also accept duplicate keys (keeping the last), so check the text.
+        let line = text.lines().nth(1).unwrap();
+        let keys = expected[0].as_object().unwrap().len();
+        assert_eq!(line.matches("\":").count(), keys, "{line}");
+    }
+
     // Empty result: an empty array.
     let src = ExportSource::Sql {
         conn_id: f.conn,
