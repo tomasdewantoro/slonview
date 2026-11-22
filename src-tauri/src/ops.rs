@@ -4,11 +4,14 @@
 use std::path::Path;
 
 use serde_json::Value;
+use slonview_core::activity::Activity;
 use slonview_core::model::{
-    CellRequest, ConnId, ConnProfile, DEFAULT_SQL_MAX_ROWS, ExportSource, Filter, HistoryEntry,
-    ObjectKind, Page, PageRequest, ParsedConn, QueryResult, RequestId, SchemaTree, ServerInfo,
-    TableDescription,
+    CellRequest, ConnId, ConnProfile, DEFAULT_SQL_MAX_ROWS, ExportFormat, ExportSource, Filter,
+    HistoryEntry, ObjectKind, Page, PageRequest, ParsedConn, QueryResult, RequestId, SchemaTree,
+    ServerInfo, TableDescription,
 };
+use slonview_core::saved::{SavedQuery, SavedQueryInput};
+use slonview_core::update::UpdateStatus;
 use slonview_core::{AppError, AppResult, Engine, connurl};
 
 const DEFAULT_HISTORY_LIMIT: u32 = 200;
@@ -193,16 +196,25 @@ pub async fn cancel_query(engine: &Engine, request_id: &RequestId) -> AppResult<
 
 // Export
 
+/// `format` None = CSV (the argument predates JSON export).
 pub async fn export_csv(
     engine: &Engine,
     request_id: &RequestId,
     source: &ExportSource,
     path: &str,
+    format: Option<ExportFormat>,
 ) -> AppResult<u64> {
     if path.trim().is_empty() {
         return Err(AppError::invalid("export path is required"));
     }
-    engine.export_csv(request_id, source, Path::new(path)).await
+    engine
+        .export_rows(
+            request_id,
+            source,
+            format.unwrap_or_default(),
+            Path::new(path),
+        )
+        .await
 }
 
 // History
@@ -336,6 +348,60 @@ pub async fn test_tunnel_connection(
         .await
 }
 
+// v0.3.0 tools
+
+pub async fn list_saved_queries(engine: &Engine, conn_id: ConnId) -> AppResult<Vec<SavedQuery>> {
+    engine.saved.list(conn_id)
+}
+
+pub async fn save_query(engine: &Engine, query: SavedQueryInput) -> AppResult<SavedQuery> {
+    engine.saved.save(query)
+}
+
+pub async fn delete_saved_query(engine: &Engine, id: uuid::Uuid) -> AppResult<()> {
+    engine.saved.delete(id)
+}
+
+pub async fn list_activity(
+    engine: &Engine,
+    conn_id: ConnId,
+    include_idle: bool,
+) -> AppResult<Vec<Activity>> {
+    engine.list_activity(conn_id, include_idle).await
+}
+
+pub async fn signal_backend(
+    engine: &Engine,
+    conn_id: ConnId,
+    pid: i32,
+    terminate: bool,
+) -> AppResult<bool> {
+    engine.signal_backend(conn_id, pid, terminate).await
+}
+
+/// The app version (Cargo package version), shown in About.
+pub fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+/// The only request to anything other than a configured PostgreSQL server; runs only when the
+/// user clicks **Check for updates**.
+pub async fn check_for_updates() -> AppResult<UpdateStatus> {
+    slonview_core::update::check_for_updates(app_version()).await
+}
+
+/// Opens an http(s) URL in the system browser (never a webview).
+pub async fn open_url(url: &str) -> AppResult<()> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(AppError::invalid("only http(s) links can be opened"));
+    }
+    let url = url.to_owned();
+    tokio::task::spawn_blocking(move || open::that_detached(&url))
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?
+        .map_err(|e| AppError::internal(format!("couldn't open the browser: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -410,7 +476,8 @@ mod tests {
                     conn_id: profile.id,
                     sql: "select 1".into()
                 },
-                " "
+                " ",
+                None
             )
             .await,
             Err(AppError::Invalid { .. })
@@ -541,7 +608,7 @@ mod tests {
             sql: "select g from generate_series(1,5) g".into(),
         };
         assert_eq!(
-            export_csv(&engine, &"e".into(), &src, out.to_str().unwrap())
+            export_csv(&engine, &"e".into(), &src, out.to_str().unwrap(), None)
                 .await
                 .unwrap(),
             5

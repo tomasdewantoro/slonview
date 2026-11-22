@@ -60,9 +60,16 @@ export interface SqlTabInfo extends TabBase {
   initialSql?: string;
   /** Object the tab shows (`fn:<oid>`, `obj:<kind>:<oid>`); a repeat open activates it instead of refetching. */
   source?: string;
+  /** Saved query the tab was opened from or last saved as; ⌘S updates it in place. */
+  savedQueryId?: string;
 }
 
-export type Tab = TableTab | StructureTab | SqlTabInfo;
+/** Server activity (pg_stat_activity) of the tab's connection; at most one per connection. */
+export interface ActivityTab extends TabBase {
+  kind: "activity";
+}
+
+export type Tab = TableTab | StructureTab | SqlTabInfo | ActivityTab;
 
 /** Runtime (non-persisted) state of a table tab. */
 export interface TableData {
@@ -105,7 +112,7 @@ export interface AppState {
   tabs: Tab[];
   activeTabId: string | null;
   tableData: Record<string, TableData>;
-  /** Bumped by refresh on structure tabs so the tab refetches. */
+  /** Bumped by refresh on structure and activity tabs so the tab refetches. */
   structureNonce: Record<string, number>;
   toasts: Toast[];
 
@@ -165,6 +172,13 @@ export interface AppState {
   referencing: Record<string, ReferencingState>;
   /** Loads the keys pointing at `schema.table` unless they are cached or loading. */
   loadReferencing(connId: string, schema: string, table: string, force?: boolean): void;
+  // v0.3.0 tools
+  /** Opens (or activates) the Activity tab of a connection (default: the sidebar's), pinned. */
+  openActivity(connId?: string): void;
+  /** New pinned SQL tab on the sidebar's connection holding a saved query, titled with its name. */
+  openSavedQuery(query: { id: string; name: string; sql: string }): void;
+  /** Links a SQL tab to saved query `saved` (its title follows the name), or unlinks it (null: the query was deleted). */
+  setTabSavedQuery(tabId: string, saved: { id: string; name: string } | null): void;
 }
 
 export type ReferencingState = { status: "loading" } | { status: "ok"; keys: ReferencingKey[] } | { status: "error"; error: unknown };
@@ -216,7 +230,7 @@ function isTab(t: unknown): t is Omit<Tab, "connId"> {
     return !!q && typeof q.schema === "string" && typeof q.table === "string" && Array.isArray(q.filters) && Array.isArray(q.sort);
   }
   if (o.kind === "structure") return typeof o.schema === "string" && typeof o.table === "string";
-  return o.kind === "sql";
+  return o.kind === "sql" || o.kind === "activity";
 }
 
 /**
@@ -742,10 +756,8 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
       refreshTab(id) {
         const tab = get().tabs.find((t) => t.id === id);
         if (tab?.kind === "table") void get().loadFirst(id);
-        if (tab?.kind === "structure") {
-          set((s) => ({ structureNonce: { ...s.structureNonce, [id]: (s.structureNonce[id] ?? 0) + 1 } }));
-          get().loadReferencing(tab.connId, tab.schema, tab.table, true);
-        }
+        if (tab?.kind === "structure" || tab?.kind === "activity") set((s) => ({ structureNonce: { ...s.structureNonce, [id]: (s.structureNonce[id] ?? 0) + 1 } }));
+        if (tab?.kind === "structure") get().loadReferencing(tab.connId, tab.schema, tab.table, true);
       },
 
       setTableQuery(tabId, patch) {
@@ -872,6 +884,33 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
           (keys) => settle({ status: "ok", keys }),
           (error) => settle({ status: "error", error }),
         );
+      },
+
+      // v0.3.0 tools
+      openActivity(id) {
+        const connId = id ?? sidebarConnId();
+        if (!isConnected(connId)) return;
+        openItem(connId, (t) => t.kind === "activity", (tabId) => ({ id: tabId, kind: "activity", title: "Activity", connId, preview: false }), "pinned");
+        persistTabs(connId);
+      },
+
+      openSavedQuery(query) {
+        const connId = sidebarConnId();
+        if (!connId) return;
+        addTab({ id: newRequestId(), kind: "sql", title: query.name, initialSql: query.sql, savedQueryId: query.id, connId, preview: false });
+      },
+
+      setTabSavedQuery(tabId, saved) {
+        const tab = get().tabs.find((t) => t.id === tabId);
+        if (tab?.kind !== "sql") return;
+        set((s) => ({
+          tabs: s.tabs.map((t) => {
+            if (t.id !== tabId || t.kind !== "sql") return t;
+            if (!saved) return { ...t, savedQueryId: undefined };
+            return { ...t, savedQueryId: saved.id, title: saved.name, preview: false };
+          }),
+        }));
+        persistTabs(tab.connId);
       },
     };
   });

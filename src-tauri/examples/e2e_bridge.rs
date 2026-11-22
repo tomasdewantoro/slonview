@@ -23,6 +23,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:1499";
+/// Last URL the UI asked to open in the system browser (see the `open_url` arm).
+static LAST_OPENED_URL: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 type Args = Map<String, Value>;
 
@@ -94,6 +96,7 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
             &arg(a, "requestId")?,
             &arg(a, "source")?,
             &arg::<String>(a, "path")?,
+            arg(a, "format")?,
         )
         .await?),
         "list_history" => {
@@ -170,6 +173,29 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
             &arg::<String>(a, "table")?,
         )
         .await?),
+        // v0.3.0 tools
+        "list_saved_queries" => ok(ops::list_saved_queries(engine, arg(a, "connId")?).await?),
+        "save_query" => ok(ops::save_query(engine, arg(a, "query")?).await?),
+        "delete_saved_query" => ok(ops::delete_saved_query(engine, arg(a, "id")?).await?),
+        "list_activity" => {
+            ok(ops::list_activity(engine, arg(a, "connId")?, arg(a, "includeIdle")?).await?)
+        }
+        "signal_backend" => ok(ops::signal_backend(
+            engine,
+            arg(a, "connId")?,
+            arg(a, "pid")?,
+            arg(a, "terminate")?,
+        )
+        .await?),
+        "app_version" => ok(ops::app_version()),
+        "check_for_updates" => ok(ops::check_for_updates().await?),
+        // Headless runs never open a browser: the URL is recorded for `e2e_last_opened_url`.
+        "open_url" => {
+            let url: String = arg(a, "url")?;
+            *LAST_OPENED_URL.lock().unwrap() = Some(url);
+            ok(())
+        }
+        "e2e_last_opened_url" => ok(LAST_OPENED_URL.lock().unwrap().clone()),
         other => Err(AppError::invalid(format!("unknown command {other}"))),
     }
 }

@@ -32,6 +32,14 @@ export function installBridgeBackend(): void {
         case "plugin:dialog|ask":
         case "plugin:dialog|confirm":
           return window.__askAnswer ?? true;
+        case "plugin:dialog|message": {
+          // ask()/confirm() with custom labels resolve to the clicked button's label.
+          const buttons = args.buttons as { OkCancelCustom?: [string, string] } | string | undefined;
+          if (typeof buttons === "object" && buttons.OkCancelCustom) return buttons.OkCancelCustom[(window.__askAnswer ?? true) ? 0 : 1];
+          if (buttons === "YesNo") return (window.__askAnswer ?? true) ? "Yes" : "No";
+          if (buttons === "OkCancel") return (window.__askAnswer ?? true) ? "Ok" : "Cancel";
+          return "Ok";
+        }
         default:
           return null;
       }

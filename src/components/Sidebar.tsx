@@ -1,5 +1,6 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
+  Activity as ActivityIcon,
   AppWindow,
   Braces,
   ChevronDown,
@@ -43,6 +44,7 @@ import { ContextMenu } from "./ContextMenu";
 import { ErrorPanel } from "./ErrorPanel";
 import { filterExtensions, sequenceValue, triggerSummary } from "./sidebar/objects";
 import { clickMode, ObjectRow, TreeGroup } from "./sidebar/TreeGroup";
+import { AboutButton } from "./AboutDialog";
 
 export const KIND: Record<RelationKind, { icon: LucideIcon; label: string }> = {
   table: { icon: Table2, label: "table" },
@@ -113,6 +115,7 @@ export const Sidebar = forwardRef<HTMLInputElement>(function Sidebar(_props, sea
       ) : (
         <SchemaTree key={active.profileId} ref={searchRef} connId={active.profileId} />
       )}
+      <AboutButton />
     </aside>
   );
 });
@@ -262,6 +265,9 @@ const SchemaTree = forwardRef<HTMLInputElement, { connId: string }>(function Sch
         </div>
         <button className="icon-btn" aria-label="Refresh schema" title="Refresh schema" onClick={() => void loadTree(connId)} disabled={loading}>
           <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+        </button>
+        <button className="icon-btn" aria-label="Activity" title="Activity: sessions on this database" onClick={() => appStore.getState().openActivity(connId)}>
+          <ActivityIcon size={13} />
         </button>
       </div>
       <div role="tree" aria-label="Schemas" className="min-h-0 flex-1 overflow-auto py-1 text-[12.5px]">

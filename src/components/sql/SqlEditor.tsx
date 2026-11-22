@@ -167,6 +167,8 @@ interface SqlEditorProps {
   onRun: (mode: RunMode) => void;
   /** ⌘E: explain the selection or the statement at the cursor. */
   onExplain: () => void;
+  /** ⌘S: save the editor's text as a saved query. */
+  onSave?: () => void;
   /** Return true when a running query was cancelled (consumes Esc). */
   onCancel: () => boolean;
   /** Called on every change to the document. */
@@ -175,10 +177,10 @@ interface SqlEditorProps {
   keepText?: () => boolean;
 }
 
-export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, onRun, onExplain, onCancel, onEdit, keepText }: SqlEditorProps) {
+export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, onRun, onExplain, onSave, onCancel, onEdit, keepText }: SqlEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const handlers = useRef({ onRun, onExplain, onCancel, onEdit, keepText });
-  handlers.current = { onRun, onExplain, onCancel, onEdit, keepText };
+  const handlers = useRef({ onRun, onExplain, onSave, onCancel, onEdit, keepText });
+  handlers.current = { onRun, onExplain, onSave, onCancel, onEdit, keepText };
   const columnsRef = useRef(columns);
   columnsRef.current = columns;
   const language = useRef(new Compartment());
@@ -205,6 +207,7 @@ export function SqlEditor({ viewRef, storageKey, initialSql, schema, columns, on
               { key: "Shift-Mod-Enter", run: () => (handlers.current.onRun("all"), true) },
               { key: "Escape", run: () => handlers.current.onCancel() },
               { key: "Mod-e", run: () => (handlers.current.onExplain(), true) },
+              { key: "Mod-s", preventDefault: true, run: () => (handlers.current.onSave?.(), true) },
             ]),
           ),
           // ⌥⇧F: on macOS Option+letter types a character (Ï), so CodeMirror's keymap never sees

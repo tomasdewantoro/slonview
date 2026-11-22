@@ -83,7 +83,7 @@ Notes:
 - MIT OR Apache-2.0.
 - No paid tier, no tab limits.
 - Copy as CSV, TSV, JSON or INSERT.
-- No telemetry: Slonview only talks to the PostgreSQL servers you configure.
+- No telemetry: Slonview talks to the PostgreSQL servers you configure, and to api.github.com only when you click **Check for updates**.
 - Passwords stay in your macOS Keychain.
 
 *Status: license Built; copy formats Built (INSERT Measured); telemetry Measured [NET]; Keychain Measured.*
@@ -187,7 +187,7 @@ Errors say what happened and what to do next. They never apologise. Below are th
 | Memory / launch | Nothing. | Idle RAM, launch time, "instant", "opens in under a second" | In-app measurement [STRAT §12] |
 | Read-only | "Read-only by default, enforced by the PostgreSQL server." "Turn on Allow writes to write; a red WRITE badge shows it." | "Every connection is read-only", "can't break production", "100% safe", "guaranteed read-only" | — |
 | SQL-editor writes | "In read-only mode the SQL editor refuses commands that could leave the read-only transaction before anything runs." Hardening signed off 2026-11-21 (`docs/qa/slonview-e2e-signoff.md` §6). | "Blocks every write", "can't write" (advisory locks, `dblink` and `postgres_fdw` still act) | — |
-| Telemetry | "No telemetry. Slonview contains no analytics, crash reporting, or update checks. The only network connections it makes are to the PostgreSQL servers you configure (plus the DNS lookups needed to find them)." Short: "No telemetry. Slonview only talks to the PostgreSQL servers you configure." | "No network requests at all", "offline", "private" | — |
+| Telemetry | "No telemetry. Slonview contains no analytics or crash reporting. It connects to the PostgreSQL servers you configure (plus the DNS lookups needed to find them). The only other network request is the update check, and only when you click **Check for updates** (it contacts api.github.com)." Short: "No telemetry: no analytics or crash reporting. The only other request is the update check, when you click it." | "No network requests at all", "offline", "private", "only talks to your servers", "no update checks" | — |
 | TLS | "TLS up to `verify-full`." `prefer`/`require` encrypt without verifying. | "Secure connection" unqualified, "safe on production" | — |
 | Native | "Feels at home on the Mac", "built with Tauri and Rust" | "Native" (unqualified), "No Electron. No subscription. No bloat." | — |
 | Comparisons | Describe the pain ("Java or Electron weight"). | "Faster than X", "unlike X, read-only is opt-in" | Same-machine benchmark / cited desk check |

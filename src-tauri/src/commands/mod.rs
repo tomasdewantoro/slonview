@@ -11,3 +11,4 @@ pub mod objects;
 pub mod schema;
 pub mod sql;
 pub mod sql_assist;
+pub mod tools;

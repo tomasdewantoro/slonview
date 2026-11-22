@@ -1,10 +1,12 @@
-// Bottom half of SqlTab: per-statement result sub-tabs, EXPLAIN plans, error panel, CSV export.
+// Bottom half of SqlTab: per-statement result sub-tabs, EXPLAIN plans, error panel, CSV/JSON export.
 import { useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { CircleAlert, FileDown, TriangleAlert } from "lucide-react";
+import { CircleAlert, TriangleAlert } from "lucide-react";
 import { api, errorMessage, newRequestId } from "../../api";
 import type { AppError } from "../../bindings/AppError";
 import type { ExplainResult } from "../../bindings/ExplainResult";
+import type { ExportFormat } from "../../bindings/ExportFormat";
+import { EXPORT_FILTERS, ExportButton } from "../ExportButton";
 import type { QueryResult } from "../../bindings/QueryResult";
 import { ResultGrid } from "../ResultGrid";
 import { affectedMessage, formatElapsed, isExportable, resultLabel } from "../../lib/sqlResult";
@@ -49,12 +51,12 @@ function ResultTabs({ connId, results, maxRows }: { connId: string; results: Que
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
   const result = results[active];
 
-  const exportCsv = async () => {
-    const path = await save({ defaultPath: "result.csv", filters: [{ name: "CSV", extensions: ["csv"] }] });
+  const exportRows = async (format: ExportFormat) => {
+    const path = await save({ defaultPath: `result.${format}`, filters: [EXPORT_FILTERS[format]] });
     if (!path) return;
     setExportState({ kind: "running" });
     try {
-      const rows = await api.exportCsv(newRequestId(), { kind: "sql", connId, sql: result.statement }, path);
+      const rows = await api.exportCsv(newRequestId(), { kind: "sql", connId, sql: result.statement }, path, format);
       setExportState({ kind: "done", rows, path });
     } catch (e) {
       setExportState({ kind: "error", message: errorMessage(e) });
@@ -113,16 +115,13 @@ function ResultTabs({ connId, results, maxRows }: { connId: string; results: Que
         <span className="flex-1" />
         <ExportStatus state={exportState} />
         {isExportable(result) && (
-          <button
-            type="button"
-            onClick={exportCsv}
+          <ExportButton
+            busy={false}
             disabled={exportState.kind === "running"}
-            title="Re-run this statement and stream every row to a CSV file"
+            title="Re-run this statement and stream every row to a CSV or JSON file"
             className="flex h-5 items-center gap-1 rounded px-1.5 text-muted hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-focus-ring disabled:opacity-50"
-          >
-            <FileDown className="size-3.5" />
-            Export CSV
-          </button>
+            onExport={(format) => void exportRows(format)}
+          />
         )}
       </div>
     </div>

@@ -26,6 +26,9 @@ import type { TableDescription } from "../bindings/TableDescription";
 import type { ColumnRef } from "../bindings/ColumnRef";
 import type { ExplainResult } from "../bindings/ExplainResult";
 import type { PlanNode } from "../bindings/PlanNode";
+import type { Activity } from "../bindings/Activity";
+import type { SavedQuery } from "../bindings/SavedQuery";
+import type { SavedQueryInput } from "../bindings/SavedQueryInput";
 import { splitStatements } from "../lib/sqlSplit";
 
 const TRUNCATE = 2048;
@@ -716,6 +719,24 @@ async function mockExplain(requestId: string, connId: string, sql: string, analy
   };
 }
 
+let savedQueries: SavedQuery[] = [
+  { id: "5b0c1f43-7e55-4c0e-9d5c-1a2b3c4d5e6f", connId: null, name: "Paid orders today", sql: "SELECT *\nFROM orders\nWHERE status = 'paid' AND created_at >= current_date;", createdAt: "2026-11-20T08:00:00Z", updatedAt: "2026-11-20T08:00:00Z" },
+];
+
+function mockActivity(includeIdle: boolean): Activity[] {
+  const row = (pid: number, state: string | null, query: string, queryAgeMs: number, extra: Partial<Activity> = {}): Activity => ({
+    pid, user: "tomas", applicationName: "psql", clientAddr: null, state, waitEvent: null, backendType: "client backend",
+    xactAgeMs: state === "idle" ? null : queryAgeMs + 120, queryAgeMs, query, isSelf: false, canSignal: true, ...extra,
+  });
+  const rows = [
+    row(41200, "active", "SELECT pid, usename FROM pg_stat_activity", 4, { applicationName: "slonview", isSelf: true, canSignal: false }),
+    row(41233, "active", "SELECT pg_sleep(60)", 12_400, { waitEvent: "Timeout: PgSleep" }),
+    row(41251, "idle in transaction", "UPDATE orders SET status = 'paid' WHERE id = 42", 95_000, { clientAddr: "10.0.0.12", applicationName: "billing-worker" }),
+    row(41260, "idle", "COMMIT", 3_600_000, { user: "report", applicationName: "metabase", canSignal: false }),
+  ];
+  return includeIdle ? rows : rows.filter((r) => r.state !== "idle" || r.isSelf);
+}
+
 export function installMockBackend(): void {
   mockIPC(async (cmd, payload) => {
     const a = (payload ?? {}) as Record<string, any>;
@@ -846,6 +867,39 @@ export function installMockBackend(): void {
       }
       case "explain":
         return mockExplain(a.requestId, a.connId, a.sql, a.analyze);
+      // v0.3.0 tools
+      case "list_saved_queries":
+        return savedQueries.filter((q) => q.connId === null || q.connId === a.connId).sort((x, y) => x.name.toLowerCase().localeCompare(y.name.toLowerCase()));
+      case "save_query": {
+        const input = a.query as SavedQueryInput;
+        const name = input.name.trim();
+        if (!name) throw err({ kind: "invalid", message: "A saved query needs a name.", position: null });
+        const now = new Date().toISOString();
+        const prev = savedQueries.find((q) => q.id === input.id);
+        const saved: SavedQuery = { id: input.id ?? crypto.randomUUID(), connId: input.connId, name, sql: input.sql, createdAt: prev?.createdAt ?? now, updatedAt: now };
+        savedQueries = [...savedQueries.filter((q) => q.id !== saved.id), saved];
+        return saved;
+      }
+      case "delete_saved_query":
+        savedQueries = savedQueries.filter((q) => q.id !== a.id);
+        return null;
+      case "list_activity":
+        requireConn(a.connId);
+        return mockActivity(a.includeIdle);
+      case "signal_backend": {
+        const p = profiles.find((x) => x.id === a.connId);
+        if (a.terminate && p?.readOnly !== false)
+          throw err({ kind: "invalid", message: "Read-only connection: terminating a session is not allowed. Turn on “Allow writes” for this connection to terminate sessions.", position: null });
+        return true;
+      }
+      case "app_version":
+        return "0.2.0";
+      case "check_for_updates":
+        await delay(null, 400);
+        return { kind: "upToDate", current: "0.2.0" };
+      case "open_url":
+        window.open(a.url, "_blank", "noopener");
+        return null;
       case "plugin:clipboard-manager|write_text":
         await navigator.clipboard?.writeText(a.text).catch(() => {});
         console.info("[mock clipboard]\n" + a.text);

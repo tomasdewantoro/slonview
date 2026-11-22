@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import { configDefaults } from "vitest/config";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -13,7 +14,8 @@ export default defineConfig(() => ({
     strictPort: true,
     host: host || false,
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
-    watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/target/**"] },
+    watch: { ignored: ["**/src-tauri/**", "**/crates/**", "**/target/**", "**/.worktrees/**"] },
   },
-  test: { environment: "jsdom" },
+  // Git worktrees under .worktrees/ hold other branches' copies of src; never collect them.
+  test: { environment: "jsdom", exclude: [...configDefaults.exclude, ".worktrees/**"] },
 }));

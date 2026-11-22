@@ -658,3 +658,56 @@ describe("several connections", () => {
     expect(tabReadOnly(store.getState(), roTab)).toBe(true);
   });
 });
+
+describe("v0.3.0 tools: activity and saved-query tabs", () => {
+  beforeEach(() => {
+    installIpc();
+    window.localStorage.clear();
+  });
+  afterEach(() => clearMocks());
+
+  async function connected() {
+    const store = createAppStore(window.localStorage);
+    await store.getState().loadProfiles();
+    await store.getState().connect(CONN);
+    return store;
+  }
+
+  it("opens one pinned Activity tab per connection and restores it after a reload", async () => {
+    const store = await connected();
+    store.getState().openActivity();
+    store.getState().openTable("public", "orders", "preview");
+    store.getState().openActivity(CONN);
+    const activity = store.getState().tabs.filter((t) => t.kind === "activity");
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({ title: "Activity", connId: CONN, preview: false });
+    expect(store.getState().activeTabId).toBe(activity[0].id);
+    // ⌘R bumps its refresh counter.
+    store.getState().refreshTab(activity[0].id);
+    expect(store.getState().structureNonce[activity[0].id]).toBe(1);
+    expect(readPersistedTabs(window.localStorage, CONN).tabs.map((t) => t.kind)).toContain("activity");
+    // Not connected: nothing opens.
+    store.getState().openActivity("nope");
+    expect(store.getState().tabs.filter((t) => t.kind === "activity")).toHaveLength(1);
+  });
+
+  it("a saved query opens in a new pinned tab that remembers its id; rename and delete follow", async () => {
+    const store = await connected();
+    store.getState().openSavedQuery({ id: "q1", name: "Paid orders", sql: "select 1" });
+    store.getState().openSavedQuery({ id: "q1", name: "Paid orders", sql: "select 1" });
+    const tabs = store.getState().tabs;
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0]).toMatchObject({ kind: "sql", title: "Paid orders", initialSql: "select 1", savedQueryId: "q1", preview: false });
+    expect(readPersistedTabs(window.localStorage, CONN).tabs[1]).toMatchObject({ savedQueryId: "q1" });
+
+    store.getState().openSql();
+    const plain = store.getState().tabs[2];
+    store.getState().setTabSavedQuery(plain.id, { id: "q2", name: "Mine" });
+    expect(store.getState().tabs[2]).toMatchObject({ title: "Mine", savedQueryId: "q2" });
+
+    store.getState().setTabSavedQuery(plain.id, null);
+    const after = store.getState().tabs[2];
+    expect(after.kind === "sql" && after.savedQueryId).toBeUndefined();
+    expect(after.title).toBe("Mine");
+  });
+});
