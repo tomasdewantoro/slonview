@@ -30,14 +30,16 @@ pub struct Activity {
     pub query: String,
     /// The session that ran this list: Slonview's own.
     pub is_self: bool,
-    /// The current role may cancel this backend: its own role (or a role it is a member of),
-    /// or `pg_signal_backend` for non-superuser backends, or a superuser.
+    /// The current role may cancel this backend, by the server's own rule: a superuser may
+    /// signal anything; otherwise never a superuser's backend, and only one whose role the
+    /// current role has the privileges of (`USAGE`, so NOINHERIT grants don't count) or with
+    /// the privileges of `pg_signal_backend`.
     pub can_signal: bool,
 }
 
 const ACTIVITY_SQL: &str = "
     WITH me AS (SELECT current_setting('is_superuser') = 'on' AS su,
-                       pg_has_role('pg_signal_backend', 'MEMBER') AS signal)
+                       pg_has_role('pg_signal_backend', 'USAGE') AS signal)
     SELECT a.pid, a.usename::text, coalesce(a.application_name, ''), host(a.client_addr), a.state,
            CASE WHEN a.wait_event IS NOT NULL THEN a.wait_event_type || ': ' || a.wait_event END,
            coalesce(a.backend_type, ''),
@@ -46,8 +48,8 @@ const ACTIVITY_SQL: &str = "
            coalesce(a.query, ''),
            a.pid = pg_backend_pid(),
            a.pid <> pg_backend_pid() AND a.usesysid IS NOT NULL AND (
-             me.su OR pg_has_role(a.usesysid, 'MEMBER')
-             OR (me.signal AND NOT coalesce((SELECT r.rolsuper FROM pg_roles r WHERE r.oid = a.usesysid), true))
+             me.su OR (NOT coalesce((SELECT r.rolsuper FROM pg_roles r WHERE r.oid = a.usesysid), true)
+                       AND (pg_has_role(a.usesysid, 'USAGE') OR me.signal))
            )
     FROM pg_stat_activity a, me
     WHERE a.datname = current_database()

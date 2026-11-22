@@ -30,7 +30,9 @@ queryAgeMs: number | null, query: string,
  */
 isSelf: boolean, 
 /**
- * The current role may cancel this backend: its own role (or a role it is a member of),
- * or `pg_signal_backend` for non-superuser backends, or a superuser.
+ * The current role may cancel this backend, by the server's own rule: a superuser may
+ * signal anything; otherwise never a superuser's backend, and only one whose role the
+ * current role has the privileges of (`USAGE`, so NOINHERIT grants don't count) or with
+ * the privileges of `pg_signal_backend`.
  */
 canSignal: boolean, };

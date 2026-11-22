@@ -2083,6 +2083,114 @@ async fn terminate_refused_on_read_only_and_allowed_with_writes() {
     );
 }
 
+/// `can_signal` against the server's rule, with throwaway roles (`slonview_test_sig_*`):
+/// a member of a superuser role may not signal a superuser's backend, and a NOINHERIT
+/// membership grants nothing. Every `false` is checked against Postgres refusing the cancel.
+#[tokio::test]
+async fn can_signal_matches_the_server_rule() {
+    const ROLES: [&str; 4] = [
+        "slonview_test_sig_su",
+        "slonview_test_sig_target",
+        "slonview_test_sig_member",
+        "slonview_test_sig_noinherit",
+    ];
+    let admin = fixture_with(|p| p.read_only = false).await;
+    let cleanup = |admin: &Fixture| {
+        let (engine, conn) = (admin.engine.clone(), admin.conn);
+        async move {
+            let names = ROLES.map(|r| format!("'{r}'")).join(",");
+            sql_rw(&engine, conn, &format!(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename IN ({names})"
+            ))
+            .await;
+            for r in ROLES {
+                // Sessions may take a moment to go away after pg_terminate_backend.
+                for _ in 0..50 {
+                    if engine
+                        .run_sql("sig-drop", conn, &format!("DROP ROLE IF EXISTS {r}"), 1)
+                        .await
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    };
+    cleanup(&admin).await;
+    sql_rw(
+        &admin.engine,
+        admin.conn,
+        "CREATE ROLE slonview_test_sig_su SUPERUSER LOGIN; \
+         CREATE ROLE slonview_test_sig_target LOGIN; \
+         CREATE ROLE slonview_test_sig_member LOGIN IN ROLE slonview_test_sig_su; \
+         CREATE ROLE slonview_test_sig_noinherit LOGIN NOINHERIT IN ROLE slonview_test_sig_target",
+    )
+    .await;
+
+    let (engine, conn) = (admin.engine.clone(), admin.conn);
+    let body = tokio::spawn(async move {
+        let as_role = |role: &'static str| fixture_with(move |p| p.user = role.into());
+        let su = as_role("slonview_test_sig_su").await;
+        let target = as_role("slonview_test_sig_target").await;
+        let member = as_role("slonview_test_sig_member").await;
+        let noinherit = as_role("slonview_test_sig_noinherit").await;
+        for (f, tag) in [(&su, "slonview-sig-su"), (&target, "slonview-sig-target")] {
+            let (e, c) = (f.engine.clone(), f.conn);
+            let sql = format!("SELECT pg_sleep(60) /* {tag} */");
+            tokio::spawn(async move { e.run_sql("sig-sleep", c, &sql, 1).await });
+        }
+        let admin = Fixture {
+            engine,
+            conn,
+            _dir: TempDir::new().unwrap(),
+        };
+        let su_pid = sleeping_pid(&admin, "slonview-sig-su").await;
+        let target_pid = sleeping_pid(&admin, "slonview-sig-target").await;
+
+        let can = |f: &Fixture, pid: i32| {
+            let (e, c) = (f.engine.clone(), f.conn);
+            async move {
+                e.list_activity(c, true)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|a| a.pid == pid)
+                    .unwrap_or_else(|| panic!("pid {pid} not listed"))
+                    .can_signal
+            }
+        };
+        let refused = |f: &Fixture, pid: i32| {
+            let (e, c) = (f.engine.clone(), f.conn);
+            async move { e.signal_backend(c, pid, false).await.is_err() }
+        };
+        // Member of a superuser role (MEMBER and USAGE both true): still refused.
+        assert!(!can(&member, su_pid).await, "superuser target");
+        assert!(refused(&member, su_pid).await);
+        // NOINHERIT membership: MEMBER true, USAGE false; the server refuses.
+        assert!(!can(&noinherit, target_pid).await, "NOINHERIT membership");
+        assert!(refused(&noinherit, target_pid).await);
+        assert!(!can(&member, target_pid).await, "unrelated role");
+        // A superuser may signal anyone.
+        assert!(can(&su, target_pid).await);
+        assert!(can(&admin, su_pid).await);
+        drop(admin._dir);
+    })
+    .await;
+    cleanup(&admin).await;
+    if let Err(e) = body {
+        std::panic::resume_unwind(e.into_panic());
+    }
+}
+
+async fn sql_rw(engine: &Engine, conn: ConnId, sql: &str) {
+    engine
+        .run_sql("sig-admin", conn, sql, 1000)
+        .await
+        .unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+}
+
 // v0.3.0 tools: JSON export.
 
 #[tokio::test]
