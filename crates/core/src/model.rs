@@ -593,3 +593,14 @@ pub struct EditRequest {
     pub table: String,
     pub changes: Vec<RowEdit>,
 }
+
+/// File format of an export. CSV goes through `COPY … TO STDOUT`; JSON writes an array of
+/// objects (column name → value) row by row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ExportFormat {
+    #[default]
+    Csv,
+    Json,
+}

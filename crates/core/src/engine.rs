@@ -13,6 +13,7 @@ use crate::history::{self, HistoryStore};
 use crate::introspect;
 use crate::model::*;
 use crate::paging::{self, PageMode};
+use crate::saved::SavedQueryStore;
 use crate::secrets::SecretStore;
 use crate::split::split_statements;
 use crate::{AppError, AppResult, export, query};
@@ -30,6 +31,8 @@ pub struct Engine {
     pub profiles: ProfileStore,
     pub secrets: Arc<dyn SecretStore>,
     pub history: HistoryStore,
+    /// `saved_queries.json`, next to the profiles file.
+    pub saved: SavedQueryStore,
     sessions: RwLock<HashMap<ConnId, Arc<Session>>>,
     pub(crate) cancels: CancelRegistry,
 }
@@ -40,10 +43,18 @@ impl Engine {
         secrets: Arc<dyn SecretStore>,
         history: HistoryStore,
     ) -> Self {
+        let saved = SavedQueryStore::new(
+            profiles
+                .path()
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("saved_queries.json"),
+        );
         Self {
             profiles,
             secrets,
             history,
+            saved,
             sessions: RwLock::default(),
             cancels: CancelRegistry::default(),
         }
@@ -419,11 +430,13 @@ impl Engine {
             })?
     }
 
-    /// Streams rows to a CSV file (header row first). Returns data rows written.
-    pub async fn export_csv(
+    /// Streams every row to `path` as CSV (header row first) or as a JSON array of objects.
+    /// Returns data rows written.
+    pub async fn export_rows(
         &self,
         request_id: &str,
         source: &ExportSource,
+        format: ExportFormat,
         path: &std::path::Path,
     ) -> AppResult<u64> {
         let conn_id = match source {
@@ -473,23 +486,37 @@ impl Engine {
             } else {
                 None
             };
+            // COPY accepts exactly one query (SELECT, VALUES, TABLE, or DML with RETURNING), so
+            // its Parse check keeps both formats to the same set of exportable statements.
+            let relocate_error = |e| {
+                let e = paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e);
+                if matches!(source, ExportSource::Table { .. }) {
+                    raw_expression_error(None, e)
+                } else {
+                    e
+                }
+            };
             let copy = export::copy_sql(&select);
             query::require_single_statement(&client, &copy, &guard)
                 .await
-                .map_err(|e| {
-                    let e =
-                        paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e);
-                    if matches!(source, ExportSource::Table { .. }) {
-                        raw_expression_error(None, e)
-                    } else {
-                        e
-                    }
-                })?;
-            let rows = export::copy_to_file(&client, &select, path, &guard)
+                .map_err(relocate_error)?;
+            let types = match format {
+                ExportFormat::Csv => Vec::new(),
+                ExportFormat::Json => query::require_single_statement(&client, &select, &guard)
+                    .await
+                    .map_err(|e| paging::RawSpan::relocate(span, e))?
+                    .columns()
+                    .iter()
+                    .map(|c| c.type_().clone())
+                    .collect(),
+            };
+            let prefix = match format {
+                ExportFormat::Csv => export::COPY_PREFIX,
+                ExportFormat::Json => "",
+            };
+            let rows = export::export_to_file(&client, &select, format, &types, path, &guard)
                 .await
-                .map_err(|e| {
-                    paging::RawSpan::relocate(span.map(|s| s.shifted(export::COPY_PREFIX)), e)
-                })?;
+                .map_err(|e| paging::RawSpan::relocate(span.map(|s| s.shifted(prefix)), e))?;
             if let Some(start) = &transaction
                 && let Err(e) = query::verify_read_only(&client, start, &guard).await
             {
