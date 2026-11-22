@@ -606,6 +606,7 @@ try {
     eq(label, `${want} rows loaded`, "orders search footer");
     await page.evaluate(() => (window.__nextSavePath = "/tmp/slonview-e2e-nav-search.csv"));
     await page.click('button[title^="Export every row"]');
+    await clickText("CSV", '[role="menuitem"]');
     await until(() => /Exported [\d,]+ rows? to|Export failed/.test(document.body.innerText), 60000);
     const lines = execFileSync("wc", ["-l", "/tmp/slonview-e2e-nav-search.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
     eq(Number(lines), Number(want) + 1, "exported lines");
