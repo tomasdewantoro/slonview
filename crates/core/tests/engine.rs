@@ -1381,7 +1381,7 @@ async fn raw_where_rejects_multiple_server_commands_in_all_modes() {
                 .await
                 .unwrap_err(),
             f.engine
-                .export_csv("raw-export", &source, &path)
+                .export_rows("raw-export", &source, ExportFormat::Csv, &path)
                 .await
                 .unwrap_err(),
         ];
@@ -1483,7 +1483,7 @@ async fn read_only_export_rejects_writes_and_splitter_disagreement() {
         };
         assert!(
             f.engine
-                .export_csv("write-export", &source, &path)
+                .export_rows("write-export", &source, ExportFormat::Csv, &path)
                 .await
                 .is_err()
         );
@@ -1505,7 +1505,7 @@ async fn read_only_export_rejects_writes_and_splitter_disagreement() {
     };
     assert_eq!(
         f.engine
-            .export_csv("good-export", &src, &path)
+            .export_rows("good-export", &src, ExportFormat::Csv, &path)
             .await
             .unwrap(),
         1
@@ -1683,7 +1683,11 @@ async fn export_csv_table_and_sql() {
         raw_where: None,
         sort: vec![],
     };
-    let n = f.engine.export_csv("e", &source, &path).await.unwrap();
+    let n = f
+        .engine
+        .export_rows("e", &source, ExportFormat::Csv, &path)
+        .await
+        .unwrap();
     assert_eq!(n, 1_000_000);
     let text = std::fs::read_to_string(&path).unwrap();
     assert_eq!(text.lines().count(), 1_000_001);
@@ -1695,13 +1699,22 @@ async fn export_csv_table_and_sql() {
         conn_id: f.conn,
         sql: "SELECT c_varchar FROM all_types ORDER BY id;".into(),
     };
-    assert_eq!(f.engine.export_csv("e2", &src, &path2).await.unwrap(), 5);
+    assert_eq!(
+        f.engine
+            .export_rows("e2", &src, ExportFormat::Csv, &path2)
+            .await
+            .unwrap(),
+        5
+    );
     let src = ExportSource::Sql {
         conn_id: f.conn,
         sql: "SELECT 1; SELECT 2".into(),
     };
     assert!(matches!(
-        f.engine.export_csv("e3", &src, &path2).await.unwrap_err(),
+        f.engine
+            .export_rows("e3", &src, ExportFormat::Csv, &path2)
+            .await
+            .unwrap_err(),
         AppError::Invalid { .. }
     ));
 }
@@ -1717,7 +1730,8 @@ async fn cancel_export() {
         conn_id: f.conn,
         sql: "SELECT pg_sleep(30)".into(),
     };
-    let task = tokio::spawn(async move { engine.export_csv("exp", &src, &p).await });
+    let task =
+        tokio::spawn(async move { engine.export_rows("exp", &src, ExportFormat::Csv, &p).await });
     tokio::time::sleep(Duration::from_millis(300)).await;
     f.engine.cancel_query("exp").await.unwrap();
     assert_eq!(task.await.unwrap().unwrap_err(), AppError::Cancelled);
@@ -1799,4 +1813,315 @@ async fn invalid_time_zone_is_a_typed_connect_error() {
     );
     f.engine.profiles.upsert(profile.clone()).unwrap();
     assert_eq!(f.engine.connect(profile.id).await.unwrap_err(), want);
+}
+
+// v0.3.0 tools: server activity and signals.
+
+/// Waits until `run` (a pg_sleep tagged with `tag`) shows up as active; returns its pid.
+async fn sleeping_pid(f: &Fixture, tag: &str) -> i32 {
+    for _ in 0..100 {
+        let list = f.engine.list_activity(f.conn, false).await.unwrap();
+        if let Some(a) = list.iter().find(|a| a.query.contains(tag)) {
+            return a.pid;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("no active session running {tag}");
+}
+
+#[tokio::test]
+async fn activity_lists_other_sessions_and_cancel_stops_them() {
+    // The sleeper runs on its own engine (another connection, like another client).
+    let sleeper = fixture().await;
+    let f = fixture().await;
+    let (engine, conn) = (sleeper.engine.clone(), sleeper.conn);
+    let task = tokio::spawn(async move {
+        engine
+            .run_sql(
+                "act-sleep",
+                conn,
+                "SELECT pg_sleep(30) /* slonview-activity-test */",
+                1,
+            )
+            .await
+    });
+    let pid = sleeping_pid(&f, "slonview-activity-test").await;
+
+    let list = f.engine.list_activity(f.conn, false).await.unwrap();
+    let me = &list[0];
+    assert!(me.is_self, "own session listed first");
+    assert!(!me.can_signal, "own session can't be signalled");
+    let row = list.iter().find(|a| a.pid == pid).unwrap();
+    assert_eq!(row.state.as_deref(), Some("active"));
+    assert_eq!(row.application_name, "slonview");
+    assert!(row.can_signal, "same role may cancel its own backends");
+    assert!(row.query_age_ms.unwrap() >= 0.0);
+    assert!(row.xact_age_ms.is_some());
+    assert!(!row.is_self);
+    assert!(
+        list.iter()
+            .all(|a| a.state.as_deref() != Some("idle") || a.is_self)
+    );
+    let with_idle = f.engine.list_activity(f.conn, true).await.unwrap();
+    assert!(with_idle.len() >= list.len());
+
+    // Read-only connection: cancel (a signal, not a write) is allowed.
+    assert!(f.engine.signal_backend(f.conn, pid, false).await.unwrap());
+    let err = tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .expect("cancel_backend stops the sleep")
+        .unwrap()
+        .unwrap_err();
+    // Cancelled from another session, so the sleeper's own engine sees it as a timeout-style 57014.
+    assert_eq!(err, AppError::Timeout);
+    // No such backend any more: Postgres answers false (with a warning), not an error.
+    assert!(
+        !f.engine
+            .signal_backend(f.conn, i32::MAX, false)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn terminate_refused_on_read_only_and_allowed_with_writes() {
+    let sleeper = fixture().await;
+    let ro = fixture().await;
+    let rw = fixture_with(|p| p.read_only = false).await;
+    let (engine, conn) = (sleeper.engine.clone(), sleeper.conn);
+    let task = tokio::spawn(async move {
+        engine
+            .run_sql(
+                "term-sleep",
+                conn,
+                "SELECT pg_sleep(30) /* slonview-terminate-test */",
+                1,
+            )
+            .await
+    });
+    let pid = sleeping_pid(&ro, "slonview-terminate-test").await;
+    match ro.engine.signal_backend(ro.conn, pid, true).await {
+        Err(AppError::Invalid { message, .. }) => {
+            assert!(message.contains("Allow writes"), "{message}")
+        }
+        other => panic!("terminate on read-only must be refused: {other:?}"),
+    }
+    // Still running: nothing was sent.
+    assert!(
+        ro.engine
+            .list_activity(ro.conn, false)
+            .await
+            .unwrap()
+            .iter()
+            .any(|a| a.pid == pid)
+    );
+    assert!(rw.engine.signal_backend(rw.conn, pid, true).await.unwrap());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+}
+
+// v0.3.0 tools: JSON export.
+
+#[tokio::test]
+async fn export_json_all_types_parses_with_typed_values() {
+    let f = fixture().await;
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("all_types.json");
+    let source = ExportSource::Table {
+        conn_id: f.conn,
+        schema: "public".into(),
+        table: "all_types".into(),
+        filters: vec![],
+        raw_where: None,
+        sort: vec![Sort {
+            column: "id".into(),
+            desc: false,
+        }],
+    };
+    let n = f
+        .engine
+        .export_rows("json-types", &source, ExportFormat::Json, &path)
+        .await
+        .unwrap();
+    assert_eq!(n, 5);
+    let text = std::fs::read_to_string(&path).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows = v.as_array().unwrap();
+    assert_eq!(rows.len(), 5);
+    // One object per line, keys in column order (serde_json's Map sorts, so check the text).
+    let first = text.lines().nth(1).unwrap();
+    let mut at = 0;
+    for key in [
+        "id",
+        "c_int",
+        "c_numeric",
+        "c_text",
+        "c_varchar",
+        "c_bool",
+        "c_uuid",
+        "c_date",
+        "c_ts",
+        "c_interval",
+        "c_jsonb",
+        "c_int_arr",
+        "c_text_arr",
+        "c_bytea",
+        "c_enum",
+        "c_inet",
+    ] {
+        let pos = first[at..]
+            .find(&format!("\"{key}\":"))
+            .unwrap_or_else(|| panic!("{key} out of order in {first}"));
+        at += pos + 1;
+    }
+    assert_eq!(rows[0].as_object().unwrap().len(), 16);
+    let r0 = &rows[0];
+    assert_eq!(r0["id"], 1);
+    assert_eq!(r0["c_int"], 1);
+    // Numeric digits are written verbatim as a JSON number.
+    assert!(r0["c_numeric"].is_number());
+    assert!(first.contains("\"c_numeric\":3.14159,"), "{first}");
+    assert_eq!(r0["c_bool"], true);
+    assert_eq!(r0["c_text"], "hello");
+    assert_eq!(r0["c_jsonb"]["nested"]["b"], serde_json::json!([1, 2, 3]));
+    assert_eq!(r0["c_int_arr"], "{1,2,3}");
+    assert_eq!(r0["c_bytea"], "\\xdeadbeef");
+    // Row 2: every column NULL except id.
+    assert!(
+        rows[1]
+            .as_object()
+            .unwrap()
+            .iter()
+            .all(|(k, v)| k == "id" || v.is_null())
+    );
+    // Row 3: text 'NULL' is a string; bool false; minimum int.
+    assert_eq!(rows[2]["c_text"], "NULL");
+    assert_eq!(rows[2]["c_bool"], false);
+    assert_eq!(rows[2]["c_int"], -2147483648i64);
+    assert_eq!(rows[2]["c_jsonb"], serde_json::json!([]));
+    // Row 4: embedded tab/newline, emoji and quotes inside jsonb, 1e20 numeric.
+    assert_eq!(rows[3]["c_varchar"], "tab\tand newline\nhere");
+    assert_eq!(rows[3]["c_jsonb"]["emoji"], "🐘");
+    assert_eq!(rows[3]["c_jsonb"]["quote"], "it's \"quoted\"");
+    assert_eq!(rows[3]["c_numeric"].as_f64(), Some(1e20));
+    assert_eq!(rows[3]["c_ts"], "infinity");
+    // Row 5: injection-shaped text and unicode stay exact; jsonb scalar string.
+    assert_eq!(rows[4]["c_text"], "O'Brien; DROP TABLE orders; --");
+    assert_eq!(rows[4]["c_varchar"], "unicode ñ 日本");
+    assert_eq!(rows[4]["c_jsonb"], "just a string");
+
+    // Values that don't fit f64 stay strings; floats keep NaN/Infinity as strings.
+    let path2 = dir.path().join("numbers.json");
+    let src = ExportSource::Sql {
+        conn_id: f.conn,
+        sql: "SELECT 12345678901234567890.123::numeric AS big, 9223372036854775807::int8 AS i8, \
+              'NaN'::float8 AS nan, '-Infinity'::float4 AS ninf, 1.5::float8 AS f, NULL::int AS n"
+            .into(),
+    };
+    assert_eq!(
+        f.engine
+            .export_rows("json-num", &src, ExportFormat::Json, &path2)
+            .await
+            .unwrap(),
+        1
+    );
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path2).unwrap()).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!([{ "big": "12345678901234567890.123", "i8": "9223372036854775807",
+                             "nan": "NaN", "ninf": "-Infinity", "f": 1.5, "n": null }])
+    );
+
+    // Empty result: an empty array.
+    let src = ExportSource::Sql {
+        conn_id: f.conn,
+        sql: "SELECT 1 AS a WHERE false".into(),
+    };
+    assert_eq!(
+        f.engine
+            .export_rows("json-empty", &src, ExportFormat::Json, &path2)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(&path2).unwrap())
+            .unwrap(),
+        serde_json::json!([])
+    );
+
+    // Same statement rules as CSV: several statements and writes on read-only are refused.
+    for sql in [
+        "SELECT 1; SELECT 2",
+        "DELETE FROM scratch_insert_target RETURNING *",
+    ] {
+        let src = ExportSource::Sql {
+            conn_id: f.conn,
+            sql: sql.into(),
+        };
+        assert!(
+            f.engine
+                .export_rows("json-bad", &src, ExportFormat::Json, &path2)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn export_json_orders_streams_a_million_rows() {
+    let f = fixture().await;
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("orders.json");
+    let source = ExportSource::Table {
+        conn_id: f.conn,
+        schema: "public".into(),
+        table: "orders".into(),
+        filters: vec![],
+        raw_where: None,
+        sort: vec![],
+    };
+    let n = f
+        .engine
+        .export_rows("json-orders", &source, ExportFormat::Json, &path)
+        .await
+        .unwrap();
+    assert_eq!(n, 1_000_000);
+    let v: serde_json::Value =
+        serde_json::from_reader(std::io::BufReader::new(std::fs::File::open(&path).unwrap()))
+            .unwrap();
+    let rows = v.as_array().unwrap();
+    assert_eq!(rows.len(), 1_000_000);
+    assert_eq!(rows[0]["id"], 1);
+    assert_eq!(rows[0]["customer_id"], 2);
+    assert!(rows[0]["amount"].is_number());
+    assert_eq!(rows[999_999]["id"], 1_000_000);
+}
+
+#[tokio::test]
+async fn cancel_json_export_removes_the_file() {
+    let f = fixture().await;
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("slow.json");
+    let engine = f.engine.clone();
+    let p = path.clone();
+    let src = ExportSource::Sql {
+        conn_id: f.conn,
+        sql: "SELECT g, pg_sleep(0.01) FROM generate_series(1, 3000) g".into(),
+    };
+    let task = tokio::spawn(async move {
+        engine
+            .export_rows("exp-json", &src, ExportFormat::Json, &p)
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    f.engine.cancel_query("exp-json").await.unwrap();
+    assert_eq!(task.await.unwrap().unwrap_err(), AppError::Cancelled);
+    assert!(!path.exists());
 }

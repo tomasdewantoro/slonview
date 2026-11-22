@@ -11,6 +11,7 @@
 #   SLONVIEW_SCRATCH_DB   scratch database for E2E-09 (default slonview_e2e_scratch)
 #   SLONVIEW_RESEED=1     drop and re-create the fixture database from tests/fixtures/seed.sql first
 #   SLONVIEW_E2E_SHOTS    screenshot/log dir (default /tmp/slonview-e2e)
+#   (the update check goes to a local stub on bridge port + 1, never to GitHub)
 #
 # Prereqs: local Postgres via the /tmp socket, `pnpm install`, a Chromium headless shell
 # (set CHROME=... if not the Playwright cache one).
@@ -26,6 +27,8 @@ export SLONVIEW_BRIDGE="http://127.0.0.1:$BRIDGE_PORT/invoke"
 export SLONVIEW_UI_URL="http://localhost:$UI_PORT/"
 export SLONVIEW_E2E_DIR=$(mktemp -d /tmp/slonview-e2e-data.XXXXXX)
 export SLONVIEW_E2E_SHOTS=${SLONVIEW_E2E_SHOTS:-/tmp/slonview-e2e}
+# The update check never reaches GitHub in E2E: ui.e2e.mjs serves this URL itself (V3-TOOLS-03).
+export SLONVIEW_UPDATE_URL="http://127.0.0.1:$((BRIDGE_PORT + 1))/releases/latest"
 mkdir -p "$SLONVIEW_E2E_SHOTS"
 
 if [[ "${SLONVIEW_RESEED:-}" == 1 ]]; then

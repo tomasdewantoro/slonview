@@ -663,6 +663,7 @@ try {
     await openRel("orders");
     await page.evaluate(() => (window.__nextSavePath = "/tmp/slonview-e2e/11-orders-table.csv"));
     await page.click('button[title^="Export every row"]');
+    await clickText("CSV", '[role="menuitem"]');
     await until(() => /Exported [\d,]+ rows to|Export failed/.test(document.body.innerText), 120000);
     const lines = execFileSync("wc", ["-l", "/tmp/slonview-e2e/11-orders-table.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
     eq(lines, "1000001", "table export lines");
@@ -675,7 +676,8 @@ try {
     const h = await page.evaluate(() => document.querySelector(".dvn-scroller").getBoundingClientRect().height);
     assert(h > 100, `SQL result grid collapsed (${h}px)`);
     await page.evaluate(() => (window.__nextSavePath = "/tmp/slonview-e2e/11-orders-sql.csv"));
-    await clickText("Export CSV");
+    await page.click('button[title^="Re-run this statement"]');
+    await clickText("CSV", '[role="menuitem"]');
     // The results panel's own status ("Exported N rows", no " to <path>" — that is the table toast).
     await until(() => /Exported [\d,]+ rows(?! to)|Export failed/.test(document.body.innerText), 120000);
     const lines2 = execFileSync("wc", ["-l", "/tmp/slonview-e2e/11-orders-sql.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
@@ -747,6 +749,333 @@ try {
     await until(() => document.body.innerText.includes("Couldn't format"), 5000);
     eq((await doc()).trim(), "select ((( from", "bad SQL unchanged");
     return `formatted to ${formatted.split("\n").length} lines; ran 3 rows; one ⌘Z restores; parse error toast, text kept`;
+  });
+
+  // ---- v0.3.0 tools: V3-TOOLS-01..04 -------------------------------------------------
+  // SQL tabs stay mounted (hidden), so these helpers act only on what is visible.
+  const visibleClick = async (label, sel = "button") => {
+    const ok = await page.evaluate(
+      (label, sel) => {
+        const el = [...document.querySelectorAll(sel)].find((b) => b.offsetParent !== null && b.innerText.trim() === label);
+        el?.click();
+        return !!el;
+      },
+      label,
+      sel,
+    );
+    assert(ok, `no visible ${sel} "${label}"`);
+  };
+  const setVisibleSql = async (sql) => {
+    const editor = await page.evaluateHandle(() => [...document.querySelectorAll(".cm-content")].find((el) => el.offsetParent !== null));
+    await editor.click();
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("a");
+    await page.keyboard.up("Meta");
+    await page.keyboard.press("Backspace");
+    await page.evaluate((s) => document.execCommand("insertText", false, s), sql);
+    await page.keyboard.press("Escape");
+  };
+  const savedFile = () => JSON.parse(readFileSync(`${process.env.SLONVIEW_E2E_DIR ?? "/tmp/slonview-e2e-data"}/saved_queries.json`, "utf8"));
+  const activeTitle = () => page.evaluate(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim());
+  /** Switches the colour scheme. Headless Chromium repaints token colours only after a viewport change. */
+  const scheme = async (value) => {
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value }]);
+    await page.setViewport({ width: 1399, height: 900 });
+    await page.setViewport({ width: 1400, height: 900 });
+    await sleep(300);
+  };
+  const light = () => scheme("light");
+  /** Clears earlier toasts so they don't cover screenshots or the results footer. */
+  const dismissToasts = async () => {
+    await page.evaluate(() => document.querySelectorAll('[aria-label="Dismiss"]').forEach((b) => b.click()));
+    await until(() => !document.querySelector('[aria-label="Dismiss"]'), 5000);
+  };
+
+  await check("V3-TOOLS-01 saved queries: ⌘S saves, update in place, Saved panel open/rename/copy/delete", async () => {
+    await light();
+    const out = [];
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("t");
+    await page.keyboard.up("Meta");
+    await until(() => [...document.querySelectorAll(".cm-content")].some((el) => el.offsetParent !== null && el.textContent === ""), 5000);
+    const sql1 = "SELECT id, status FROM orders WHERE id <= 3 ORDER BY id";
+    await setVisibleSql(sql1);
+    // ⌘S in the editor opens the Save dialog.
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("s");
+    await page.keyboard.up("Meta");
+    await page.waitForSelector('dialog[open][aria-label="Save query"]');
+    eq(await page.$eval("#saved-name", (e) => e.value), "", "name prefill for an unsaved Query N tab");
+    await page.type("#saved-name", "  E2E paid sample ");
+    await visibleClick("Save", "dialog[open] button");
+    await until(() => document.body.innerText.includes("Saved “E2E paid sample”"), 5000);
+    eq(await activeTitle(), "E2E paid sample", "tab title follows the saved name");
+    let file = savedFile();
+    eq(file.version, 1, "file version");
+    eq(file.queries.length, 1, "one saved query");
+    const id = file.queries[0].id;
+    eq(JSON.stringify([file.queries[0].name, file.queries[0].sql, file.queries[0].connId]), JSON.stringify(["E2E paid sample", sql1, connId]), "saved name/sql/connId");
+    out.push("⌘S saved for this connection");
+
+    // ⌘S again on the same tab updates in place; "All connections" makes it global.
+    const sql2 = "SELECT id, status, amount FROM orders WHERE status = 'paid' ORDER BY id LIMIT 5";
+    await setVisibleSql(sql2);
+    await page.keyboard.down("Meta");
+    await page.keyboard.press("s");
+    await page.keyboard.up("Meta");
+    await page.waitForSelector('dialog[open][aria-label="Update saved query"]');
+    eq(await page.$eval("#saved-name", (e) => e.value), "E2E paid sample", "name prefilled from the saved query");
+    eq(await page.$eval("#saved-global", (e) => e.checked), false, "scope prefilled");
+    await page.click("#saved-global");
+    await visibleClick("Update", "dialog[open] button");
+    await until(() => document.body.innerText.includes("Updated “E2E paid sample”"), 5000);
+    file = savedFile();
+    eq(file.queries.length, 1, "still one saved query");
+    eq(JSON.stringify([file.queries[0].id, file.queries[0].sql, file.queries[0].connId]), JSON.stringify([id, sql2, null]), "updated in place, global");
+    assert(file.queries[0].updatedAt >= file.queries[0].createdAt, "timestamps");
+    out.push("second ⌘S updated the same id and made it global");
+
+    // Saved panel: search, open in a new pinned tab.
+    await visibleClick("Saved");
+    await page.waitForSelector('input[aria-label="Search saved queries"]');
+    await page.type('input[aria-label="Search saved queries"]', "PAID");
+    await until(() => document.querySelector('aside[aria-label="Saved queries"]')?.innerText.includes("E2E paid sample"), 5000);
+    const listed = await page.$eval('aside[aria-label="Saved queries"] ul', (e) => e.innerText);
+    assert(listed.includes(sql2.split("\n")[0]), `first SQL line listed: ${listed}`);
+    await dismissToasts();
+    await page.screenshot({ path: `${SHOTS}/V3-TOOLS-01-saved-panel-light.png` });
+    const tabsBefore = (await tabStrip()).length;
+    await page.evaluate(() => [...document.querySelectorAll('aside[aria-label="Saved queries"] li button')].find((b) => b.innerText.includes("E2E paid sample")).click());
+    await until((n) => document.querySelectorAll('[role="tab"]').length === n + 1, 5000, tabsBefore);
+    eq(await activeTitle(), "E2E paid sample", "opened tab title");
+    eq((await tabStrip()).filter((t) => t === "E2E paid sample").length, 2, "new pinned tab beside the saving one");
+    await until((s) => [...document.querySelectorAll(".cm-content")].find((el) => el.offsetParent !== null)?.innerText.trim() === s, 5000, sql2);
+    out.push("opened in a new pinned tab");
+
+    // Rename from the item's menu: both linked tabs follow.
+    await visibleClick("Saved");
+    await until(() => [...document.querySelectorAll('aside[aria-label="Saved queries"]')].find((a) => a.offsetParent !== null)?.innerText.includes("E2E paid sample"), 5000);
+    const openItemMenu = () =>
+      page.evaluate(() => {
+        const li = [...document.querySelectorAll('aside[aria-label="Saved queries"] li')].find((x) => x.offsetParent !== null && x.innerText.includes("E2E"));
+        const r = li.getBoundingClientRect();
+        li.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.x + 40, clientY: r.y + 10 }));
+      });
+    await openItemMenu();
+    await clickText("Rename…", '[role="menuitem"]');
+    await page.waitForSelector('dialog[open][aria-label="Rename saved query"]');
+    await page.$eval("#saved-name", (e) => e.select());
+    await page.type("#saved-name", "E2E renamed");
+    await visibleClick("Rename", "dialog[open] button");
+    await until(() => [...document.querySelectorAll('[role="tab"]')].filter((t) => t.innerText.trim() === "E2E renamed").length === 2, 5000);
+    eq(savedFile().queries[0].name, "E2E renamed", "renamed on disk");
+    out.push("rename updated both linked tabs");
+
+    // Copy SQL, then Delete (confirmed).
+    await openItemMenu();
+    await clickText("Copy SQL", '[role="menuitem"]');
+    await until((s) => window.__clipboard === s, 5000, sql2);
+    await openItemMenu();
+    await clickText("Delete…", '[role="menuitem"]');
+    await until(() => [...document.querySelectorAll('aside[aria-label="Saved queries"]')].find((a) => a.offsetParent !== null)?.innerText.includes("Save the editor's SQL with ⌘S"), 5000);
+    eq(savedFile().queries.length, 0, "deleted on disk");
+    await page.evaluate(() => [...document.querySelectorAll('[aria-label="Close saved queries"]')].forEach((b) => b.click()));
+    out.push("copy SQL and delete");
+
+    // Leave the strip as it was: close both tabs of the deleted query.
+    for (let i = 0; i < 2; i++) {
+      await page.click('[aria-label="Close E2E renamed"]');
+      await sleep(200);
+    }
+    assert(!(await tabStrip()).includes("E2E renamed"), `extra tabs closed: ${await tabStrip()}`);
+    await activateTab("Query 1");
+    return out.join("; ");
+  });
+
+  await check("V3-TOOLS-02 activity: lists another session, auto-refresh, cancel; terminate refused read-only", async () => {
+    await light();
+    const { spawn } = await import("node:child_process");
+    const sleeper = (tag) => {
+      const child = spawn("psql", ["-h", process.env.PGHOST ?? "/tmp", "-d", FIXTURE_DB, "-Atq", "-c", `SELECT pg_sleep(30) /* ${tag} */`], {
+        env: { ...process.env, PGAPPNAME: "e2e-sleeper" },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (d) => (stderr += d));
+      const exited = new Promise((resolve) => child.on("exit", (code) => resolve({ code, stderr })));
+      return { child, exited };
+    };
+    const activePid = async (tag) => {
+      for (let i = 0; i < 100; i++) {
+        const pid = psql(`select pid from pg_stat_activity where query like '%${tag}%' and state = 'active' and pid <> pg_backend_pid()`);
+        if (pid) return Number(pid);
+        await sleep(50);
+      }
+      throw new Error(`no active session for ${tag}`);
+    };
+    const rowOf = (pid) => page.evaluate((pid) => document.querySelector(`table[aria-label="Server activity"] tr[data-pid="${pid}"]`)?.innerText ?? null, pid);
+    const s1 = sleeper("v3-tools-activity");
+    const s2 = { child: null, exited: null };
+    try {
+      const pid1 = await activePid("v3-tools-activity");
+      await page.click('[aria-label="Activity"]');
+      await until(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === "Activity", 5000);
+      await until((pid) => !!document.querySelector(`table[aria-label="Server activity"] tr[data-pid="${pid}"]`), 8000, pid1);
+      const row = await rowOf(pid1);
+      assert(row.includes("e2e-sleeper") && row.includes("active") && row.includes("Timeout: PgSleep") && row.includes("v3-tools-activity"), `sleeper row: ${row}`);
+      const self = await page.$eval('table[aria-label="Server activity"] tr[data-self]', (tr) => tr.innerText);
+      assert(self.includes("this session") && self.includes("slonview"), `own session highlighted: ${self}`);
+      const states = await page.$$eval('table[aria-label="Server activity"] tbody tr:not([data-self]) td:nth-child(5)', (tds) => tds.map((t) => t.innerText.trim()));
+      assert(!states.includes("idle"), `idle sessions hidden by default: ${states}`);
+      // Read-only connection: Cancel offered, Terminate not.
+      assert(await page.$(`[aria-label="Cancel query of session ${pid1}"]`), "cancel button");
+      eq(await page.$$eval('[aria-label^="Terminate session"]', (b) => b.length), 0, "no terminate on read-only");
+
+      // Show idle lists at least as many sessions.
+      const nBusy = await page.$$eval('table[aria-label="Server activity"] tbody tr', (r) => r.length);
+      await page.evaluate(() => [...document.querySelectorAll("label")].find((l) => l.innerText.trim() === "Show idle").querySelector("input").click());
+      await sleep(800);
+      const nAll = await page.$$eval('table[aria-label="Server activity"] tbody tr', (r) => r.length);
+      assert(nAll >= nBusy, `show idle: ${nAll} < ${nBusy}`);
+      await page.evaluate(() => [...document.querySelectorAll("label")].find((l) => l.innerText.trim() === "Show idle").querySelector("input").click());
+
+      // Auto-refresh picks up a session started afterwards without pressing Refresh.
+      await page.evaluate(() => [...document.querySelectorAll("label")].find((l) => l.innerText.trim() === "Auto-refresh").querySelector("input").click());
+      Object.assign(s2, sleeper("v3-tools-auto"));
+      const pid2 = await activePid("v3-tools-auto");
+      const t0 = Date.now();
+      await until((pid) => !!document.querySelector(`table[aria-label="Server activity"] tr[data-pid="${pid}"]`), 6000, pid2);
+      const autoMs = Date.now() - t0;
+      await dismissToasts();
+      await page.screenshot({ path: `${SHOTS}/V3-TOOLS-02-activity-light.png` });
+      await scheme("dark");
+      assert(await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches), "dark scheme active");
+      await page.screenshot({ path: `${SHOTS}/V3-TOOLS-02-activity-dark.png` });
+      await light();
+
+      // The engine itself refuses terminate on a read-only connection.
+      const refused = await bridge("signal_backend", { connId, pid: pid2, terminate: true });
+      assert(refused.kind === "invalid" && refused.message.includes("Allow writes"), `terminate refused: ${JSON.stringify(refused)}`);
+      eq(psql(`select state from pg_stat_activity where pid = ${pid2}`), "active", "sleeper still running after refused terminate");
+
+      // Cancel from the UI (confirmed): the sleeper's query stops.
+      await page.click(`[aria-label="Cancel query of session ${pid1}"]`);
+      await until((pid) => document.body.innerText.includes(`Cancel sent to session ${pid}`), 5000, pid1);
+      const done = await Promise.race([s1.exited, sleep(5000).then(() => null)]);
+      assert(done && done.code !== 0 && /cancel/i.test(done.stderr), `psql not cancelled: ${JSON.stringify(done)}`);
+      await until((pid) => !document.querySelector(`table[aria-label="Server activity"] tr[data-pid="${pid}"]`), 6000, pid1);
+      eq(await bridge("signal_backend", { connId, pid: pid2, terminate: false }), true, "cancel via bridge");
+      await Promise.race([s2.exited, sleep(5000)]);
+      return `sleeper pid ${pid1} listed with wait event; own session highlighted; auto-refresh showed pid ${pid2} in ${autoMs} ms; terminate refused by engine on read-only; UI cancel stopped psql (${done.stderr.trim()})`;
+    } finally {
+      s1.child.kill();
+      s2.child?.kill();
+      await page.evaluate(() => {
+        const auto = [...document.querySelectorAll("label")].find((l) => l.innerText.trim() === "Auto-refresh")?.querySelector("input");
+        if (auto?.checked) auto.click();
+      });
+      await page.click('[aria-label="Close Activity"]').catch(() => {});
+      await activateTab("Query 1");
+    }
+  });
+
+  await check("V3-TOOLS-03 check for updates: only on click, up to date / newer version / bad tag, opens release page", async () => {
+    await light();
+    const target = process.env.SLONVIEW_UPDATE_URL;
+    assert(target?.startsWith("http://127.0.0.1:"), `SLONVIEW_UPDATE_URL must point at the local stub (got ${target}); run via tests/e2e/run.sh`);
+    const { createServer } = await import("node:http");
+    const hits = [];
+    let release = null;
+    const server = createServer((req, res) => {
+      hits.push({ path: req.url, ua: req.headers["user-agent"] });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(release));
+    });
+    await new Promise((resolve) => server.listen(Number(new globalThis.URL(target).port), "127.0.0.1", resolve));
+    try {
+      const version = await bridge("app_version");
+      await dismissToasts();
+      await page.click('button[aria-label="About Slonview"]');
+      await page.waitForSelector('dialog[open][aria-label="About Slonview"]');
+      await until((v) => document.querySelector('[data-testid="app-version"]')?.innerText === v, 5000, version);
+      await sleep(300);
+      eq(hits.length, 0, "opening About makes no request");
+      const status = () => page.$eval('[data-testid="update-status"]', (e) => e.innerText.trim());
+
+      release = { tag_name: `v${version}`, html_url: `https://github.com/tomasdewantoro/slonview/releases/tag/v${version}` };
+      await visibleClick("Check for updates", "dialog[open] button");
+      await until(() => document.querySelector('[data-testid="update-status"]')?.innerText.includes("up to date"), 10000);
+      eq(hits.length, 1, "one request per click");
+      eq(hits[0].ua, `slonview/${version}`, "User-Agent");
+      eq(hits[0].path, new globalThis.URL(target).pathname, "request path");
+      await page.screenshot({ path: `${SHOTS}/V3-TOOLS-03-up-to-date-light.png` });
+
+      release = { tag_name: "v0.99.0", html_url: "https://github.com/tomasdewantoro/slonview/releases/tag/v0.99.0" };
+      await visibleClick("Check for updates", "dialog[open] button");
+      await until(() => document.querySelector('dialog[open]')?.innerText.includes("0.99.0 is available"), 10000);
+      const offer = await page.$eval("dialog[open]", (e) => e.innerText);
+      assert(offer.includes(`You have ${version}`), offer);
+      await page.screenshot({ path: `${SHOTS}/V3-TOOLS-03-newer-light.png` });
+      await visibleClick("Open release page", "dialog[open] button");
+      await sleep(300);
+      eq(await bridge("e2e_last_opened_url"), release.html_url, "release page opened in the system browser");
+
+      release = { tag_name: "latest" };
+      await visibleClick("Check for updates", "dialog[open] button");
+      await until(() => document.querySelector('[data-testid="update-status"]')?.innerText.includes("unexpected version tag"), 10000);
+      const bad = await status();
+      eq(hits.length, 3, "requests only on click");
+      await visibleClick("Close", "dialog[open] button");
+      return `v${version}: up to date; v0.99.0: offered and release page opened; "latest": ${bad}; ${hits.length} requests, all to the local stub with UA slonview/${version}`;
+    } finally {
+      server.close();
+    }
+  });
+
+  await check("V3-TOOLS-04 export JSON from a table and from SQL results", async () => {
+    await light();
+    const out = [];
+    const tablePath = `${SHOTS}/V3-TOOLS-04-all_types.json`;
+    await openRel("all_types");
+    await dismissToasts();
+    await page.evaluate((p) => {
+      window.__nextSavePath = p;
+      window.__dialogs = [];
+    }, tablePath);
+    await page.click('button[title^="Export every row"]');
+    await page.waitForSelector('[role="menu"]');
+    await page.screenshot({ path: `${SHOTS}/V3-TOOLS-04-export-menu-light.png` });
+    await clickText("JSON", '[role="menuitem"]');
+    await until((p) => document.body.innerText.includes(`Exported 5 rows to ${p}`), 30000, tablePath);
+    const saveArgs = await page.evaluate(() => JSON.stringify(window.__dialogs.filter((d) => d.cmd === "plugin:dialog|save").map((d) => d.args)));
+    assert(saveArgs.includes("all_types.json") && saveArgs.includes('"json"'), `save dialog defaults to .json: ${saveArgs}`);
+    const rows = JSON.parse(readFileSync(tablePath, "utf8"));
+    eq(rows.length, 5, "all_types rows");
+    eq(Object.keys(rows[0]).join(","), "id,c_int,c_numeric,c_text,c_varchar,c_bool,c_uuid,c_date,c_ts,c_interval,c_jsonb,c_int_arr,c_text_arr,c_bytea,c_enum,c_inet", "keys in column order");
+    eq(JSON.stringify(rows[0].c_jsonb.nested.b), "[1,2,3]", "jsonb embedded");
+    eq(JSON.stringify([rows[0].c_int, rows[0].c_numeric, rows[0].c_bool, rows[0].c_int_arr]), JSON.stringify([1, 3.14159, true, "{1,2,3}"]), "typed values");
+    assert(Object.entries(rows[1]).every(([k, v]) => k === "id" || v === null), "SQL NULL row");
+    eq(JSON.stringify([rows[2].c_text, rows[2].c_bool, rows[3].c_varchar]), JSON.stringify(["NULL", false, "tab\tand newline\nhere"]), "text 'NULL', false, escapes");
+    out.push(`table: 5 objects, jsonb nested, NULL vs 'NULL'`);
+
+    const sqlPath = `${SHOTS}/V3-TOOLS-04-orders.json`;
+    await activateTab("Query 1");
+    await setSql("SELECT id, amount, status FROM orders ORDER BY id LIMIT 1000");
+    await runAll();
+    await until(() => document.body.innerText.includes("1,000 rows"), 15000);
+    await page.evaluate((p) => (window.__nextSavePath = p), sqlPath);
+    // Earlier toasts sit over the results footer; clear them so the click reaches Export.
+    await dismissToasts();
+    await page.click('button[title^="Re-run this statement"]');
+    await clickText("JSON", '[role="menuitem"]');
+    await until(() => /Exported 1,000 rows(?! to)|Export failed/.test(document.body.innerText), 30000);
+    const orders = JSON.parse(readFileSync(sqlPath, "utf8"));
+    eq(orders.length, 1000, "SQL export rows");
+    eq(JSON.stringify([orders[0].id, typeof orders[0].amount, typeof orders[0].status]), JSON.stringify([1, "number", "string"]), "SQL export types");
+    eq(orders[999].id, 1000, "last row");
+    await page.screenshot({ path: `${SHOTS}/V3-TOOLS-04-sql-json-light.png` });
+    out.push("SQL result: 1,000 objects, numeric amount");
+    return out.join("; ");
   });
 
   await check("A allow writes, then UPDATE scratch_insert_target", async () => {
