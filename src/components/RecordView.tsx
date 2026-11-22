@@ -1,6 +1,6 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Check, ChevronDown, ChevronUp, Copy, LoaderCircle, X } from "lucide-react";
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, errorMessage } from "../api";
 import type { Column } from "../bindings/Column";
 import type { ForeignKeyTarget } from "../bindings/ForeignKeyTarget";
@@ -37,6 +37,10 @@ export function RecordView({ connId, schema, table, columns, rows, row, truncate
   /** Full values fetched on demand, by column index; reset when the row changes. */
   const [full, setFull] = useState<Record<number, Full>>({});
   const [copied, setCopied] = useState<number | null>(null);
+  /** Identity of the row on screen; a full-value fetch that finishes after a row change is dropped. */
+  const rowKey = `${row}\u0000${pkKey}`;
+  const shownRow = useRef(rowKey);
+  shownRow.current = rowKey;
   useEffect(() => {
     setFull({});
     setCopied(null);
@@ -45,25 +49,31 @@ export function RecordView({ connId, schema, table, columns, rows, row, truncate
   if (!values) return null;
 
   const fetchFull = async (col: number): Promise<string | null> => {
-    setFull((f) => ({ ...f, [col]: { state: "loading" } }));
+    const mine = rowKey;
+    const setMine = (v: Full) => {
+      if (shownRow.current === mine) setFull((f) => ({ ...f, [col]: v }));
+    };
+    setMine({ state: "loading" });
     try {
       const value = await api.getCell({ connId, schema, table, pkColumns: pkIdx.map((i) => columns[i].name), pkValues: pkIdx.map((i) => values[i]), column: columns[col].name });
-      setFull((f) => ({ ...f, [col]: { state: "ok", value } }));
+      setMine({ state: "ok", value });
       return value;
     } catch (e) {
-      setFull((f) => ({ ...f, [col]: { state: "error", message: errorMessage(e) } }));
+      setMine({ state: "error", message: errorMessage(e) });
       throw e;
     }
   };
 
   const copy = async (col: number) => {
+    const mine = rowKey;
     const loaded = full[col];
     let value = loaded?.state === "ok" ? loaded.value : values[col];
     // Copy the real value, not the 2 KB preview, when it can be fetched.
     if (truncatedCols.has(col) && loaded?.state !== "ok" && pkIdx.length > 0) value = await fetchFull(col).catch(() => value);
     if (value === null) return;
+    // The clipboard gets the value of the row the user clicked; the check mark only shows if it is still on screen.
     await writeText(value);
-    setCopied(col);
+    if (shownRow.current === mine) setCopied(col);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
