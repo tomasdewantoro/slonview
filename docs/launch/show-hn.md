@@ -44,8 +44,8 @@ What it does:
 Limits, so nobody is surprised:
 
 - Read-only mode is a guard, not a permission system. Things with effects outside the
-  transaction (pg_advisory_lock, dblink, postgres_fdw) can still act. For a hard guarantee,
-  connect as a role that only has SELECT.
+  transaction (pg_advisory_lock, pg_terminate_backend, dblink, postgres_fdw) can still act.
+  For a hard guarantee, connect as a role that only has SELECT.
 - It's Tauri 2 (Rust + a system webview), not a native AppKit app.
 - macOS first. Linux and Windows builds exist; the Windows ones aren't code-signed, so
   SmartScreen asks once.
