@@ -24,6 +24,11 @@ import type { EditRequest } from "./bindings/EditRequest";
 import type { EditValue } from "./bindings/EditValue";
 import type { ColumnRef } from "./bindings/ColumnRef";
 import type { ExplainResult } from "./bindings/ExplainResult";
+import type { ExportFormat } from "./bindings/ExportFormat";
+import type { SavedQuery } from "./bindings/SavedQuery";
+import type { SavedQueryInput } from "./bindings/SavedQueryInput";
+import type { Activity } from "./bindings/Activity";
+import type { UpdateStatus } from "./bindings/UpdateStatus";
 
 export function isAppError(e: unknown): e is AppError {
   return typeof e === "object" && e !== null && "kind" in e;
@@ -84,9 +89,9 @@ export const api = {
     invoke<QueryResult[]>("run_sql", { requestId, connId, sql, maxRows: maxRows ?? null }),
   cancelQuery: (requestId: string) => invoke<void>("cancel_query", { requestId }),
 
-  // Export: streams to `path` in Rust. Returns rows written (excluding header).
-  exportCsv: (requestId: string, source: ExportSource, path: string) =>
-    invoke<number>("export_csv", { requestId, source, path }),
+  // Export: streams to `path` in Rust as CSV (default) or JSON. Returns rows written (excluding header).
+  exportCsv: (requestId: string, source: ExportSource, path: string, format: ExportFormat = "csv") =>
+    invoke<number>("export_csv", { requestId, source, path, format }),
 
   // History (JSONL, newest first)
   listHistory: (connId: string | null, search: string | null, limit?: number) =>
@@ -108,6 +113,21 @@ export const api = {
   setTimeZone: (connId: string, timeZone: string | null) => invoke<ConnProfile[]>("set_time_zone", { connId, timeZone }),
   saveSshSecret: (id: string, passphrase: boolean, value: string | null) => invoke<void>("save_ssh_secret", { id, passphrase, value }),
   testTunnelConnection: (profile: ConnProfile, password: string | null, sshSecret: string | null) => invoke<ServerInfo>("test_tunnel_connection", { profile, password, sshSecret }),
+  // v0.3.0 tools
+  /** This connection's saved queries plus the ones saved for all connections, by name. */
+  listSavedQueries: (connId: string) => invoke<SavedQuery[]>("list_saved_queries", { connId }),
+  /** Insert (id null) or update by id. */
+  saveQuery: (query: SavedQueryInput) => invoke<SavedQuery>("save_query", { query }),
+  deleteSavedQuery: (id: string) => invoke<void>("delete_saved_query", { id }),
+  /** pg_stat_activity for the connection's database; Slonview's own session first. */
+  listActivity: (connId: string, includeIdle: boolean) => invoke<Activity[]>("list_activity", { connId, includeIdle }),
+  /** pg_cancel_backend, or pg_terminate_backend when `terminate` (refused on read-only connections). */
+  signalBackend: (connId: string, pid: number, terminate: boolean) => invoke<boolean>("signal_backend", { connId, pid, terminate }),
+  appVersion: () => invoke<string>("app_version"),
+  /** The only request that leaves the user's servers: GitHub's latest-release API, on demand. */
+  checkForUpdates: () => invoke<UpdateStatus>("check_for_updates"),
+  /** Opens an http(s) link in the system browser. */
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
 };
 
 async function streamColumnValues(requestId: string, req: ColumnCopyRequest, onChunk: (chunk: ColumnCopyChunk) => void): Promise<ColumnCopySummary> {

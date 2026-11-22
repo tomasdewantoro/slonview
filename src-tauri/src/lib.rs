@@ -52,6 +52,15 @@ pub fn run() {
             commands::connections::set_time_zone,
             commands::connections::save_ssh_secret,
             commands::connections::test_tunnel_connection,
+            // v0.3.0 tools
+            commands::tools::list_saved_queries,
+            commands::tools::save_query,
+            commands::tools::delete_saved_query,
+            commands::tools::list_activity,
+            commands::tools::signal_backend,
+            commands::tools::app_version,
+            commands::tools::check_for_updates,
+            commands::tools::open_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
