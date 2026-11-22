@@ -34,10 +34,10 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 - MIT OR Apache-2.0.
 - No paid tier, no tab limits.
 - Copy as CSV, TSV, JSON or INSERT.
-- No telemetry: Slonview only talks to the PostgreSQL servers you configure.
+- No telemetry: Slonview talks to the PostgreSQL servers you configure, and to api.github.com only when you click **Check for updates**.
 - Passwords stay in the OS credential store (Keychain on macOS).
 
-**No telemetry.** Slonview contains no analytics, crash reporting, or update checks. The only network connections it makes are to the PostgreSQL servers you configure (plus the DNS lookups needed to find them). Your passwords stay in the OS credential store (Keychain on macOS).
+**No telemetry.** Slonview contains no analytics or crash reporting. It connects to the PostgreSQL servers you configure (plus the DNS lookups needed to find them). The only other network request is the update check, and it runs only when you click **Check for updates** in About Slonview: it asks api.github.com for the latest release. Your passwords stay in the OS credential store (Keychain on macOS).
 
 ## Features
 
@@ -57,6 +57,10 @@ Built with Tauri 2, Rust, and React. macOS (Apple Silicon) first; Linux and Wind
 - **Reviewable row editing:** on Allow writes connections, tables with a primary key support cell edits, SQL NULL, JSON text, new rows with database defaults, and selected-row deletion. Modified/new/deleted rows are marked separately. Review shows exact Rust-generated SQL; Apply commits one transaction or rolls everything back on an optimistic-concurrency conflict. Bytea, generated and identity-always columns cannot be edited. Discard clears pending changes.
 - **Connections:** paste a `postgres://` URL, import from `~/.pgpass`, or fill the form. TLS (`prefer`/`require`) for hosted Postgres such as Supabase, Neon, or RDS.
 - **Per-connection time zone:** set an IANA zone such as `Asia/Jakarta` on a connection and every session (table browsing and the SQL editor) shows `timestamptz` values in that zone, whatever the server default is. A `postgres://` URL with `options=-c timezone=...` fills it in.
+- **Saved queries:** **Save** (⌘S in the editor) stores the editor's SQL under a name, for this connection or for all connections. The **Saved** panel next to History lists them by name with the first line of SQL and a search box; click one to open it in a new tab, or right-click to rename, copy its SQL, or delete it. A tab opened from a saved query remembers it, so ⌘S updates it in place. Saved queries live in `saved_queries.json` next to `connections.toml`; Slonview won't overwrite that file if it can't read it.
+- **Activity:** the **Activity** button at the top of the schema tree (or **Activity** in a connection's right-click menu) opens a tab with the sessions on that database from `pg_stat_activity`: user, application, client, state, wait event, how long the transaction and query have been running, and the SQL. Idle sessions are hidden unless you tick **Show idle**, and your own Slonview session is marked. **Refresh** reloads it; **Auto-refresh** reloads every 2 seconds while the tab is shown. You can cancel the running query of a session your role may signal (asks first; works on read-only connections), and terminate a session on Allow writes connections only.
+- **Check for updates:** **About Slonview** (the ⓘ button at the bottom of the sidebar) shows the version and a **Check for updates** button. The check runs only when you click it: it asks api.github.com for the latest release and, if there is a newer version, offers to open its release page in your browser.
+- **Export to JSON:** the **Export** button (table toolbar and SQL results) offers CSV or JSON. JSON is an array of objects with column names as keys, in column order, streamed to disk like CSV. SQL NULL is `null`; `json`/`jsonb` values are embedded as JSON; integers, `numeric`, `real`/`double precision` and booleans become JSON numbers and booleans. Values a JSON reader would round (bigints beyond 2^53, numerics with more than 15 significant digits) and `NaN`/`Infinity` stay strings with Postgres's exact text; every other type is its Postgres text output as a string.
 
 ## Install
 
