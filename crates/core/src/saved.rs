@@ -30,6 +30,10 @@ pub struct SavedQuery {
     pub created_at: String,
     /// RFC 3339 UTC.
     pub updated_at: String,
+    /// Fields this version doesn't know (written by a newer Slonview), kept on rewrite.
+    #[serde(flatten)]
+    #[ts(skip)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// `save_query` input: `id` None inserts a new query; Some updates it (or inserts it with
@@ -48,6 +52,9 @@ pub struct SavedQueryInput {
 struct SavedFile {
     version: u32,
     queries: Vec<SavedQuery>,
+    /// Top-level fields this version doesn't know, kept on rewrite.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 pub struct SavedQueryStore {
@@ -73,6 +80,7 @@ impl SavedQueryStore {
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut queries: Vec<SavedQuery> = self
             .load()?
+            .queries
             .into_iter()
             .filter(|q| q.conn_id.is_none_or(|c| c == conn_id))
             .collect();
@@ -84,11 +92,11 @@ impl SavedQueryStore {
     pub fn save(&self, input: SavedQueryInput) -> AppResult<SavedQuery> {
         let name = valid_name(&input.name)?;
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let mut queries = self.load()?;
+        let mut file = self.load()?;
         let now = now_rfc3339();
         let existing = input
             .id
-            .and_then(|id| queries.iter_mut().find(|q| q.id == id));
+            .and_then(|id| file.queries.iter_mut().find(|q| q.id == id));
         let saved = match existing {
             Some(q) => {
                 q.conn_id = input.conn_id;
@@ -105,13 +113,13 @@ impl SavedQueryStore {
                     sql: input.sql,
                     created_at: now.clone(),
                     updated_at: now,
+                    extra: serde_json::Map::new(),
                 };
-                queries.push(q.clone());
+                file.queries.push(q.clone());
                 q
             }
         };
-        sort(&mut queries);
-        self.store(queries)?;
+        self.store(file)?;
         Ok(saved)
     }
 
@@ -120,37 +128,43 @@ impl SavedQueryStore {
     pub fn rename(&self, id: Uuid, name: &str) -> AppResult<SavedQuery> {
         let name = valid_name(name)?;
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let mut queries = self.load()?;
-        let q = queries
+        let mut file = self.load()?;
+        let q = file
+            .queries
             .iter_mut()
             .find(|q| q.id == id)
             .ok_or_else(|| AppError::invalid("This saved query no longer exists."))?;
         q.name = name.to_owned();
         q.updated_at = now_rfc3339();
         let renamed = q.clone();
-        sort(&mut queries);
-        self.store(queries)?;
+        self.store(file)?;
         Ok(renamed)
     }
 
     /// Deleting an unknown id is a no-op.
     pub fn delete(&self, id: Uuid) -> AppResult<()> {
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let mut queries = self.load()?;
-        let before = queries.len();
-        queries.retain(|q| q.id != id);
-        if queries.len() != before {
-            self.store(queries)?;
+        let mut file = self.load()?;
+        let before = file.queries.len();
+        file.queries.retain(|q| q.id != id);
+        if file.queries.len() != before {
+            self.store(file)?;
         }
         Ok(())
     }
 
     /// Missing file = no queries. Anything unreadable is an error, so a later save never
-    /// replaces a file the user could still recover.
-    fn load(&self) -> AppResult<Vec<SavedQuery>> {
+    /// replaces a file the user could still recover. Unknown fields are kept for `store`.
+    fn load(&self) -> AppResult<SavedFile> {
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(SavedFile {
+                    version: FILE_VERSION,
+                    queries: Vec::new(),
+                    extra: serde_json::Map::new(),
+                });
+            }
             Err(e) => return Err(io_error("read", &self.path, e)),
         };
         let file: SavedFile = serde_json::from_str(&text).map_err(|e| {
@@ -166,14 +180,12 @@ impl SavedQueryStore {
                 file.version
             )));
         }
-        Ok(file.queries)
+        Ok(file)
     }
 
-    fn store(&self, queries: Vec<SavedQuery>) -> AppResult<()> {
-        let file = SavedFile {
-            version: FILE_VERSION,
-            queries,
-        };
+    /// Writes the queries sorted by name, keeping any fields this version doesn't know.
+    fn store(&self, mut file: SavedFile) -> AppResult<()> {
+        sort(&mut file.queries);
         let text = serde_json::to_string_pretty(&file)
             .map_err(|e| AppError::internal(format!("cannot serialize saved queries: {e}")))?;
         write_atomic(&self.path, text.as_bytes())
@@ -331,6 +343,56 @@ mod tests {
             Err(AppError::Invalid { .. })
         ));
         assert_eq!(s.list(c).unwrap()[0].name, "Paid orders");
+    }
+
+    #[test]
+    fn unknown_fields_survive_a_rewrite() {
+        let (_d, s) = store();
+        let id = Uuid::new_v4();
+        fs::write(
+            s.path(),
+            serde_json::json!({
+                "version": 1,
+                "folders": ["Reports"],
+                "queries": [{
+                    "id": id, "connId": null, "name": "Old", "sql": "select 1",
+                    "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z",
+                    "folder": "Reports", "pinned": true
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        s.save(SavedQueryInput {
+            id: Some(id),
+            conn_id: None,
+            name: "New".into(),
+            sql: "select 2".into(),
+        })
+        .unwrap();
+        s.save(input(None, "Another", "select 3")).unwrap();
+        s.rename(id, "Renamed").unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(s.path()).unwrap()).unwrap();
+        assert_eq!(json["folders"], serde_json::json!(["Reports"]));
+        let q = json["queries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|q| q["id"] == id.to_string())
+            .unwrap();
+        assert_eq!(q["name"], "Renamed");
+        assert_eq!(q["sql"], "select 2");
+        assert_eq!(q["folder"], "Reports");
+        assert_eq!(q["pinned"], true);
+        // A query created by this version gains no extra fields.
+        let other = json["queries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|q| q["name"] == "Another")
+            .unwrap();
+        assert_eq!(other.as_object().unwrap().len(), 6);
     }
 
     #[test]
