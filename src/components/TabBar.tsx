@@ -1,10 +1,10 @@
-import { Plus, SquareTerminal, Table2, TableProperties, X } from "lucide-react";
+import { Activity, Plus, SquareTerminal, Table2, TableProperties, X } from "lucide-react";
 import { useState } from "react";
 import { appStore, useApp, type Tab } from "../store/app";
 import { ColorDot } from "./ConnectionList";
 import { ContextMenu } from "./ContextMenu";
 
-const ICON = { table: Table2, structure: TableProperties, sql: SquareTerminal } as const;
+const ICON = { table: Table2, structure: TableProperties, sql: SquareTerminal, activity: Activity } as const;
 const PREVIEW_HINT = "Preview, double-click to keep open";
 
 export function TabBar() {

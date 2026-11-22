@@ -124,6 +124,7 @@ export function ConnectionList() {
           onClose={() => setMenu(null)}
           items={[
             { label: "Connect", shortcut: "↵", onSelect: () => void connect(menu.profile.id) },
+            { label: "Activity", disabled: conns[menu.profile.id]?.status !== "connected", onSelect: () => appStore.getState().openActivity(menu.profile.id) },
             { label: "Edit…", onSelect: () => setEditing(menu.profile) },
             { separator: true },
             { label: "Delete…", onSelect: () => setDeleting(menu.profile) },

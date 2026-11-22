@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
+import { ActivityTab } from "./components/ActivityTab";
 import { Sidebar } from "./components/Sidebar";
 import { SqlTab } from "./components/sql/SqlTab";
 import { StatusBar } from "./components/StatusBar";
@@ -84,6 +85,7 @@ function MainArea() {
       )}
       {active?.kind === "table" && <TableTab key={active.id} tab={active} connId={active.connId} />}
       {active?.kind === "structure" && <StructureTab key={active.id} tab={active} connId={active.connId} />}
+      {active?.kind === "activity" && <ActivityTab key={active.id} tab={active} connId={active.connId} />}
     </>
   );
 }
