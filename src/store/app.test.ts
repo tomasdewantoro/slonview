@@ -44,6 +44,9 @@ interface Ipc {
   definitions: { cmd: string; oid: number; resolve: (sql: string) => void }[];
   /** list_referencing calls as `schema.table`. */
   referencing: string[];
+  /** When set, list_referencing stays pending until the test resolves it. */
+  holdReferencing: boolean;
+  heldReferencing: ((keys: unknown[]) => void)[];
 }
 
 /** IPC mock where fetch_page and definition calls stay pending until the test resolves them, in any order. */
@@ -54,6 +57,8 @@ function installIpc(): Ipc {
   const sessions = new Map<string, boolean>();
   const disconnected: string[] = [];
   const referencing: string[] = [];
+  const heldReferencing: Ipc["heldReferencing"] = [];
+  const ipc = { holdReferencing: false };
   mockIPC((cmd, args) => {
     const a = args as Record<string, any>;
     switch (cmd) {
@@ -88,12 +93,13 @@ function installIpc(): Ipc {
         return new Promise((resolve) => definitions.push({ cmd, oid: a.oid, resolve }));
       case "list_referencing":
         referencing.push(`${a.schema}.${a.table}`);
+        if (ipc.holdReferencing) return new Promise((resolve) => heldReferencing.push(resolve));
         return [{ constraintName: "orders_customer_id_fkey", schema: "public", table: "orders", columns: ["customer_id"], referencedColumns: ["id"] }];
       default:
         throw new Error(`unexpected ${cmd}`);
     }
   });
-  return { pending, cancelled, definitions, sessions, disconnected, referencing };
+  return Object.assign(ipc, { pending, cancelled, definitions, sessions, disconnected, referencing, heldReferencing });
 }
 
 /** Flush pending promise callbacks (mockIPC + store awaits settle within a few microtask hops). */
@@ -241,6 +247,27 @@ describe("table tab requests", () => {
     expect(store.getState().referencing).toEqual({});
     store.getState().loadReferencing("not-connected", "public", "customers");
     expect(ipc.referencing).toHaveLength(2);
+  });
+
+  it("a referencing response from before a sidebar refresh never lands on a newer load", async () => {
+    const store = await connectedStore();
+    const key = referencingCacheKey(CONN, "public", "customers");
+    const fk = (table: string) => ({ constraintName: `${table}_fkey`, schema: "public", table, columns: ["customer_id"], referencedColumns: ["id"] });
+    ipc.holdReferencing = true;
+    store.getState().loadReferencing(CONN, "public", "customers");
+    await tick();
+    await store.getState().loadTree(CONN); // forgets the in-flight load
+    store.getState().loadReferencing(CONN, "public", "customers");
+    await tick();
+    expect(ipc.heldReferencing).toHaveLength(2);
+    const [stale, fresh] = ipc.heldReferencing;
+    stale([fk("old_orders")]);
+    await tick();
+    expect(store.getState().referencing[key].status).toBe("loading");
+    fresh([fk("orders")]);
+    await tick();
+    const st = store.getState().referencing[key];
+    expect(st.status === "ok" && st.keys.map((k) => k.table)).toEqual(["orders"]);
   });
 });
 

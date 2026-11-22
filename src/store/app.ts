@@ -181,7 +181,8 @@ export interface AppState {
   setTabSavedQuery(tabId: string, saved: { id: string; name: string } | null): void;
 }
 
-export type ReferencingState = { status: "loading" } | { status: "ok"; keys: ReferencingKey[] } | { status: "error"; error: unknown };
+/** `seq` identifies the load, so a response from before a sidebar refresh can't land on a newer load. */
+export type ReferencingState = { status: "loading"; seq: number } | { status: "ok"; keys: ReferencingKey[] } | { status: "error"; error: unknown };
 
 export const referencingCacheKey = (connId: string, schema: string, table: string) => `${connId}\u0000${schema}\u0000${table}`;
 
@@ -315,6 +316,7 @@ const ignore = () => {};
 
 export function createAppStore(storage: Storage = globalThis.localStorage): StoreApi<AppState> {
   let toastSeq = 0;
+  let referencingSeq = 0;
 
   return createStore<AppState>()((set, get) => {
     const persistTabs = (connId: string) => {
@@ -875,10 +877,12 @@ export function createAppStore(storage: Storage = globalThis.localStorage): Stor
         const key = referencingCacheKey(connId, schema, table);
         const cur = get().referencing[key];
         if (cur?.status === "loading" || (cur && !force)) return;
-        set((s) => ({ referencing: { ...s.referencing, [key]: { status: "loading" } } }));
+        const seq = ++referencingSeq;
+        set((s) => ({ referencing: { ...s.referencing, [key]: { status: "loading", seq } } }));
         const settle = (state: ReferencingState) => {
-          // Dropped when the connection closed or the sidebar was refreshed meanwhile.
-          if (get().referencing[key]?.status === "loading" && isConnected(connId)) set((s) => ({ referencing: { ...s.referencing, [key]: state } }));
+          // Dropped when the connection closed or the sidebar was refreshed meanwhile (even if a newer load started since).
+          const now = get().referencing[key];
+          if (now?.status === "loading" && now.seq === seq && isConnected(connId)) set((s) => ({ referencing: { ...s.referencing, [key]: state } }));
         };
         api.listReferencing(connId, schema, table).then(
           (keys) => settle({ status: "ok", keys }),
