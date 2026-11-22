@@ -23,12 +23,16 @@ use tokio_postgres::SimpleQueryMessage;
 pub(crate) fn where_clause(
     meta: &TableMeta,
     filters: &[Filter],
+    search: Option<&str>,
     raw_where: Option<&str>,
 ) -> AppResult<(String, Option<usize>)> {
     let mut parts = filters
         .iter()
         .map(|f| filter_sql(meta, f))
         .collect::<AppResult<Vec<_>>>()?;
+    if let Some(term) = search_term(search) {
+        parts.push(search_sql(meta, term));
+    }
     let raw = raw_where.map(str::trim).filter(|r| !r.is_empty());
     if let Some(raw) = raw {
         parts.push(format!("({raw})"));
@@ -40,6 +44,81 @@ pub(crate) fn where_clause(
     // `({raw})` closes the clause: raw starts raw + ")" characters before the end.
     let raw_at = raw.map(|r| clause.chars().count() - r.chars().count() - 1);
     Ok((clause, raw_at))
+}
+
+/// The trimmed search term, or None when the search box is empty.
+pub(crate) fn search_term(search: Option<&str>) -> Option<&str> {
+    search.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// `term` as an ILIKE pattern matching it anywhere, with `%`, `_` and `\` taken literally
+/// (paired with `ESCAPE '\'`).
+fn contains_pattern(term: &str) -> String {
+    let mut out = String::with_capacity(term.len() + 2);
+    out.push('%');
+    for ch in term.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out.push('%');
+    out
+}
+
+/// A plain decimal number such as `42`, `-7` or `3.14`: also searched in numeric columns.
+fn is_numeric_term(term: &str) -> bool {
+    let digits = term.strip_prefix(['-', '+']).unwrap_or(term);
+    let mut dots = 0;
+    !digits.is_empty()
+        && digits.chars().any(|c| c.is_ascii_digit())
+        && digits.chars().all(|c| {
+            dots += usize::from(c == '.');
+            c.is_ascii_digit() || c == '.'
+        })
+        && dots <= 1
+}
+
+const SEARCH_TEXT_TYPES: &[&str] = &[
+    "text", "citext", "name", "uuid", "json", "jsonb", "\"char\"",
+];
+const SEARCH_NUMERIC_TYPES: &[&str] =
+    &["smallint", "integer", "bigint", "real", "double precision"];
+
+/// Columns the search looks in: text-like types and enums, plus numeric ones for a numeric term.
+pub(crate) fn search_columns<'a>(meta: &'a TableMeta, term: &str) -> Vec<&'a str> {
+    let numeric = is_numeric_term(term);
+    meta.columns
+        .iter()
+        .filter(|c| {
+            let t = c.type_name.as_str();
+            SEARCH_TEXT_TYPES.contains(&t)
+                || t.starts_with("character varying")
+                || t.starts_with("character(")
+                || t == "character"
+                || meta.enum_columns.contains(&c.name)
+                || (numeric
+                    && (SEARCH_NUMERIC_TYPES.contains(&t)
+                        || t == "numeric"
+                        || t.starts_with("numeric(")))
+        })
+        .map(|c| c.name.as_str())
+        .collect()
+}
+
+/// `("a"::text ILIKE '%term%' ESCAPE '\' OR …)`; `FALSE` when no column can match.
+fn search_sql(meta: &TableMeta, term: &str) -> String {
+    let cols = search_columns(meta, term);
+    if cols.is_empty() {
+        return "FALSE".into();
+    }
+    let pattern = quote_literal(&contains_pattern(term));
+    let escape = quote_literal("\\");
+    let ors: Vec<String> = cols
+        .iter()
+        .map(|c| format!("{}::text ILIKE {pattern} ESCAPE {escape}", quote_ident(c)))
+        .collect();
+    format!("({})", ors.join(" OR "))
 }
 
 /// Where the verbatim raw WHERE text sits in a generated statement, so a Postgres error
@@ -151,6 +230,7 @@ pub(crate) fn page_query(req: &PageRequest, meta: &TableMeta, limit: u32) -> App
         table,
         filters,
         raw_where,
+        search,
         sort,
         cursor,
         ..
@@ -175,7 +255,7 @@ pub(crate) fn page_query(req: &PageRequest, meta: &TableMeta, limit: u32) -> App
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let (mut where_sql, raw_at) = where_clause(meta, filters, raw_where)?;
+    let (mut where_sql, raw_at) = where_clause(meta, filters, search.as_deref(), raw_where)?;
     let keyset = !meta.pk.is_empty();
     let mut sql = format!("SELECT {select} FROM {}", qualified(schema, table));
     let raw_span = RawSpan::new(&sql, raw_at, raw_where);
@@ -341,7 +421,12 @@ impl Engine {
             .join(", ");
         let rel = qualified(&p.schema, &p.table);
         let mut sql = format!("SELECT {select} FROM {rel}");
-        let (clause, raw_at) = where_clause(&meta, &p.filters, p.raw_where.as_deref())?;
+        let (clause, raw_at) = where_clause(
+            &meta,
+            &p.filters,
+            p.search.as_deref(),
+            p.raw_where.as_deref(),
+        )?;
         let span = RawSpan::new(&sql, raw_at, p.raw_where.as_deref());
         sql.push_str(&clause);
         sql.push_str(&order_by(&rel, &meta, &p.sort)?);
@@ -436,10 +521,11 @@ pub(crate) fn count_query(
     table: &str,
     meta: &TableMeta,
     filters: &[Filter],
+    search: Option<&str>,
     raw_where: Option<&str>,
 ) -> AppResult<(String, Option<RawSpan>)> {
     let mut sql = format!("SELECT count(*) FROM {}", qualified(schema, table));
-    let (where_sql, raw_at) = where_clause(meta, filters, raw_where)?;
+    let (where_sql, raw_at) = where_clause(meta, filters, search, raw_where)?;
     let span = RawSpan::new(&sql, raw_at, raw_where);
     sql.push_str(&where_sql);
     Ok((sql, span))
@@ -453,7 +539,7 @@ pub(crate) fn estimate_query(
     meta: &TableMeta,
     filters: &[Filter],
 ) -> AppResult<String> {
-    let (where_sql, _) = where_clause(meta, filters, None)?;
+    let (where_sql, _) = where_clause(meta, filters, None, None)?;
     Ok(format!(
         "EXPLAIN (FORMAT JSON) SELECT 1 FROM {}{where_sql}",
         qualified(schema, table)
@@ -466,11 +552,12 @@ pub(crate) fn export_query(
     table: &str,
     meta: &TableMeta,
     filters: &[Filter],
+    search: Option<&str>,
     raw_where: Option<&str>,
     sort: &[Sort],
 ) -> AppResult<(String, Option<RawSpan>)> {
     let mut sql = format!("SELECT * FROM {}", qualified(schema, table));
-    let (where_sql, raw_at) = where_clause(meta, filters, raw_where)?;
+    let (where_sql, raw_at) = where_clause(meta, filters, search, raw_where)?;
     let span = RawSpan::new(&sql, raw_at, raw_where);
     sql.push_str(&where_sql);
     let mut keys = Vec::new();
@@ -547,6 +634,7 @@ mod tests {
             pk: vec!["id".into()],
             references: Default::default(),
             est_rows: -1,
+            enum_columns: Default::default(),
         }
     }
 
@@ -571,6 +659,7 @@ mod tests {
             table: table.into(),
             filters: filters.to_vec(),
             raw_where: raw_where.map(Into::into),
+            search: None,
             sort: sort.to_vec(),
             cursor,
             limit: 0,
@@ -646,6 +735,7 @@ mod tests {
             pk: vec![],
             references: Default::default(),
             est_rows: -1,
+            enum_columns: Default::default(),
         };
         let q = page_query(&req("no_pk", &[], None, &[], None), &meta, 5).unwrap();
         assert!(
@@ -671,6 +761,7 @@ mod tests {
                 f("id", FilterOp::IsNull, Some("ignored")),
                 f("id", FilterOp::Ne, Some("1")),
             ],
+            None,
             Some("   "),
         )
         .unwrap();
@@ -713,13 +804,13 @@ mod tests {
         assert_eq!(pos(RawSpan::relocate(q.raw_span, sql_err(Some(1)))), None);
         assert_eq!(pos(RawSpan::relocate(None, sql_err(Some(3)))), None);
 
-        let (sql, span) = count_query("public", "orders", &m, &filters, Some(raw)).unwrap();
+        let (sql, span) = count_query("public", "orders", &m, &filters, None, Some(raw)).unwrap();
         assert_eq!(
             pos(RawSpan::relocate(span, sql_err(Some(at(&sql, "ünï"))))),
             Some(1)
         );
 
-        let (sql, span) = export_query("public", "orders", &m, &[], Some(raw), &[]).unwrap();
+        let (sql, span) = export_query("public", "orders", &m, &[], None, Some(raw), &[]).unwrap();
         let copy = format!("COPY ({sql})");
         let span = span.map(|s| s.shifted("COPY ("));
         assert_eq!(
@@ -732,15 +823,15 @@ mod tests {
     fn invalid_inputs() {
         let m = orders();
         assert!(matches!(
-            where_clause(&m, &[f("nope", FilterOp::Eq, Some("1"))], None),
+            where_clause(&m, &[f("nope", FilterOp::Eq, Some("1"))], None, None),
             Err(AppError::Invalid { .. })
         ));
         assert!(matches!(
-            where_clause(&m, &[f("id", FilterOp::Eq, None)], None),
+            where_clause(&m, &[f("id", FilterOp::Eq, None)], None, None),
             Err(AppError::Invalid { .. })
         ));
         assert!(matches!(
-            where_clause(&m, &[f("id", FilterOp::In, Some(" , "))], None),
+            where_clause(&m, &[f("id", FilterOp::In, Some(" , "))], None, None),
             Err(AppError::Invalid { .. })
         ));
         let sort = [Sort {
@@ -779,6 +870,7 @@ mod tests {
                 "orders",
                 &m,
                 &[f("status", FilterOp::Eq, Some("paid"))],
+                None,
                 None
             )
             .unwrap(),
@@ -788,11 +880,104 @@ mod tests {
             )
         );
         assert_eq!(
-            export_query("public", "orders", &m, &[], None, &[]).unwrap(),
+            export_query("public", "orders", &m, &[], None, None, &[]).unwrap(),
             (
                 "SELECT * FROM \"public\".\"orders\" ORDER BY \"id\"".to_owned(),
                 None
             )
         );
+    }
+
+    #[test]
+    fn search_pattern_escapes_like_wildcards() {
+        assert_eq!(contains_pattern("o'brien"), "%o'brien%");
+        assert_eq!(contains_pattern("100%"), "%100\\%%");
+        assert_eq!(contains_pattern("a_b\\c"), "%a\\_b\\\\c%");
+        assert_eq!(search_term(Some("  ")), None);
+        assert_eq!(search_term(Some(" x ")), Some("x"));
+        assert_eq!(search_term(None), None);
+    }
+
+    fn typed() -> TableMeta {
+        TableMeta {
+            kind: RelationKind::Table,
+            columns: vec![
+                col("id", "integer", true),
+                col("t", "text", false),
+                col("v", "character varying(20)", false),
+                col("c", "character(3)", false),
+                col("u", "uuid", false),
+                col("j", "jsonb", false),
+                col("n", "numeric(12,2)", false),
+                col("b", "bigint", false),
+                col("s", "order_status", false),
+                col("ts", "timestamp with time zone", false),
+                col("arr", "text[]", false),
+                col("ci", "citext", false),
+            ],
+            pk: vec!["id".into()],
+            references: Default::default(),
+            est_rows: -1,
+            enum_columns: ["s".to_owned()].into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn search_column_selection() {
+        let m = typed();
+        assert_eq!(
+            search_columns(&m, "abc"),
+            vec!["t", "v", "c", "u", "j", "s", "ci"]
+        );
+        assert_eq!(
+            search_columns(&m, "-12.5"),
+            vec!["id", "t", "v", "c", "u", "j", "n", "b", "s", "ci"]
+        );
+        for not_numeric in ["1.2.3", "-", ".", "1e5", "12a"] {
+            assert!(
+                !search_columns(&m, not_numeric).contains(&"id"),
+                "{not_numeric}"
+            );
+        }
+    }
+
+    #[test]
+    fn search_condition_in_page_count_and_export() {
+        let m = typed();
+        let mut r = req("t", &[], None, &[], None);
+        r.search = Some(" it's 5% ".into());
+        let q = page_query(&r, &m, 10).unwrap();
+        // The pattern holds a backslash, so it is an E'' literal with the backslash doubled.
+        assert!(
+            q.sql.contains(
+                " WHERE (\"t\"::text ILIKE E'%it''s 5\\\\%%' ESCAPE E'\\\\' OR \"v\"::text ILIKE"
+            ),
+            "{}",
+            q.sql
+        );
+        assert!(!q.sql.contains("\"id\"::text ILIKE"), "{}", q.sql);
+        assert!(!q.sql.contains("\"ts\"::text ILIKE"), "{}", q.sql);
+        let filters = [f("b", FilterOp::Gt, Some("1"))];
+        let (count, _) = count_query("public", "t", &m, &filters, Some("42"), None).unwrap();
+        assert!(
+            count.starts_with(
+                "SELECT count(*) FROM \"public\".\"t\" WHERE \"b\" > '1' AND (\"id\"::text ILIKE '%42%' ESCAPE E'\\\\' OR "
+            ),
+            "{count}"
+        );
+        let (export, _) =
+            export_query("public", "t", &m, &[], Some("x"), Some("id > 0"), &[]).unwrap();
+        assert!(
+            export
+                .ends_with("\"ci\"::text ILIKE '%x%' ESCAPE E'\\\\') AND (id > 0) ORDER BY \"id\""),
+            "{export}"
+        );
+        // Nothing to search in: no row matches rather than every row.
+        let none = TableMeta {
+            columns: vec![col("id", "integer", true)],
+            ..typed()
+        };
+        let (count, _) = count_query("public", "t", &none, &[], Some("x"), None).unwrap();
+        assert_eq!(count, "SELECT count(*) FROM \"public\".\"t\" WHERE FALSE");
     }
 }

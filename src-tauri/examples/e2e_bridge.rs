@@ -66,6 +66,7 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
         "fetch_page" => ok(ops::fetch_page(engine, &arg(a, "requestId")?, &arg(a, "req")?).await?),
         "count_exact" => {
             let raw_where: Option<String> = arg(a, "rawWhere")?;
+            let search: Option<String> = arg(a, "search")?;
             ok(ops::count_exact(
                 engine,
                 &arg(a, "requestId")?,
@@ -73,6 +74,7 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
                 &arg::<String>(a, "schema")?,
                 &arg::<String>(a, "table")?,
                 &arg::<Vec<_>>(a, "filters")?,
+                search.as_deref(),
                 raw_where.as_deref(),
             )
             .await?)
@@ -160,6 +162,14 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
         "apply_edits" => {
             ok(ops::apply_edits(engine, &arg::<String>(a, "requestId")?, &arg(a, "req")?).await?)
         }
+        // v0.3.0 navigation
+        "list_referencing" => ok(ops::list_referencing(
+            engine,
+            arg(a, "connId")?,
+            &arg::<String>(a, "schema")?,
+            &arg::<String>(a, "table")?,
+        )
+        .await?),
         other => Err(AppError::invalid(format!("unknown command {other}"))),
     }
 }

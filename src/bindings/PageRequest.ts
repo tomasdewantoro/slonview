@@ -9,6 +9,11 @@ export type PageRequest = { connId: string, schema: string, table: string, filte
  */
 rawWhere: string | null, 
 /**
+ * Search term matched with ILIKE against every text-like column (numeric columns too when
+ * the term is a number); None/blank = unused. Built server-side, never verbatim SQL.
+ */
+search: string | null, 
+/**
  * Empty = PK order (keyset paging when a PK exists).
  */
 sort: Array<Sort>, 

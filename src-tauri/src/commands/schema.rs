@@ -1,6 +1,6 @@
 //! Schema tree, table description and function definitions.
 use slonview_core::AppResult;
-use slonview_core::model::{ConnId, SchemaTree, TableDescription};
+use slonview_core::model::{ConnId, ReferencingKey, SchemaTree, TableDescription};
 use tauri::State;
 
 use crate::ops;
@@ -31,4 +31,14 @@ pub async fn get_function_definition(
     oid: u32,
 ) -> AppResult<String> {
     ops::get_function_definition(&engine, conn_id, oid).await
+}
+
+#[tauri::command]
+pub async fn list_referencing(
+    engine: State<'_, AppState>,
+    conn_id: ConnId,
+    schema: String,
+    table: String,
+) -> AppResult<Vec<ReferencingKey>> {
+    ops::list_referencing(&engine, conn_id, &schema, &table).await
 }

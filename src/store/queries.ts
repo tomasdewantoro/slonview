@@ -37,6 +37,8 @@ export interface TableQuery {
   table: string;
   filters: FilterRow[];
   rawWhere: string;
+  /** "Search all text columns" term; empty = none. Absent in tabs saved before 0.3.0. */
+  search?: string;
   sort: Sort[];
 }
 
@@ -63,6 +65,11 @@ export function normalizeRawWhere(raw: string): string | null {
   return t === "" ? null : t;
 }
 
+/** Toolbar badge: filter rows, plus one each for a raw WHERE and a search. */
+export function activeFilterCount(q: TableQuery): number {
+  return q.filters.length + (normalizeRawWhere(q.rawWhere) ? 1 : 0) + (normalizeRawWhere(q.search ?? "") ? 1 : 0);
+}
+
 export function buildPageRequest(connId: string, q: TableQuery, cursor: Cursor | null): PageRequest {
   return {
     connId,
@@ -70,6 +77,7 @@ export function buildPageRequest(connId: string, q: TableQuery, cursor: Cursor |
     table: q.table,
     filters: filtersToRequest(q.filters),
     rawWhere: normalizeRawWhere(q.rawWhere),
+    search: normalizeRawWhere(q.search ?? ""),
     sort: q.sort,
     cursor,
     limit: PAGE_SIZE,

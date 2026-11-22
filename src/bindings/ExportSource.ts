@@ -2,4 +2,4 @@
 import type { Filter } from "./Filter";
 import type { Sort } from "./Sort";
 
-export type ExportSource = { "kind": "table", connId: string, schema: string, table: string, filters: Array<Filter>, rawWhere: string | null, sort: Array<Sort>, } | { "kind": "sql", connId: string, sql: string, };
+export type ExportSource = { "kind": "table", connId: string, schema: string, table: string, filters: Array<Filter>, rawWhere: string | null, search: string | null, sort: Array<Sort>, } | { "kind": "sql", connId: string, sql: string, };

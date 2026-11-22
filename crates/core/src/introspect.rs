@@ -1,6 +1,6 @@
 //! Catalog queries. All use the extended protocol with schema/table names bound as
 //! parameters, so no identifier quoting is involved.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use tokio_postgres::Client;
@@ -8,7 +8,7 @@ use tokio_postgres::types::Oid;
 
 use crate::model::{
     Column, ColumnDetail, ForeignKeyInfo, ForeignKeyTarget, FunctionInfo, FunctionKind, IndexInfo,
-    Relation, RelationKind, SchemaNode, SchemaTree, TableDescription,
+    ReferencingKey, Relation, RelationKind, SchemaNode, SchemaTree, TableDescription,
 };
 use crate::objects;
 use crate::{AppError, AppResult};
@@ -243,6 +243,8 @@ pub(crate) struct TableMeta {
     pub references: HashMap<String, ForeignKeyTarget>,
     /// `pg_class.reltuples` (partitioned parents: sum of leaves); -1 when never analyzed.
     pub est_rows: i64,
+    /// Names of columns whose type is an enum (searched as text).
+    pub enum_columns: HashSet<String>,
 }
 
 impl TableMeta {
@@ -294,14 +296,18 @@ async fn resolve(client: &Client, schema: &str, table: &str) -> AppResult<RelInf
     })
 }
 
-/// Columns in attnum order plus the primary-key column order.
-async fn columns(client: &Client, oid: Oid) -> AppResult<(Vec<ColumnDetail>, Vec<String>)> {
+/// Columns in attnum order, the primary-key column order, and the names of enum-typed columns.
+async fn columns(
+    client: &Client,
+    oid: Oid,
+) -> AppResult<(Vec<ColumnDetail>, Vec<String>, HashSet<String>)> {
     let rows = client
         .query(
             "SELECT a.attname::text, format_type(a.atttypid, a.atttypmod), a.attnotnull,
                     pg_get_expr(d.adbin, d.adrelid), col_description(a.attrelid, a.attnum),
-                    array_position(pk.indkey::int2[], a.attnum)
+                    array_position(pk.indkey::int2[], a.attnum), t.typtype = 'e'
              FROM pg_attribute a
+             JOIN pg_type t ON t.oid = a.atttypid
              LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
              LEFT JOIN pg_index pk ON pk.indrelid = a.attrelid AND pk.indisprimary
              WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped
@@ -311,12 +317,16 @@ async fn columns(client: &Client, oid: Oid) -> AppResult<(Vec<ColumnDetail>, Vec
         .await
         .map_err(db_err)?;
     let mut pk: Vec<(i32, String)> = Vec::new();
+    let mut enums = HashSet::new();
     let mut cols = Vec::with_capacity(rows.len());
     for row in rows {
         let name: String = row.get(0);
         let pk_pos: Option<i32> = row.get(5);
         if let Some(pos) = pk_pos {
             pk.push((pos, name.clone()));
+        }
+        if row.get::<_, bool>(6) {
+            enums.insert(name.clone());
         }
         cols.push(ColumnDetail {
             name,
@@ -328,12 +338,12 @@ async fn columns(client: &Client, oid: Oid) -> AppResult<(Vec<ColumnDetail>, Vec
         });
     }
     pk.sort_by_key(|(pos, _)| *pos);
-    Ok((cols, pk.into_iter().map(|(_, n)| n).collect()))
+    Ok((cols, pk.into_iter().map(|(_, n)| n).collect(), enums))
 }
 
 pub(crate) async fn table_meta(client: &Client, schema: &str, table: &str) -> AppResult<TableMeta> {
     let rel = resolve(client, schema, table).await?;
-    let (columns, pk) = columns(client, rel.oid).await?;
+    let (columns, pk, enum_columns) = columns(client, rel.oid).await?;
     let references = single_column_references(client, rel.oid).await?;
     Ok(TableMeta {
         kind: rel.kind,
@@ -341,7 +351,46 @@ pub(crate) async fn table_meta(client: &Client, schema: &str, table: &str) -> Ap
         pk,
         references,
         est_rows: rel.est_rows,
+        enum_columns,
     })
+}
+
+/// Foreign keys anywhere in the database that point at `schema.table`, with their columns in
+/// key order, ordered by referencing schema, table and constraint name.
+pub(crate) async fn referencing_keys(
+    client: &Client,
+    schema: &str,
+    table: &str,
+) -> AppResult<Vec<ReferencingKey>> {
+    let rel = resolve(client, schema, table).await?;
+    let rows = client
+        .query(
+            "SELECT k.conname::text, n.nspname::text, c.relname::text,
+                    array(SELECT a.attname::text FROM unnest(k.conkey) WITH ORDINALITY u(attnum, i)
+                          JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum
+                          ORDER BY u.i),
+                    array(SELECT a.attname::text FROM unnest(k.confkey) WITH ORDINALITY u(attnum, i)
+                          JOIN pg_attribute a ON a.attrelid = k.confrelid AND a.attnum = u.attnum
+                          ORDER BY u.i)
+             FROM pg_constraint k
+             JOIN pg_class c ON c.oid = k.conrelid
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE k.contype = 'f' AND k.confrelid = $1 AND k.conparentid = 0
+             ORDER BY n.nspname, c.relname, k.conname",
+            &[&rel.oid],
+        )
+        .await
+        .map_err(db_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ReferencingKey {
+            constraint_name: r.get(0),
+            schema: r.get(1),
+            table: r.get(2),
+            columns: r.get(3),
+            referenced_columns: r.get(4),
+        })
+        .collect())
 }
 
 /// Foreign keys of exactly one column, keyed by the referencing column. A column that is the
@@ -382,7 +431,7 @@ pub(crate) async fn describe(
     table: &str,
 ) -> AppResult<TableDescription> {
     let rel = resolve(client, schema, table).await?;
-    let (columns, _) = columns(client, rel.oid).await?;
+    let (columns, _, _) = columns(client, rel.oid).await?;
     let indexes = client
         .query(
             "SELECT ci.relname::text, pg_get_indexdef(i.indexrelid), i.indisunique, i.indisprimary

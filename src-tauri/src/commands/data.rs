@@ -16,6 +16,7 @@ pub async fn fetch_page(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn count_exact(
     engine: State<'_, AppState>,
     request_id: RequestId,
@@ -23,6 +24,7 @@ pub async fn count_exact(
     schema: String,
     table: String,
     filters: Vec<Filter>,
+    search: Option<String>,
     raw_where: Option<String>,
 ) -> AppResult<i64> {
     ops::count_exact(
@@ -32,6 +34,7 @@ pub async fn count_exact(
         &schema,
         &table,
         &filters,
+        search.as_deref(),
         raw_where.as_deref(),
     )
     .await

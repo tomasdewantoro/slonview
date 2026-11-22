@@ -330,6 +330,301 @@ try {
     return `orders.customer_id ${want} -> customers (id = ${want}, 1 row); Cmd-click reused the tab (${before} tabs); fk_links.tenant not offered; weird_id -> "Sales Data"`;
   });
 
+  // ---- v0.3.0 navigation ------------------------------------------------------------
+  const menuItems = () => page.evaluate(() => [...document.querySelectorAll('[role="menuitem"]')].map((m) => m.innerText.trim()));
+  const clickMenuItem = async (label) => {
+    const ok = await page.evaluate((l) => {
+      const m = [...document.querySelectorAll('[role="menuitem"]')].find((x) => x.innerText.trim().startsWith(l));
+      m?.click();
+      return !!m;
+    }, label);
+    assert(ok, `no menu item ${label}`);
+  };
+  const activeTitle = () => page.evaluate(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim());
+  const pressMeta = async (key) => {
+    await page.keyboard.down("Meta");
+    await page.keyboard.press(key);
+    await page.keyboard.up("Meta");
+  };
+  /** Closes the first (or with `last`, the last) tab whose title passes `match`, via its close button. */
+  const closeTabTitled = async (match, last = false) => {
+    const titles = await page.$$eval('[role="tab"]', (tabs) => tabs.map((t) => t.querySelector("span.truncate").innerText.trim()));
+    const idx = last ? titles.findLastIndex(match) : titles.findIndex(match);
+    assert(idx >= 0, `no tab to close in ${titles.join(", ")}`);
+    await page.evaluate((i) => document.querySelectorAll('[role="tab"]')[i].querySelector('button[aria-label^="Close"]').click(), idx);
+    await until((n) => document.querySelectorAll('[role="tab"]').length === n, 5000, titles.length - 1);
+  };
+  const closeActiveTab = async () => {
+    const n = await page.$$eval('[role="tab"]', (t) => t.length);
+    await page.evaluate(() => document.querySelector('[role="tab"][aria-selected="true"] button[aria-label^="Close"]').click());
+    await until((n) => document.querySelectorAll('[role="tab"]').length === n, 5000, n - 1);
+  };
+
+  await check("V3-NAV-01 quick open: Cmd-P finds objects, Enter opens pinned, Esc returns focus", async () => {
+    const out = [];
+    // Focus starts in the sidebar filter; the palette must hand it back.
+    await page.focus('input[aria-label="Filter schema objects"]');
+    await pressMeta("p");
+    await page.waitForSelector('dialog[open][aria-label^="Quick open"]', { timeout: 5000 });
+    const a11y = await page.evaluate(() => {
+      const input = document.querySelector('dialog[open] input[role="combobox"]');
+      return { focused: document.activeElement === input, listbox: !!document.querySelector('dialog[open] [role="listbox"]') };
+    });
+    assert(a11y.focused && a11y.listbox, `palette a11y ${JSON.stringify(a11y)}`);
+    await page.keyboard.type("totals");
+    await until(() => document.querySelector('dialog[open] [role="option"][aria-selected="true"]')?.innerText.includes("order_totals"), 5000);
+    const active = await page.evaluate(() => {
+      const input = document.querySelector('dialog[open] input[role="combobox"]');
+      return document.getElementById(input.getAttribute("aria-activedescendant"))?.innerText ?? "";
+    });
+    assert(active.includes("order_totals"), `aria-activedescendant: ${active}`);
+    await page.screenshot({ path: `${SHOTS}/v3-nav-01-quick-open-light.png` });
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]);
+    await sleep(300);
+    await page.screenshot({ path: `${SHOTS}/v3-nav-01-quick-open-dark.png` });
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
+    await page.keyboard.press("Escape");
+    await until(() => !document.querySelector("dialog[open]"), 3000);
+    eq(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Filter schema objects", "focus after Esc");
+    out.push("totals -> order_totals (word start); Esc restored focus");
+
+    // Ranking: prefix first, ↓ moves, Enter opens pinned.
+    await pressMeta("p");
+    await page.waitForSelector('dialog[open][aria-label^="Quick open"]', { timeout: 5000 });
+    await page.keyboard.type("orders");
+    await until(() => document.querySelector('dialog[open] [role="option"]')?.innerText.startsWith("orders"), 5000);
+    const opts = await page.$$eval('dialog[open] [role="option"]', (o) => o.map((x) => x.innerText.split("\n")[0]));
+    eq(opts[0], "orders", "exact prefix first");
+    assert(opts.includes("paid_orders"), `word-start match missing: ${opts.join(", ")}`);
+    await page.keyboard.press("Enter");
+    await until(() => !document.querySelector("dialog[open]"), 3000);
+    await until(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === "orders", 10000);
+    const pinned = await page.evaluate(() => !document.querySelector('[role="tab"][aria-selected="true"]').hasAttribute("data-preview"));
+    assert(pinned, "Enter opened a preview tab");
+    out.push(`orders ranked first of ${opts.length}; opened pinned`);
+
+    // Cmd-Enter: Structure tab. A function opens its definition.
+    await pressMeta("p");
+    await page.waitForSelector('dialog[open][aria-label^="Quick open"]', { timeout: 5000 });
+    await page.keyboard.type('weird "name"');
+    await until(() => document.querySelector('dialog[open] [role="option"][aria-selected="true"]')?.innerText.includes("table"), 5000);
+    await pressMeta("Enter");
+    await until(() => (document.querySelector('[role="tab"][aria-selected="true"]')?.innerText ?? "").includes("structure"), 10000);
+    out.push(`⌘↵ -> ${await activeTitle()}`);
+    await pressMeta("p");
+    await page.waitForSelector('dialog[open][aria-label^="Quick open"]', { timeout: 5000 });
+    await page.keyboard.type("customer_label");
+    await until(() => document.querySelector('dialog[open] [role="option"][aria-selected="true"]')?.innerText.includes("customer_label"), 5000);
+    await page.keyboard.press("Enter");
+    await until(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim().startsWith("customer_label("), 10000);
+    await until(() => (document.querySelector(".cm-content")?.innerText ?? "").includes("CREATE OR REPLACE FUNCTION"), 10000);
+    out.push(`function -> ${await activeTitle()}`);
+    await closeTabTitled((t) => t.startsWith("customer_label("));
+    await closeTabTitled((t) => t.includes("Weird") && t.includes("structure"));
+    return out.join("; ");
+  });
+
+  await check("V3-NAV-02 record view: selected row as a form, steps rows, follows a foreign key", async () => {
+    await activateTab("orders");
+    const p = await cellPoint("customer_id", 1);
+    await page.click('[aria-label="Toggle record view"]');
+    await until(() => !!document.querySelector('aside[aria-label="Record view"]') && !document.querySelector('aside[aria-label="Cell inspector"]'), 5000);
+    const read = () =>
+      page.evaluate(() => {
+        const aside = document.querySelector('aside[aria-label="Record view"]');
+        const field = (c) => aside.querySelector(`[data-column="${c}"] dd`)?.innerText.trim();
+        return { head: aside.querySelector("span").innerText, id: field("id"), customer: field("customer_id"), note: field("note"), pk: !!aside.querySelector('[data-column="id"] dt')?.innerText.includes("PK") };
+      });
+    const want = psql("SELECT id || '|' || customer_id || '|' || coalesce(note, 'NULL') FROM orders ORDER BY id LIMIT 1 OFFSET 1").split("|");
+    let r = await read();
+    eq(r.head, "Row 2", "record header");
+    eq(r.id, want[0], "id");
+    assert(r.customer.startsWith(want[1]) && r.customer.includes("→"), `customer link: ${r.customer}`);
+    assert(r.pk, "PK badge on id");
+    const refs = await page.evaluate(() => [...document.querySelectorAll('aside[aria-label="Record view"] section[aria-label="Referenced by"]')].map((s) => s.innerText));
+    eq(refs.length, 1, "Referenced by footer");
+    await page.screenshot({ path: `${SHOTS}/v3-nav-02-record-view-light.png` });
+
+    // Alt+Down while the record view has focus; the Next button; the grid click follows too.
+    await page.focus('aside[aria-label="Record view"]');
+    await page.keyboard.down("Alt");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.up("Alt");
+    await until(() => document.querySelector('aside[aria-label="Record view"] span')?.innerText === "Row 3", 3000);
+    await page.click('[aria-label="Next row"]');
+    await until(() => document.querySelector('aside[aria-label="Record view"] span')?.innerText === "Row 4", 3000);
+    await page.click('[aria-label="Previous row"]');
+    await until(() => document.querySelector('aside[aria-label="Record view"] span')?.innerText === "Row 3", 3000);
+    r = await read();
+    eq(r.id, psql("SELECT id FROM orders ORDER BY id LIMIT 1 OFFSET 2"), "id after stepping");
+    await page.mouse.click(p.x, p.y - ROW);
+    await until(() => document.querySelector('aside[aria-label="Record view"] span')?.innerText === "Row 1", 3000);
+
+    // The inspector replaces it (mutually exclusive), and back.
+    await page.click('[aria-label="Toggle cell inspector"]');
+    await until(() => !!document.querySelector('aside[aria-label="Cell inspector"]') && !document.querySelector('aside[aria-label="Record view"]'), 3000);
+    await page.click('[aria-label="Toggle record view"]');
+    await until(() => !!document.querySelector('aside[aria-label="Record view"]') && !document.querySelector('aside[aria-label="Cell inspector"]'), 3000);
+
+    // Copy button copies the full value; the FK link opens the referenced customer.
+    await page.evaluate(() => document.querySelector('aside[aria-label="Record view"] [aria-label="Copy id"]').click());
+    await until(() => window.__clipboard === document.querySelector('aside[aria-label="Record view"] [data-column="id"] dd').innerText.trim(), 3000);
+    const cust = psql("SELECT customer_id FROM orders ORDER BY id LIMIT 1");
+    await page.evaluate(() => document.querySelector('aside[aria-label="Record view"] [data-column="customer_id"] dd button').click());
+    await until(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === "customers", 10000);
+    await until((w) => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes(`"id" = '${w}'`), 10000, cust);
+    await activateTab("orders");
+    await page.click('[aria-label="Toggle record view"]').catch(() => {});
+    return `row 2 id ${want[0]} customer ${want[1]} (link, PK badge); ⌥↓/Next/Previous/grid click move rows; exclusive with inspector; copy; link -> customers id ${cust}`;
+  });
+
+  await check("V3-NAV-03 referenced by: Structure section, grid menu and record view open referencing rows", async () => {
+    // Structure tab of customers: one key, from orders.
+    await openRel("customers", "public", { keep: true });
+    await page.click('xpath/.//button[normalize-space()="Structure"]');
+    await until(() => [...document.querySelectorAll("h3")].some((h) => h.innerText.startsWith("Referenced by")), 10000);
+    await until(() => document.body.innerText.includes("orders_customer_id_fkey"), 10000);
+    const section = await page.evaluate(() => [...document.querySelectorAll("section")].find((s) => s.querySelector("h3")?.innerText.startsWith("Referenced by")).innerText);
+    assert(/Referenced by\s*1/.test(section) && section.includes("orders (customer_id) → (id)"), `section: ${section}`);
+    await page.screenshot({ path: `${SHOTS}/v3-nav-03-structure-referenced-by-light.png` });
+
+    // composite_pk: the two-column key is listed but not a link.
+    await pressMeta("p");
+    await page.waitForSelector('dialog[open][aria-label^="Quick open"]', { timeout: 5000 });
+    await page.keyboard.type("composite_pk");
+    await until(() => document.querySelector('dialog[open] [role="option"][aria-selected="true"]')?.innerText.includes("composite_pk"), 5000);
+    await pressMeta("Enter");
+    await until(() => document.body.innerText.includes("fk_links (tenant, item) → (tenant, item)"), 10000);
+    const compositeLink = await page.evaluate(() => [...document.querySelectorAll("section button")].some((b) => b.innerText.includes("fk_links (tenant, item)")));
+    assert(!compositeLink, "multi-column key rendered as a link");
+    await closeTabTitled((t) => t === "composite_pk · structure");
+
+    // Click the single-column entry: opens orders unfiltered (the kept orders tab is reused).
+    await activateTab("customers · structure");
+    await page.evaluate(() => [...document.querySelectorAll("section button")].find((b) => b.innerText.startsWith("orders (customer_id)")).click());
+    await until(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === "orders", 10000);
+    assert(!(await footerSql()).includes("WHERE"), `orders opened filtered: ${await footerSql()}`);
+    await closeTabTitled((t) => t === "customers · structure");
+
+    // Grid menu on customers row 1: "Rows in orders (customer_id)" opens orders filtered to that id.
+    await activateTab("customers");
+    await until(() => !!document.querySelector(".dvn-scroller"), 10000);
+    // The tab may still carry an earlier filter: take the id from the row itself.
+    await cellPoint("id", 0);
+    const id = await page.evaluate(() => document.querySelector('aside[aria-label="Cell inspector"] pre')?.innerText.trim());
+    assert(/^\d+$/.test(id ?? ""), `customer id ${id}`);
+    const c = await cellPoint("name", 0);
+    await page.mouse.click(c.x, c.y, { button: "right" });
+    await until(() => [...document.querySelectorAll('[role="menuitem"]')].some((m) => m.innerText.startsWith("Rows in orders")), 5000);
+    const items = await menuItems();
+    assert(items.some((t) => t.startsWith("Rows in orders (customer_id)")), `menu: ${items.join(" | ")}`);
+    await page.screenshot({ path: `${SHOTS}/v3-nav-03-grid-menu-light.png` });
+    await clickMenuItem("Rows in orders (customer_id)");
+    await until(() => document.querySelector('[role="tab"][aria-selected="true"]')?.innerText.trim() === "orders", 10000);
+    await until((w) => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes(`"customer_id" = '${w}'`), 10000, id);
+    const n = Number(psql(`SELECT count(*) FROM orders WHERE customer_id = ${id}`));
+    await clickText("Count rows");
+    await until((n) => [...document.querySelectorAll('span[aria-live="polite"]')].some((s) => s.innerText.trim() === `${n.toLocaleString("en-US")} rows`), 20000, n);
+    const filteredTab = await activeTitle();
+    await closeActiveTab();
+
+    // Same from the record view footer: a new filtered tab of orders opens beside the kept one.
+    await activateTab("customers");
+    await cellPoint("name", 0);
+    await page.click('[aria-label="Toggle record view"]');
+    await until(() => [...document.querySelectorAll('aside[aria-label="Record view"] section button')].some((b) => b.innerText.startsWith("Rows in orders")), 5000);
+    const tabsBefore = (await tabStrip()).length;
+    await page.evaluate(() => [...document.querySelectorAll('aside[aria-label="Record view"] section button')].find((b) => b.innerText.startsWith("Rows in orders")).click());
+    await until((w) => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes(`"customer_id" = '${w}'`), 10000, id);
+    eq((await tabStrip()).length, tabsBefore + 1, "record view opened one tab");
+    await closeActiveTab();
+    await activateTab("customers");
+    await page.click('[aria-label="Toggle record view"]');
+
+    // Views: no lookup, no "Rows in" entries.
+    await openRel("paid_orders");
+    const v = await cellPoint("id", 0);
+    await page.mouse.click(v.x, v.y, { button: "right" });
+    await until(() => document.querySelectorAll('[role="menuitem"]').length > 0, 5000);
+    assert(!(await menuItems()).some((t) => t.startsWith("Rows in")), "view offered referencing rows");
+    await page.keyboard.press("Escape");
+    return `customers: Referenced by 1 (orders.customer_id); composite_pk lists (tenant, item) unlinked; menu -> ${filteredTab} customer_id = ${id} (${n} rows); record view footer works; view: none`;
+  });
+
+  await check("V3-NAV-04 search a table: server-side, escaped, counted and exported", async () => {
+    const out = [];
+    await openRel("all_types", "public", { keep: true });
+    const box = 'input[aria-label="Search all text columns"]';
+    await page.click(box);
+    await page.keyboard.type("o'brien");
+    await page.keyboard.press("Enter");
+    await until(() => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes("ILIKE"), 10000);
+    await until(() => document.querySelector("footer span")?.innerText === "1 row loaded", 10000);
+    const sql = await footerSql();
+    assert(sql.includes(`ILIKE '%o''brien%' ESCAPE`) && sql.includes(`"c_text"::text ILIKE`), `footer SQL: ${sql}`);
+    assert(!sql.includes(`"c_ts"::text ILIKE`), "timestamp column searched for a text term");
+    const badge = await page.evaluate(() => document.querySelector('button[title="Toggle filters"] span.rounded-full')?.innerText);
+    eq(badge, "1", "active filter badge counts the search");
+    await page.screenshot({ path: `${SHOTS}/v3-nav-04-search-light.png` });
+    out.push("o'brien -> 1 row (quoted literal)");
+
+    // Literal % matches only rows with a % in a searched column (the fixture has none).
+    await page.$eval(box, (e) => e.select());
+    await page.keyboard.type("%");
+    await page.keyboard.press("Enter");
+    await until(() => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes("ILIKE E'%\\\\%%' ESCAPE"), 10000);
+    const pct = psql("SELECT count(*) FROM all_types WHERE strpos(concat_ws(chr(1), c_text, c_varchar, c_uuid::text, c_jsonb::text, c_enum::text), '%') > 0");
+    await until((n) => (document.querySelector("footer span")?.innerText ?? "").startsWith(n === "1" ? "1 row" : `${n} rows`) || (n === "0" && document.body.innerText.includes("No rows match these filters.")), 10000, pct);
+    out.push(`'%' -> ${pct} rows`);
+
+    // A numeric term also searches numeric columns. Count rows honours it.
+    await page.$eval(box, (e) => e.select());
+    await page.keyboard.type("42");
+    await page.keyboard.press("Enter");
+    await until(() => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes(`"c_int"::text ILIKE '%42%'`), 10000);
+    await clickText("Count rows");
+    const n42 = await bridge("count_exact", { requestId: "nav-04", connId, schema: "public", table: "all_types", filters: [], search: "42", rawWhere: null });
+    await until((n) => document.body.innerText.includes(`${n} row`), 10000, n42);
+    out.push(`42 -> count ${n42}`);
+
+    // Esc clears it; the term survives a reload with the tab.
+    await page.focus(box);
+    await page.keyboard.press("Escape");
+    await until(() => !(document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes("ILIKE"), 10000);
+    eq(await page.$eval(box, (e) => e.value), "", "box after Esc");
+
+    // Orders: no estimate while searching; Export CSV writes only matching rows; Cancel stops it.
+    await activateTab("orders");
+    await page.click(box);
+    await page.keyboard.type("note 12345");
+    await page.keyboard.press("Enter");
+    await until(() => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes("note 12345"), 15000);
+    await until(() => !document.querySelector("footer .animate-spin"), 15000);
+    const label = await loadedLabel();
+    assert(!label.includes("~"), `estimate shown while searching: ${label}`);
+    const want = psql("SELECT count(*) FROM orders WHERE note ILIKE '%note 12345%'");
+    eq(label, `${want} rows loaded`, "orders search footer");
+    await page.evaluate(() => (window.__nextSavePath = "/tmp/slonview-e2e-nav-search.csv"));
+    await page.click('button[title^="Export every row"]');
+    await until(() => /Exported [\d,]+ rows? to|Export failed/.test(document.body.innerText), 60000);
+    const lines = execFileSync("wc", ["-l", "/tmp/slonview-e2e-nav-search.csv"], { encoding: "utf8" }).trim().split(/\s+/)[0];
+    eq(Number(lines), Number(want) + 1, "exported lines");
+    await page.click('[aria-label="Dismiss"]').catch(() => {});
+    await page.reload({ waitUntil: "networkidle0" });
+    await until(() => document.querySelectorAll('[role="tab"]').length > 0, 15000);
+    await activateTab("orders");
+    await until(() => !!document.querySelector('input[aria-label="Search all text columns"]'), 10000);
+    eq(await page.$eval(box, (e) => e.value), "note 12345", "search restored with the tab");
+    await until(() => (document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes("note 12345"), 15000);
+    // Clear so later checks see the unfiltered orders tab.
+    await page.focus(box);
+    await page.keyboard.press("Escape");
+    await until(() => !(document.querySelector('footer span[title^="SELECT"]')?.title ?? "").includes("ILIKE"), 15000);
+    await closeTabTitled((t) => t === "all_types");
+    out.push(`orders 'note 12345' -> ${want} rows, no estimate, export ${lines} lines, restored after reload`);
+    return out.join("; ");
+  });
+
   await check("E2E-03 scroll orders to 200k", async () => {
     await openRel("orders");
     await page.evaluate(() => {
