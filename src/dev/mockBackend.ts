@@ -880,6 +880,15 @@ export function installMockBackend(): void {
         savedQueries = [...savedQueries.filter((q) => q.id !== saved.id), saved];
         return saved;
       }
+      case "rename_saved_query": {
+        const name = String(a.name).trim();
+        if (!name) throw err({ kind: "invalid", message: "A saved query needs a name.", position: null });
+        const prev = savedQueries.find((q) => q.id === a.id);
+        if (!prev) throw err({ kind: "invalid", message: "This saved query no longer exists.", position: null });
+        const renamed: SavedQuery = { ...prev, name, updatedAt: new Date().toISOString() };
+        savedQueries = savedQueries.map((q) => (q.id === renamed.id ? renamed : q));
+        return renamed;
+      }
       case "delete_saved_query":
         savedQueries = savedQueries.filter((q) => q.id !== a.id);
         return null;

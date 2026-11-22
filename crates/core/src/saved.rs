@@ -82,15 +82,7 @@ impl SavedQueryStore {
 
     /// Insert or update by id. The name is trimmed, required and at most 200 characters.
     pub fn save(&self, input: SavedQueryInput) -> AppResult<SavedQuery> {
-        let name = input.name.trim();
-        if name.is_empty() {
-            return Err(AppError::invalid("A saved query needs a name."));
-        }
-        if name.chars().count() > SAVED_QUERY_NAME_MAX {
-            return Err(AppError::invalid(format!(
-                "Saved query names can be at most {SAVED_QUERY_NAME_MAX} characters."
-            )));
-        }
+        let name = valid_name(&input.name)?;
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut queries = self.load()?;
         let now = now_rfc3339();
@@ -121,6 +113,24 @@ impl SavedQueryStore {
         sort(&mut queries);
         self.store(queries)?;
         Ok(saved)
+    }
+
+    /// Change only the name (same rules as `save`) and `updated_at`; the stored SQL and scope
+    /// are kept, so a rename never reverts an update made elsewhere.
+    pub fn rename(&self, id: Uuid, name: &str) -> AppResult<SavedQuery> {
+        let name = valid_name(name)?;
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut queries = self.load()?;
+        let q = queries
+            .iter_mut()
+            .find(|q| q.id == id)
+            .ok_or_else(|| AppError::invalid("This saved query no longer exists."))?;
+        q.name = name.to_owned();
+        q.updated_at = now_rfc3339();
+        let renamed = q.clone();
+        sort(&mut queries);
+        self.store(queries)?;
+        Ok(renamed)
     }
 
     /// Deleting an unknown id is a no-op.
@@ -168,6 +178,20 @@ impl SavedQueryStore {
             .map_err(|e| AppError::internal(format!("cannot serialize saved queries: {e}")))?;
         write_atomic(&self.path, text.as_bytes())
     }
+}
+
+/// Trimmed, required, at most `SAVED_QUERY_NAME_MAX` characters.
+fn valid_name(name: &str) -> AppResult<&str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::invalid("A saved query needs a name."));
+    }
+    if name.chars().count() > SAVED_QUERY_NAME_MAX {
+        return Err(AppError::invalid(format!(
+            "Saved query names can be at most {SAVED_QUERY_NAME_MAX} characters."
+        )));
+    }
+    Ok(name)
 }
 
 fn sort(queries: &mut [SavedQuery]) {
@@ -274,6 +298,39 @@ mod tests {
         ));
         let max = "é".repeat(SAVED_QUERY_NAME_MAX);
         assert_eq!(s.save(input(None, &max, "x")).unwrap().name, max);
+    }
+
+    #[test]
+    fn rename_keeps_the_latest_sql_and_scope() {
+        let (_d, s) = store();
+        let c = Uuid::new_v4();
+        let saved = s.save(input(Some(c), "Orders", "select 1")).unwrap();
+        // Another tab updates the SQL with ⌘S.
+        s.save(SavedQueryInput {
+            id: Some(saved.id),
+            conn_id: Some(c),
+            name: "Orders".into(),
+            sql: "select 2".into(),
+        })
+        .unwrap();
+        let renamed = s.rename(saved.id, "  Paid orders ").unwrap();
+        assert_eq!(renamed.name, "Paid orders");
+        assert_eq!(renamed.sql, "select 2");
+        assert_eq!(renamed.conn_id, Some(c));
+        assert_eq!(renamed.created_at, saved.created_at);
+        assert_eq!(s.list(c).unwrap(), vec![renamed]);
+
+        for bad in ["", "  ", &"x".repeat(SAVED_QUERY_NAME_MAX + 1)] {
+            assert!(matches!(
+                s.rename(saved.id, bad),
+                Err(AppError::Invalid { .. })
+            ));
+        }
+        assert!(matches!(
+            s.rename(Uuid::new_v4(), "x"),
+            Err(AppError::Invalid { .. })
+        ));
+        assert_eq!(s.list(c).unwrap()[0].name, "Paid orders");
     }
 
     #[test]

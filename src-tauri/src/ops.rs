@@ -358,6 +358,14 @@ pub async fn save_query(engine: &Engine, query: SavedQueryInput) -> AppResult<Sa
     engine.saved.save(query)
 }
 
+pub async fn rename_saved_query(
+    engine: &Engine,
+    id: uuid::Uuid,
+    name: String,
+) -> AppResult<SavedQuery> {
+    engine.saved.rename(id, &name)
+}
+
 pub async fn delete_saved_query(engine: &Engine, id: uuid::Uuid) -> AppResult<()> {
     engine.saved.delete(id)
 }

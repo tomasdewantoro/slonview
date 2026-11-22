@@ -176,6 +176,9 @@ async fn dispatch(engine: &Engine, cmd: &str, a: &Args) -> Result<Value, AppErro
         // v0.3.0 tools
         "list_saved_queries" => ok(ops::list_saved_queries(engine, arg(a, "connId")?).await?),
         "save_query" => ok(ops::save_query(engine, arg(a, "query")?).await?),
+        "rename_saved_query" => {
+            ok(ops::rename_saved_query(engine, arg(a, "id")?, arg(a, "name")?).await?)
+        }
         "delete_saved_query" => ok(ops::delete_saved_query(engine, arg(a, "id")?).await?),
         "list_activity" => {
             ok(ops::list_activity(engine, arg(a, "connId")?, arg(a, "includeIdle")?).await?)

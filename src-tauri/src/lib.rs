@@ -57,6 +57,7 @@ pub fn run() {
             // v0.3.0 tools
             commands::tools::list_saved_queries,
             commands::tools::save_query,
+            commands::tools::rename_saved_query,
             commands::tools::delete_saved_query,
             commands::tools::list_activity,
             commands::tools::signal_backend,

@@ -122,6 +122,8 @@ export const api = {
   listSavedQueries: (connId: string) => invoke<SavedQuery[]>("list_saved_queries", { connId }),
   /** Insert (id null) or update by id. */
   saveQuery: (query: SavedQueryInput) => invoke<SavedQuery>("save_query", { query }),
+  /** Changes only the name; the stored SQL and scope stay as they are. */
+  renameSavedQuery: (id: string, name: string) => invoke<SavedQuery>("rename_saved_query", { id, name }),
   deleteSavedQuery: (id: string) => invoke<void>("delete_saved_query", { id }),
   /** pg_stat_activity for the connection's database; Slonview's own session first. */
   listActivity: (connId: string, includeIdle: boolean) => invoke<Activity[]>("list_activity", { connId, includeIdle }),

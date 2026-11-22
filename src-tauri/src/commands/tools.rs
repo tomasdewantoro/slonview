@@ -26,6 +26,15 @@ pub async fn save_query(
 }
 
 #[tauri::command]
+pub async fn rename_saved_query(
+    engine: State<'_, AppState>,
+    id: uuid::Uuid,
+    name: String,
+) -> AppResult<SavedQuery> {
+    ops::rename_saved_query(&engine, id, name).await
+}
+
+#[tauri::command]
 pub async fn delete_saved_query(engine: State<'_, AppState>, id: uuid::Uuid) -> AppResult<()> {
     ops::delete_saved_query(&engine, id).await
 }

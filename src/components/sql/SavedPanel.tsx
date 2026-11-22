@@ -260,7 +260,7 @@ export function SavedPanel({ connId, version, onOpen, onChanged, onClose }: Save
           showScope={false}
           onClose={() => setRenaming(null)}
           onSave={async (name) => {
-            const saved = await api.saveQuery({ id: renaming.id, connId: renaming.connId, name, sql: renaming.sql });
+            const saved = await api.renameSavedQuery(renaming.id, name);
             setRenaming(null);
             onChanged(saved.id, saved);
             setReload((n) => n + 1);
