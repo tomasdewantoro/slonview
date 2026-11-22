@@ -41,7 +41,7 @@ code { font: 0.9em "JetBrains Mono", ui-monospace, Menlo, monospace; }
 
   <h2>Known limits, not vulnerabilities</h2>
   <ul>
-    <li>Read-only mode is a guard, not a permission system. Functions with effects outside the transaction (for example <code>pg_advisory_lock</code>, <code>dblink</code> or <code>postgres_fdw</code>) can still act. Use a role with only <code>SELECT</code> for a hard guarantee.</li>
+    <li>Read-only mode is a guard, not a permission system. Functions with effects outside the transaction (for example <code>pg_advisory_lock</code>, <code>pg_cancel_backend</code> and <code>pg_terminate_backend</code> called from SQL, <code>dblink</code> or <code>postgres_fdw</code>) can still act. Use a role with only <code>SELECT</code> for a hard guarantee.</li>
     <li><code>prefer</code> and <code>require</code> TLS modes encrypt but don't verify the server certificate, as in libpq. Use <code>verify-full</code> on untrusted networks.</li>
   </ul>
 </main>
