@@ -42,9 +42,12 @@ export function ActivityTab({ tab, connId }: { tab: ActivityTabInfo; connId: str
   const [error, setError] = useState<unknown>(null);
   const [now, setNow] = useState(() => Date.now());
   const seq = useRef(0);
+  /** Requests still running, superseded ones included: each holds a pooled connection. */
+  const inFlight = useRef(0);
 
   const load = useCallback(async () => {
     const mine = ++seq.current;
+    inFlight.current += 1;
     setLoading(true);
     try {
       const rows = await api.listActivity(connId, includeIdle);
@@ -56,6 +59,7 @@ export function ActivityTab({ tab, connId }: { tab: ActivityTabInfo; connId: str
     } catch (e) {
       if (mine === seq.current) setError(e);
     } finally {
+      inFlight.current -= 1;
       if (mine === seq.current) setLoading(false);
     }
   }, [connId, includeIdle]);
@@ -66,10 +70,11 @@ export function ActivityTab({ tab, connId }: { tab: ActivityTabInfo; connId: str
   }, [load, nonce]);
 
   // Auto-refresh only while the tab is shown (it unmounts when another tab is active) and the window is visible.
+  // A tick is skipped while any list request is still running, so a slow server never piles up requests.
   useEffect(() => {
     if (!auto) return;
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void load();
+      if (document.visibilityState === "visible" && inFlight.current === 0) void load();
     }, AUTO_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [auto, load]);
