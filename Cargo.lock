@@ -5147,7 +5147,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slonview"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "open",
  "serde",
@@ -5167,7 +5167,7 @@ dependencies = [
 
 [[package]]
 name = "slonview-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "deadpool",
  "deadpool-postgres",
